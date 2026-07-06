@@ -134,6 +134,23 @@ export class SceneDocument {
     });
   }
 
+  // ---------- 装载通道 ----------
+  /** 项目打开 / 示例场景初始化专用:直接写入文档状态,不产生历史记录。
+   *  装载不是编辑(C1 管辖的是用户编辑操作);T17 项目生命周期复用此通道。 */
+  hydrate(assets: Asset[], nodes: SceneNode[]) {
+    if (this.interaction) throw new Error('交互会话中禁止装载');
+    for (const a of assets) this.assets.set(a.id, clone(a));
+    for (const n of nodes) this.nodes.set(n.id, clone(n));
+    // 依 nodes 传入顺序重建各层级顺序表
+    for (const n of nodes) {
+      const p = n.parentId ?? ROOT;
+      if (!this.order.has(p)) this.order.set(p, []);
+      this.order.get(p)!.push(n.id);
+      if (n.kind === 'group' && !this.order.has(n.id)) this.order.set(n.id, []);
+    }
+    this.selection = new Set();
+  }
+
   // ---------- 资产 ----------
   addAsset(a: Omit<Asset, 'id'>): Asset {
     // 资产库操作不入栈(导入解析属资产侧;历史栈只管场景编辑)

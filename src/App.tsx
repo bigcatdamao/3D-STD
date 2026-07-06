@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Smoke } from './viewport/Smoke';
+import { Viewport } from './viewport/Viewport';
 
 // T1 冒烟壳:五区布局占位(PRD 6.1 顶栏动线 / 整站 IA)。各区在 T5–T9 陆续替换为真实模块。
 const zone: React.CSSProperties = {
@@ -45,7 +45,7 @@ export function App() {
       </header>
       <aside style={zone}>场景树 / 资产(T7 · T11)</aside>
       <main style={{ ...zone, padding: 0, overflow: 'hidden' }}>
-        <Smoke />
+        <Viewport />
       </main>
       <aside style={zone}>参数面板(T8)</aside>
       <footer style={{ ...zone, gridColumn: '1 / 4' }}>AI 指令条 + 历史栈(T9 · T12)</footer>
