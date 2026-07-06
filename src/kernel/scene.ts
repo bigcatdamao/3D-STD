@@ -1,0 +1,342 @@
+// SceneDocument —— C2 资产/实例分离、TREE/C7 三状态、HIST 入栈三分类的执行引擎。
+// 所有变更必须经 command(commit/interaction/mergedInput)派发,禁止旁路修改(技术方案 §3)。
+
+import { HistoryManager } from './history.js';
+import {
+  Asset,
+  GroupNode,
+  InstanceNode,
+  ROOT,
+  SceneNode,
+  Transform,
+  defaultTransform,
+} from './types.js';
+
+let seq = 0;
+const genId = (p: string) => `${p}_${(++seq).toString(36)}`;
+
+const clone = <T>(v: T): T => structuredClone(v);
+
+interface NodeSnapshot {
+  existed: boolean;
+  node: SceneNode | null;
+}
+
+interface StructSnapshot {
+  nodes: Map<string, NodeSnapshot>;
+  orders: Map<string, string[]>; // parentId(含 ROOT) → 子节点顺序
+  assets: Map<string, Asset | null>; // null = 此刻不存在
+}
+
+export class SceneDocument {
+  assets = new Map<string, Asset>();
+  nodes = new Map<string, SceneNode>();
+  order = new Map<string, string[]>([[ROOT, []]]);
+  selection = new Set<string>();
+  readonly history: HistoryManager;
+
+  private interaction: {
+    label: string;
+    targets: string[];
+    before: StructSnapshot;
+    selectionBefore: string[];
+  } | null = null;
+
+  constructor(history?: HistoryManager) {
+    this.history = history ?? new HistoryManager();
+    this.history.bindSelection((ids) => {
+      this.selection = new Set(ids);
+    });
+  }
+
+  // ---------- 查询 ----------
+  childrenOf(parentId: string | null): string[] {
+    return this.order.get(parentId ?? ROOT) ?? [];
+  }
+  descendants(id: string): string[] {
+    const out: string[] = [];
+    const walk = (nid: string) => {
+      for (const c of this.childrenOf(nid)) {
+        out.push(c);
+        walk(c);
+      }
+    };
+    walk(id);
+    return out;
+  }
+  instance(id: string): InstanceNode {
+    const n = this.nodes.get(id);
+    if (!n || n.kind !== 'instance') throw new Error(`不是实例: ${id}`);
+    return n;
+  }
+
+  // ---------- 选中(不入栈,C1 第三类) ----------
+  select(ids: string[]) {
+    this.selection = new Set(ids);
+  }
+  /** VIEW-04:全选跳过锁定对象 */
+  selectAll() {
+    this.selection = new Set(
+      [...this.nodes.values()].filter((n) => !n.locked).map((n) => n.id),
+    );
+  }
+
+  // ---------- 快照机制 ----------
+  private capture(nodeIds: Iterable<string>, assetIds: Iterable<string> = []): StructSnapshot {
+    const nodes = new Map<string, NodeSnapshot>();
+    const parents = new Set<string>([ROOT]);
+    for (const id of nodeIds) {
+      const n = this.nodes.get(id) ?? null;
+      nodes.set(id, { existed: !!n, node: n ? clone(n) : null });
+      if (n?.parentId) parents.add(n.parentId);
+      parents.add(id); // 若其本身是组,顺序表也要留底
+    }
+    const orders = new Map<string, string[]>();
+    for (const p of parents) orders.set(p, [...(this.order.get(p) ?? [])]);
+    const assets = new Map<string, Asset | null>();
+    for (const id of assetIds) assets.set(id, this.assets.has(id) ? clone(this.assets.get(id)!) : null);
+    return { nodes, orders, assets };
+  }
+
+  private restore(s: StructSnapshot) {
+    for (const [id, snap] of s.nodes) {
+      if (snap.existed) this.nodes.set(id, clone(snap.node!)); // ID 稳定:同 ID 原样回写(TREE 边界 7)
+      else this.nodes.delete(id);
+    }
+    for (const [p, arr] of s.orders) this.order.set(p, [...arr]);
+    for (const [id, a] of s.assets) {
+      if (a) this.assets.set(id, clone(a));
+      else this.assets.delete(id);
+    }
+  }
+
+  /** 立即入栈类操作的统一提交通道(C1 第一类) */
+  private commit(
+    label: string,
+    touchedNodeIds: string[],
+    mutate: () => void,
+    opts: { assetIds?: string[]; mergeKey?: string } = {},
+  ) {
+    if (this.history.isFrozen) throw new Error('预览态禁用编辑(VIEW-07)');
+    const beforeSel = [...this.selection];
+    const before = this.capture(touchedNodeIds, opts.assetIds ?? []);
+    mutate();
+    const after = this.capture(touchedNodeIds, opts.assetIds ?? []);
+    const afterSel = [...this.selection];
+    this.history.push({
+      label,
+      targetIds: touchedNodeIds,
+      apply: () => this.restore(after),
+      revert: () => this.restore(before),
+      selectionBefore: beforeSel,
+      selectionAfter: afterSel,
+      mergeKey: opts.mergeKey,
+    });
+  }
+
+  // ---------- 资产 ----------
+  addAsset(a: Omit<Asset, 'id'>): Asset {
+    // 资产库操作不入栈(导入解析属资产侧;历史栈只管场景编辑)
+    const asset: Asset = { ...clone(a), id: genId('ast') } as Asset;
+    this.assets.set(asset.id, asset);
+    return asset;
+  }
+
+  /** AST 边界 6/场景树边界:删除资产 → 级联删除其全部实例,整体一步 */
+  removeAssetCascade(assetId: string) {
+    const victims = [...this.nodes.values()]
+      .filter((n) => n.kind === 'instance' && n.assetId === assetId)
+      .map((n) => n.id);
+    this.commit(
+      `删除资产及 ${victims.length} 个实例`,
+      victims,
+      () => {
+        for (const id of victims) this.detach(id);
+        this.assets.delete(assetId);
+        this.selection = new Set([...this.selection].filter((s) => !victims.includes(s)));
+      },
+      { assetIds: [assetId] },
+    );
+  }
+
+  // ---------- 实例 ----------
+  /** 导入落场 / AI 落入共用:资产 → 根层级新实例,自动选中(TREE 边界 4)。
+   *  HIST-05:撤销此步移除实例、资产保留 —— capture 不含 assetId,天然满足。 */
+  placeInstance(assetId: string, label = '导入'): InstanceNode {
+    const asset = this.assets.get(assetId);
+    if (!asset) throw new Error(`资产不存在: ${assetId}`);
+    const id = genId('ins');
+    const inst: InstanceNode = {
+      kind: 'instance',
+      id,
+      name: asset.name,
+      assetId,
+      parentId: null,
+      transform: defaultTransform(),
+      visible: true,
+      locked: false,
+    };
+    this.commit(label, [id], () => {
+      this.nodes.set(id, inst);
+      this.order.get(ROOT)!.push(id);
+      this.selection = new Set([id]);
+    });
+    return inst;
+  }
+
+  /** 多选删除 = 一步(C1);组带内容整树删除(TREE 边界 1) */
+  removeNodes(ids: string[]) {
+    const full = [...new Set(ids.flatMap((id) => [id, ...this.descendants(id)]))];
+    this.commit(`删除 ${ids.length} 个对象`, full, () => {
+      for (const id of full) this.detach(id);
+      this.selection = new Set([...this.selection].filter((s) => !full.includes(s)));
+    });
+  }
+
+  private detach(id: string) {
+    const n = this.nodes.get(id);
+    if (!n) return;
+    const arr = this.order.get(n.parentId ?? ROOT);
+    if (arr) {
+      const i = arr.indexOf(id);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    this.order.delete(id);
+    this.nodes.delete(id);
+  }
+
+  rename(id: string, name: string) {
+    this.commit(`重命名 · ${name}`, [id], () => {
+      this.nodes.get(id)!.name = name;
+    });
+  }
+
+  setVisible(ids: string[], visible: boolean) {
+    this.commit(visible ? '显示' : '隐藏', ids, () => {
+      for (const id of ids) this.nodes.get(id)!.visible = visible;
+    });
+  }
+
+  setLocked(ids: string[], locked: boolean) {
+    this.commit(locked ? '锁定' : '解锁', ids, () => {
+      for (const id of ids) this.nodes.get(id)!.locked = locked;
+    });
+  }
+
+  /** PANEL 边界 1:多选批量属性编辑跳过锁定成员,仍是一步 */
+  setMaterialOverride(ids: string[], mat: Record<string, unknown>): { skipped: number } {
+    const editable = ids.filter((id) => !this.nodes.get(id)?.locked);
+    const skipped = ids.length - editable.length;
+    this.commit(`修改材质(${editable.length} 个对象)`, editable, () => {
+      for (const id of editable) this.instance(id).materialOverride = clone(mat);
+    });
+    return { skipped };
+  }
+
+  // ---------- 组 ----------
+  group(ids: string[], name = '组'): GroupNode {
+    const gid = genId('grp');
+    const g: GroupNode = { kind: 'group', id: gid, name, parentId: null, visible: true, locked: false };
+    this.commit(`成组 · ${name}`, [gid, ...ids], () => {
+      this.nodes.set(gid, g);
+      this.order.get(ROOT)!.push(gid);
+      this.order.set(gid, []);
+      for (const id of ids) {
+        const n = this.nodes.get(id)!;
+        const from = this.order.get(n.parentId ?? ROOT)!;
+        from.splice(from.indexOf(id), 1);
+        n.parentId = gid;
+        this.order.get(gid)!.push(id);
+      }
+      this.selection = new Set([gid]);
+    });
+    return g;
+  }
+
+  /** 解组;撤销须还原组名、成员顺序与状态(HIST 边界 4 / TREE 边界 2)——快照机制天然覆盖 */
+  ungroup(gid: string) {
+    const members = [...this.childrenOf(gid)];
+    this.commit('解组', [gid, ...members], () => {
+      const rootArr = this.order.get(ROOT)!;
+      const at = rootArr.indexOf(gid);
+      for (const id of members) this.nodes.get(id)!.parentId = null;
+      rootArr.splice(at, 1, ...members);
+      this.order.delete(gid);
+      this.nodes.delete(gid);
+      this.selection = new Set(members);
+    });
+  }
+
+  // ---------- 变换:两个输入通道(C6) ----------
+  /** gizmo/滑杆:交互会话 = 一步(C1 第二类)。pointer-down 调 begin,期间任意次 update,pointer-up 调 commit。 */
+  beginInteraction(label: string, targets: string[]) {
+    if (this.history.isFrozen) throw new Error('预览态禁用编辑(VIEW-07)');
+    if (this.interaction) throw new Error('已有进行中的交互会话');
+    this.interaction = {
+      label,
+      targets,
+      before: this.capture(targets),
+      selectionBefore: [...this.selection],
+    };
+  }
+  updateInteraction(mutate: (doc: this) => void) {
+    if (!this.interaction) throw new Error('无进行中的交互会话');
+    mutate(this);
+  }
+  /** VIEW 边界 4:Esc 取消 → 回起点、不入栈 */
+  cancelInteraction() {
+    if (!this.interaction) return;
+    this.restore(this.interaction.before);
+    this.interaction = null;
+  }
+  commitInteraction() {
+    const s = this.interaction;
+    if (!s) throw new Error('无进行中的交互会话');
+    this.interaction = null;
+    const after = this.capture(s.targets);
+    this.history.push({
+      label: s.label,
+      targetIds: s.targets,
+      apply: () => this.restore(after),
+      revert: () => this.restore(s.before),
+      selectionBefore: s.selectionBefore,
+      selectionAfter: [...this.selection],
+    });
+  }
+
+  /** 参数面板数值键入:同字段 800ms 内合并(C1 第二类)。rotation 归一在此完成且不产生额外记录(PANEL-05)。 */
+  setTransformField(
+    id: string,
+    field: keyof Transform,
+    axis: 0 | 1 | 2,
+    value: number,
+  ) {
+    if (field === 'scale' && value <= 0) value = 0.001; // clamp ≥0.1%(PANEL-05)
+    if (field === 'rotation') value = normalizeDeg(value);
+    this.commit(
+      `设置 ${field}.${'xyz'[axis]}`,
+      [id],
+      () => {
+        this.instance(id).transform[field][axis] = value;
+      },
+      { mergeKey: `input:${id}:${field}:${axis}` },
+    );
+  }
+
+  /** VIEW-06 沉底:底面 Z 归零(此内核以 bbox 近似;几何精确版在检查 Worker 中) */
+  dropToBed(ids: string[], zMinOf: (inst: InstanceNode) => number) {
+    this.commit('沉底', ids, () => {
+      for (const id of ids) {
+        const inst = this.instance(id);
+        inst.transform.position[2] -= zMinOf(inst);
+      }
+    });
+  }
+}
+
+/** 旋转归一到 (-180, 180](PANEL-05) */
+export function normalizeDeg(deg: number): number {
+  let d = ((deg % 360) + 360) % 360;
+  if (d > 180) d -= 360;
+  return d === -180 ? 180 : d;
+}
