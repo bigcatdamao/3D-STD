@@ -226,7 +226,7 @@ function StatusBar() {
       }}
     >
       选中 {sel} · 历史 {h.position}/{h.length}
-      {'  ·  '}左键选/框选/拖 · W/E/R 变换 · Ctrl 吸附 · 右键旋转 · 中键平移 · 滚轮缩放 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · 5 投影 · Ctrl+A 全选 · Ctrl+Z 撤销 · Esc 取消
+      {'  ·  '}左键选/框选/拖 · W/E/R 变换 · Ctrl 吸附 · 右键旋转 · 中键平移 · 滚轮缩放 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · 5 投影 · Ctrl+A 全选 · Ctrl+Z 撤销 · Del 删除 · Esc 取消
     </div>
   );
 }
@@ -260,6 +260,14 @@ export function Viewport() {
         return;
       }
       if (mod) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        // TREE-04 删除:多选一步;组 = 组及内容整树(TREE 边界 1);拖拽/交互中不响应
+        if (!interactionState.active && doc.selection.size) {
+          e.preventDefault();
+          dispatch((d) => d.removeNodes(d.topMost(d.selection)));
+        }
+        return;
+      }
       switch (e.key) {
         case 'w': case 'W': useUi.getState().setGizmoMode('translate'); break;
         case 'e': case 'E': useUi.getState().setGizmoMode('rotate'); break;

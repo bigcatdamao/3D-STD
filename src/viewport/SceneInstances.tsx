@@ -22,7 +22,15 @@ function colorFor(assetId: string): string {
   return c;
 }
 
-function InstanceMesh({ node, selected }: { node: InstanceNode; selected: boolean }) {
+function InstanceMesh({
+  node,
+  selected,
+  locked,
+}: {
+  node: InstanceNode;
+  selected: boolean;
+  locked: boolean; // 等效锁定(自身或随组,C7)
+}) {
   const ref = useRef<THREE.Mesh>(null);
   const geo = geometryRegistry.get(node.assetId);
 
@@ -48,13 +56,13 @@ function InstanceMesh({ node, selected }: { node: InstanceNode; selected: boolea
       rotation={[rx * D2R, ry * D2R, rz * D2R]} // 欧拉源数据,固定 XYZ 序(C6/技术方案 §3)
       scale={[sx, sy, sz]}
     >
-      <mesh ref={ref} geometry={geo} userData={{ instanceId: node.id, locked: node.locked }}>
+      <mesh ref={ref} geometry={geo} userData={{ instanceId: node.id, locked }}>
         <meshStandardMaterial
-          color={node.locked ? LOCKED_COLOR : colorFor(node.assetId)}
+          color={locked ? LOCKED_COLOR : colorFor(node.assetId)}
           roughness={0.55}
           metalness={0.05}
-          transparent={node.locked}
-          opacity={node.locked ? 0.75 : 1}
+          transparent={locked}
+          opacity={locked ? 0.75 : 1}
         />
       </mesh>
       {selected && outlineGeo && (
@@ -69,12 +77,17 @@ function InstanceMesh({ node, selected }: { node: InstanceNode; selected: boolea
 export function SceneInstances() {
   useUi((s) => s.rev); // 订阅文档版本:任何 command 后重派生
   const nodes = [...doc.nodes.values()].filter(
-    (n): n is InstanceNode => n.kind === 'instance' && n.visible, // C7:隐藏 = 不渲染
+    (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
   );
   return (
     <group>
       {nodes.map((n) => (
-        <InstanceMesh key={n.id} node={n} selected={doc.selection.has(n.id)} />
+        <InstanceMesh
+          key={n.id}
+          node={n}
+          selected={doc.selection.has(n.id)}
+          locked={doc.effectiveLocked(n.id)}
+        />
       ))}
     </group>
   );

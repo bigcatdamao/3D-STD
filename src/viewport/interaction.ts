@@ -108,7 +108,7 @@ function pickInstance(
   const candidates: THREE.Object3D[] = [];
   for (const [id, obj] of meshRegistry) {
     const n = doc.nodes.get(id);
-    if (n && n.kind === 'instance' && n.visible && !n.locked) candidates.push(obj);
+    if (n && n.kind === 'instance' && doc.effectiveVisible(id) && !doc.effectiveLocked(id)) candidates.push(obj);
   }
   const hits = raycaster.intersectObjects(candidates, false);
   if (!hits.length) return null; // intersectObjects 按距离升序 → hits[0] 即「最上层」(VIEW 边界 1)
@@ -460,7 +460,7 @@ export function useViewportInteraction() {
         const box = new THREE.Box3();
         for (const [id, obj] of meshRegistry) {
           const n = doc.nodes.get(id);
-          if (!n || n.kind !== 'instance' || !n.visible || n.locked) continue; // 锁定静默排除(VIEW 边界 3)
+          if (!n || n.kind !== 'instance' || !doc.effectiveVisible(id) || doc.effectiveLocked(id)) continue; // 锁定(含随组锁定)静默排除(VIEW 边界 3 / C7)
           box.setFromObject(obj);
           const sr = projectBoxToScreenRect(box, camera, size.width, size.height);
           if (sr && rectsOverlap(rect, sr)) picked.push(id); // 相交即选(VIEW-04)

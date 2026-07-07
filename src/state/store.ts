@@ -45,6 +45,8 @@ interface UiState {
   setGizmoMode: (m: GizmoMode) => void;
   hud: { text: string; x: number; y: number } | null; // VIEW-05 增量浮标(视口局部像素坐标)
   setHud: (h: { text: string; x: number; y: number } | null) => void;
+  toast: { text: string; id: number } | null; // 全局轻提示(如 TREE-01 深度软上限「提示不禁止」)
+  setToast: (text: string) => void;
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -60,6 +62,8 @@ export const useUi = create<UiState>()((set) => ({
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
   hud: null,
   setHud: (hud) => set({ hud }),
+  toast: null,
+  setToast: (text) => set({ toast: { text, id: Date.now() } }),
 }));
 
 /** 命令派发:执行内核操作并通知 React。所有写操作必须走这里。 */
@@ -110,7 +114,7 @@ export function expandToInstances(ids: Iterable<string>): InstanceNode[] {
     const pool = n.kind === 'instance' ? [n.id] : doc.descendants(n.id);
     for (const pid of pool) {
       const p = doc.nodes.get(pid);
-      if (p && p.kind === 'instance' && !p.locked) out.set(p.id, p);
+      if (p && p.kind === 'instance' && !doc.effectiveLocked(pid)) out.set(p.id, p);
     }
   }
   return [...out.values()];

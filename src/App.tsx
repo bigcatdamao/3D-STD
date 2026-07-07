@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
 // T1 冒烟壳:五区布局占位(PRD 6.1 顶栏动线 / 整站 IA)。各区在 T5–T9 陆续替换为真实模块。
@@ -43,12 +44,15 @@ export function App() {
           </b>
         </span>
       </header>
-      <aside style={zone}>场景树 / 资产(T7 · T11)</aside>
+      <aside style={{ minHeight: 0 }}>
+        <TreePanel />
+      </aside>
       <main style={{ ...zone, padding: 0, overflow: 'hidden' }}>
         <Viewport />
       </main>
       <aside style={zone}>参数面板(T8)</aside>
       <footer style={{ ...zone, gridColumn: '1 / 4' }}>AI 指令条 + 历史栈(T9 · T12)</footer>
+      <ToastLayer />
     </div>
   );
 }
