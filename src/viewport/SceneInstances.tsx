@@ -10,10 +10,14 @@ const SELECT_OUTLINE = '#ffb454';
 const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#e8a15d'];
 const LOCKED_COLOR = '#55555e';
 
+/** 材质默认值 —— 参数面板(T8)以此为「无覆盖」时的显示基准,与渲染严格同源 */
+export const DEFAULT_ROUGHNESS = 0.55;
+export const DEFAULT_METALNESS = 0.05;
+
 // 体色按资产首次出现顺序取色,不再哈希 —— T5 验收记录的视觉债:哈希撞色使圆柱与扭结
 // 同落灰色,与锁定态灰难区分;灰色自此专属锁定态,调色板内不再含灰(T6 顺手清偿)。
 const colorAssign = new Map<string, string>();
-function colorFor(assetId: string): string {
+export function colorFor(assetId: string): string {
   let c = colorAssign.get(assetId);
   if (!c) {
     c = BODY_COLORS[colorAssign.size % BODY_COLORS.length];
@@ -45,6 +49,12 @@ function InstanceMesh({
   const outlineGeo = useMemo(() => geo, [geo]);
   if (!geo) return null;
 
+  const ov = (node.materialOverride ?? {}) as {
+    color?: string;
+    roughness?: number;
+    metalness?: number;
+  };
+
   const [px, py, pz] = node.transform.position;
   const [rx, ry, rz] = node.transform.rotation;
   const [sx, sy, sz] = node.transform.scale;
@@ -57,10 +67,11 @@ function InstanceMesh({
       scale={[sx, sy, sz]}
     >
       <mesh ref={ref} geometry={geo} userData={{ instanceId: node.id, locked }}>
+        {/* PANEL-07/C2:实例级材质覆盖优先;锁定灰保持最高优先级(状态可读性 > 材质) */}
         <meshStandardMaterial
-          color={locked ? LOCKED_COLOR : colorFor(node.assetId)}
-          roughness={0.55}
-          metalness={0.05}
+          color={locked ? LOCKED_COLOR : (ov.color ?? colorFor(node.assetId))}
+          roughness={ov.roughness ?? DEFAULT_ROUGHNESS}
+          metalness={ov.metalness ?? DEFAULT_METALNESS}
           transparent={locked}
           opacity={locked ? 0.75 : 1}
         />

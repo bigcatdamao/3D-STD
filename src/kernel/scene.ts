@@ -302,9 +302,10 @@ export class SceneDocument {
     });
   }
 
-  /** PANEL 边界 1:多选批量属性编辑跳过锁定成员,仍是一步 */
+  /** PANEL 边界 1:多选批量属性编辑跳过锁定成员,仍是一步。
+   *  T8 起按 C7 等效锁定口径(含随组锁定),与视口/面板一致;逐参数编辑见 setMaterialParam。 */
   setMaterialOverride(ids: string[], mat: Record<string, unknown>): { skipped: number } {
-    const editable = ids.filter((id) => !this.nodes.get(id)?.locked);
+    const editable = ids.filter((id) => !this.effectiveLocked(id));
     const skipped = ids.length - editable.length;
     this.commit(`修改材质(${editable.length} 个对象)`, editable, () => {
       for (const id of editable) this.instance(id).materialOverride = clone(mat);
@@ -464,23 +465,107 @@ export class SceneDocument {
     });
   }
 
-  /** 参数面板数值键入:同字段 800ms 内合并(C1 第二类)。rotation 归一在此完成且不产生额外记录(PANEL-05)。 */
-  setTransformField(
-    id: string,
-    field: keyof Transform,
-    axis: 0 | 1 | 2,
-    value: number,
-  ) {
-    if (field === 'scale' && value <= 0) value = 0.001; // clamp ≥0.1%(PANEL-05)
+  /** 参数面板数值键入(单目标)。多目标绝对统一见 setTransformFieldMulti。 */
+  setTransformField(id: string, field: keyof Transform, axis: 0 | 1 | 2, value: number) {
+    this.setTransformFieldMulti([id], field, axis, value);
+  }
+
+  /** PANEL-03「绝对统一」:面板输入对每个成员的该分量设为同一绝对值(C6 面板 = 绝对值语义)。
+   *  旋转归一 (-180,180]、缩放 clamp ≥0.1% 禁负在此完成且不产生额外记录(PANEL-05)。
+   *  多选旋转/缩放沿用 T6 裁决:分量各绕自身枢轴应用;绕公共中心的编队变换记 M2 债(gizmo-math 决策 1)。
+   *  同参数 800ms 合并(C1 第二类);全体已等于目标值时不入栈(无变化不产生记录)。 */
+  setTransformFieldMulti(ids: string[], field: keyof Transform, axis: 0 | 1 | 2, value: number) {
+    if (field === 'scale') value = clampScale(value);
     if (field === 'rotation') value = normalizeDeg(value);
+    const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
+    if (!targets.length) return;
+    if (targets.every((id) => this.instance(id).transform[field][axis] === value)) return;
     this.commit(
-      `设置 ${field}.${'xyz'[axis]}`,
-      [id],
+      `${FIELD_LABEL[field]} ${'XYZ'[axis]}${cnt(targets.length)}`,
+      targets,
       () => {
-        this.instance(id).transform[field][axis] = value;
+        for (const id of targets) this.instance(id).transform[field][axis] = value;
       },
-      { mergeKey: `input:${id}:${field}:${axis}` },
+      { mergeKey: `input:${targets.join('+')}:${field}:${axis}` },
     );
+  }
+
+  /** PANEL-03 多选位置语义:显示 = 包围盒中心,编辑 = 整体平移保持相对位置。
+   *  delta 由面板按「目标值 − 当前中心」计算;各成员同轴平移同一增量。 */
+  translateInstancesAxis(ids: string[], axis: 0 | 1 | 2, delta: number) {
+    const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
+    if (!targets.length || delta === 0) return;
+    this.commit(
+      `位置 ${'XYZ'[axis]}${cnt(targets.length)}`,
+      targets,
+      () => {
+        for (const id of targets) this.instance(id).transform.position[axis] += delta;
+      },
+      { mergeKey: `input:${targets.join('+')}:translate:${axis}` },
+    );
+  }
+
+  /** PANEL-04 统一缩放锁:等比系数作用于每个成员的三个轴,成员间与轴间比例保持;逐分量 clamp。 */
+  scaleInstancesFactor(ids: string[], factor: number) {
+    const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
+    if (!targets.length || factor === 1) return;
+    this.commit(
+      `等比缩放${cnt(targets.length)}`,
+      targets,
+      () => {
+        for (const id of targets) {
+          const s = this.instance(id).transform.scale;
+          this.instance(id).transform.scale = [
+            clampScale(s[0] * factor),
+            clampScale(s[1] * factor),
+            clampScale(s[2] * factor),
+          ];
+        }
+      },
+      { mergeKey: `input:${targets.join('+')}:scale:factor` },
+    );
+  }
+
+  /** PANEL 边界 3:统一锁 + 混合值 —— 输入的百分比作为绝对目标,统一应用到全部成员的三个轴。 */
+  setUniformScale(ids: string[], value: number) {
+    const v = clampScale(value);
+    const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
+    if (!targets.length) return;
+    if (targets.every((id) => this.instance(id).transform.scale.every((s) => s === v))) return;
+    this.commit(
+      `统一缩放${cnt(targets.length)}`,
+      targets,
+      () => {
+        for (const id of targets) this.instance(id).transform.scale = [v, v, v];
+      },
+      { mergeKey: `input:${targets.join('+')}:scale:uniform` },
+    );
+  }
+
+  /** PANEL-07 材质参数逐项覆盖(C2 实例级覆盖;合并写入,不清空其余参数)。
+   *  跳过锁定成员(PANEL 边界 1;按 C7 等效锁定口径,含随组锁定);同参数 800ms 合并(C1)。 */
+  setMaterialParam(
+    ids: string[],
+    key: 'color' | 'roughness' | 'metalness',
+    value: string | number,
+  ): { skipped: number } {
+    const editable = ids.filter(
+      (id) => this.nodes.get(id)?.kind === 'instance' && !this.effectiveLocked(id),
+    );
+    const skipped = ids.length - editable.length;
+    if (!editable.length) return { skipped };
+    this.commit(
+      `${MAT_LABEL[key]}${cnt(editable.length)}`,
+      editable,
+      () => {
+        for (const id of editable) {
+          const inst = this.instance(id);
+          inst.materialOverride = { ...(inst.materialOverride ?? {}), [key]: value };
+        }
+      },
+      { mergeKey: `mat:${editable.join('+')}:${key}` },
+    );
+    return { skipped };
   }
 
   /** VIEW-06 沉底:底面 Z 归零(此内核以 bbox 近似;几何精确版在检查 Worker 中) */
@@ -493,6 +578,14 @@ export class SceneDocument {
     });
   }
 }
+
+// ---------- 面板命令族共用常量(T8) ----------
+const FIELD_LABEL: Record<keyof Transform, string> = { position: '位置', rotation: '旋转', scale: '缩放' };
+const MAT_LABEL = { color: '颜色', roughness: '粗糙度', metalness: '金属度' } as const;
+const cnt = (n: number) => (n > 1 ? `(${n} 个对象)` : '');
+/** PANEL-05:缩放 clamp ≥0.1%、禁负(镜像为显式操作,P1) */
+export const MIN_SCALE_COMPONENT = 0.001;
+const clampScale = (v: number) => (v < MIN_SCALE_COMPONENT ? MIN_SCALE_COMPONENT : v);
 
 /** 旋转归一到 (-180, 180](PANEL-05) */
 export function normalizeDeg(deg: number): number {

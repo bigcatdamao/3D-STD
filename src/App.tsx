@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ParamPanel } from './panel/ParamPanel';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -50,7 +51,9 @@ export function App() {
       <main style={{ ...zone, padding: 0, overflow: 'hidden' }}>
         <Viewport />
       </main>
-      <aside style={zone}>参数面板(T8)</aside>
+      <aside style={{ minHeight: 0 }}>
+        <ParamPanel />
+      </aside>
       <footer style={{ ...zone, gridColumn: '1 / 4' }}>AI 指令条 + 历史栈(T9 · T12)</footer>
       <ToastLayer />
     </div>
