@@ -8,12 +8,15 @@ import {
   bootstrapDemoScene,
   dispatch,
   doc,
+  expandToInstances,
   sendCam,
   useUi,
 } from '../state/store';
 import { Bed } from './Bed';
 import { CameraRig } from './CameraRig';
+import { Gizmo } from './Gizmo';
 import { SceneInstances } from './SceneInstances';
+import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
 
 bootstrapDemoScene();
@@ -68,6 +71,7 @@ function Toolbar() {
         <button style={btn} onClick={() => sendCam({ kind: 'focus' })} title="快捷键 F">聚焦</button>
         <button style={btn} onClick={() => sendCam({ kind: 'home' })} title="快捷键 Home">复位</button>
       </div>
+      <TransformTools />
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, pointerEvents: 'auto' }}>
         <select
           style={{ ...btn, appearance: 'auto' }}
@@ -105,6 +109,77 @@ function Toolbar() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+/** T6 工具组:W/E/R 三模式切换 + 「沉底」一等按钮(VIEW-05/06) */
+function TransformTools() {
+  useUi((s) => s.rev); // 选中集变化 → 沉底可用态刷新
+  const mode = useUi((s) => s.gizmoMode);
+  const setMode = useUi((s) => s.setGizmoMode);
+  const targets = expandToInstances(doc.selection);
+
+  const modeBtn = (active: boolean): React.CSSProperties => ({
+    ...btn,
+    ...(active ? { borderColor: '#ffb454', color: '#ffb454', background: '#2e2a22' } : {}),
+  });
+
+  const onDrop = () => {
+    const ids = expandToInstances(doc.selection).map((n) => n.id);
+    if (!ids.length) return;
+    // VIEW-06:底面 Z 归零。zMin 由文档数据推导(资产 bbox × 当前 TRS),不依赖渲染帧
+    dispatch((d) =>
+      d.dropToBed(ids, (inst) =>
+        worldBBoxOfInstance(inst.transform, d.assets.get(inst.assetId)!.meta.bbox).min.z,
+      ),
+    );
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 6, marginLeft: 10, pointerEvents: 'auto' }}>
+      <button style={modeBtn(mode === 'translate')} onClick={() => setMode('translate')} title="快捷键 W">移动</button>
+      <button style={modeBtn(mode === 'rotate')} onClick={() => setMode('rotate')} title="快捷键 E">旋转</button>
+      <button style={modeBtn(mode === 'scale')} onClick={() => setMode('scale')} title="快捷键 R">缩放</button>
+      <button
+        style={{
+          ...btn,
+          ...(targets.length
+            ? { background: '#ffb454', borderColor: '#ffb454', color: '#1b1b20', fontWeight: 600 }
+            : { opacity: 0.45, cursor: 'default' }),
+        }}
+        disabled={!targets.length}
+        onClick={onDrop}
+        title="选中对象底面 Z 归零(VIEW-06)"
+      >
+        ⬇ 沉底
+      </button>
+    </div>
+  );
+}
+
+/** VIEW-05 增量浮标:跟随光标外显当前拖拽增量;Ctrl 吸附时数值按步进跳变 */
+function GizmoHud() {
+  const hud = useUi((s) => s.hud);
+  if (!hud) return null;
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: hud.x + 16,
+        top: hud.y + 14,
+        fontSize: 12,
+        fontVariantNumeric: 'tabular-nums',
+        color: '#1b1b20',
+        background: '#ffb454',
+        padding: '2px 8px',
+        borderRadius: 5,
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+        fontWeight: 600,
+      }}
+    >
+      {hud.text}
     </div>
   );
 }
@@ -151,7 +226,7 @@ function StatusBar() {
       }}
     >
       选中 {sel} · 历史 {h.position}/{h.length}
-      {'  ·  '}左键选/框选/按住拖 · 右键旋转 · 中键平移 · 滚轮缩放 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · 5 投影 · Ctrl+A 全选 · Ctrl+Z 撤销
+      {'  ·  '}左键选/框选/拖 · W/E/R 变换 · Ctrl 吸附 · 右键旋转 · 中键平移 · 滚轮缩放 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · 5 投影 · Ctrl+A 全选 · Ctrl+Z 撤销 · Esc 取消
     </div>
   );
 }
@@ -186,6 +261,9 @@ export function Viewport() {
       }
       if (mod) return;
       switch (e.key) {
+        case 'w': case 'W': useUi.getState().setGizmoMode('translate'); break;
+        case 'e': case 'E': useUi.getState().setGizmoMode('rotate'); break;
+        case 'r': case 'R': useUi.getState().setGizmoMode('scale'); break;
         case '1': sendCam({ kind: 'preset', view: 'top' }); break;
         case '2': sendCam({ kind: 'preset', view: 'front' }); break;
         case '3': sendCam({ kind: 'preset', view: 'side' }); break;
@@ -217,10 +295,12 @@ export function Viewport() {
         <CameraRig />
         <Bed bed={bed} />
         <SceneInstances />
+        <Gizmo />
         <InteractionBridge />
       </Canvas>
       <Toolbar />
       <MarqueeOverlay />
+      <GizmoHud />
       <StatusBar />
     </div>
   );

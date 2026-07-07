@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { create } from 'zustand';
 import { SceneDocument } from '../kernel/scene';
 import { Asset, InstanceNode } from '../kernel/types';
+import type { GizmoMode } from '../viewport/gizmo-math';
 
 export const doc = new SceneDocument();
 
@@ -40,6 +41,10 @@ interface UiState {
   setBed: (b: BedConfig) => void;
   marquee: Marquee | null; // 框选橡皮筋(屏幕像素坐标)
   setMarquee: (m: Marquee | null) => void;
+  gizmoMode: GizmoMode; // VIEW-05:W/E/R 三模式
+  setGizmoMode: (m: GizmoMode) => void;
+  hud: { text: string; x: number; y: number } | null; // VIEW-05 增量浮标(视口局部像素坐标)
+  setHud: (h: { text: string; x: number; y: number } | null) => void;
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -51,6 +56,10 @@ export const useUi = create<UiState>()((set) => ({
   setBed: (bed) => set({ bed }),
   marquee: null,
   setMarquee: (marquee) => set({ marquee }),
+  gizmoMode: 'translate',
+  setGizmoMode: (gizmoMode) => set({ gizmoMode }),
+  hud: null,
+  setHud: (hud) => set({ hud }),
 }));
 
 /** 命令派发:执行内核操作并通知 React。所有写操作必须走这里。 */
@@ -82,6 +91,30 @@ export function sendCam(c: CamCmd) {
 export const geometryRegistry = new Map<string, THREE.BufferGeometry>();
 /** 实例 id → 视口 mesh,供聚焦包围盒与框选投影使用 */
 export const meshRegistry = new Map<string, THREE.Object3D>();
+/** Gizmo 把手网格注册表(T6):交互层的拾取候选;Gizmo 组件挂载/卸载时增删 */
+export const gizmoHandles = new Set<THREE.Object3D>();
+/** Gizmo 高亮态(hover/拖拽中)。每帧被 Gizmo 读取着色;
+ *  不入 zustand —— 拖拽期每次 pointermove 触发 React 重渲染得不偿失 */
+export const gizmoUiState = {
+  hoverKey: null as string | null,
+  activeKey: null as string | null,
+};
+
+/** 选中集展开为可变换的实例集合(组 → 其全部后代实例;锁定成员剔除)。
+ *  视口拖拽、gizmo、沉底按钮共用同一展开语义(VIEW-04/06)。 */
+export function expandToInstances(ids: Iterable<string>): InstanceNode[] {
+  const out = new Map<string, InstanceNode>();
+  for (const id of ids) {
+    const n = doc.nodes.get(id);
+    if (!n) continue;
+    const pool = n.kind === 'instance' ? [n.id] : doc.descendants(n.id);
+    for (const pid of pool) {
+      const p = doc.nodes.get(pid);
+      if (p && p.kind === 'instance' && !p.locked) out.set(p.id, p);
+    }
+  }
+  return [...out.values()];
+}
 
 // ---------- 示例场景(T5 演示与验收用;T10 解析管线就位后由真实导入替代) ----------
 

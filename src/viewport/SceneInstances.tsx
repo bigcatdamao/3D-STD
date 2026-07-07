@@ -7,13 +7,19 @@ import { InstanceNode } from '../kernel/types';
 import { doc, geometryRegistry, meshRegistry, useUi } from '../state/store';
 
 const SELECT_OUTLINE = '#ffb454';
-const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#8b8b93'];
+const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#e8a15d'];
 const LOCKED_COLOR = '#55555e';
 
+// 体色按资产首次出现顺序取色,不再哈希 —— T5 验收记录的视觉债:哈希撞色使圆柱与扭结
+// 同落灰色,与锁定态灰难区分;灰色自此专属锁定态,调色板内不再含灰(T6 顺手清偿)。
+const colorAssign = new Map<string, string>();
 function colorFor(assetId: string): string {
-  let h = 0;
-  for (let i = 0; i < assetId.length; i++) h = (h * 31 + assetId.charCodeAt(i)) >>> 0;
-  return BODY_COLORS[h % BODY_COLORS.length];
+  let c = colorAssign.get(assetId);
+  if (!c) {
+    c = BODY_COLORS[colorAssign.size % BODY_COLORS.length];
+    colorAssign.set(assetId, c);
+  }
+  return c;
 }
 
 function InstanceMesh({ node, selected }: { node: InstanceNode; selected: boolean }) {
