@@ -250,8 +250,14 @@ export class SceneDocument {
 
   // ---------- 实例 ----------
   /** 导入落场 / AI 落入共用:资产 → 根层级新实例,自动选中(TREE 边界 4)。
-   *  HIST-05:撤销此步移除实例、资产保留 —— capture 不含 assetId,天然满足。 */
-  placeInstance(assetId: string, label = '导入', op: OpKind = 'place'): InstanceNode {
+   *  HIST-05:撤销此步移除实例、资产保留 —— capture 不含 assetId,天然满足。
+   *  position 可选:导入语义「床中心 + 自动沉底」(IMP-02)在此一步完成,不拆两条历史(C1)。 */
+  placeInstance(
+    assetId: string,
+    label = '导入',
+    op: OpKind = 'place',
+    position?: [number, number, number],
+  ): InstanceNode {
     const asset = this.assets.get(assetId);
     if (!asset) throw new Error(`资产不存在: ${assetId}`);
     const id = genId('ins');
@@ -261,7 +267,9 @@ export class SceneDocument {
       name: dedupeName(asset.name, this.takenNames()), // 实例继承资产名,重复加序号(TREE-05)
       assetId,
       parentId: null,
-      transform: defaultTransform(),
+      transform: position
+        ? { ...defaultTransform(), position: [...position] }
+        : defaultTransform(),
       visible: true,
       locked: false,
     };

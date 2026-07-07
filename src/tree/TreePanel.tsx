@@ -578,14 +578,15 @@ function RenameInput({ initial, onEnd }: { initial: string; onEnd: (commit: bool
   );
 }
 
-/** 全局轻提示层(App 挂载):TREE-01 深度软上限等「提示不禁止」类反馈 */
+/** 全局轻提示层(App 挂载):TREE-01 深度软上限等「提示不禁止」类反馈。
+ *  T10 起支持可选动作按钮(IMP-05「可撤 toast」——重选单位);带动作时停留加长、开启点击。 */
 export function ToastLayer() {
   const toast = useUi((s) => s.toast);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     if (!toast) return;
     setVisible(true);
-    const t = setTimeout(() => setVisible(false), 2800);
+    const t = setTimeout(() => setVisible(false), toast.action ? 6500 : 2800);
     return () => clearTimeout(t);
   }, [toast?.id]);
   if (!toast || !visible) return null;
@@ -603,10 +604,32 @@ export function ToastLayer() {
         padding: '6px 14px',
         borderRadius: 7,
         zIndex: 40,
-        pointerEvents: 'none',
+        pointerEvents: toast.action ? 'auto' : 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
       }}
     >
-      {toast.text}
+      <span>{toast.text}</span>
+      {toast.action && (
+        <button
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: AMBER,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: 0,
+          }}
+          onClick={() => {
+            toast.action!.run();
+            setVisible(false);
+          }}
+        >
+          {toast.action.label}
+        </button>
+      )}
     </div>
   );
 }

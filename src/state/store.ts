@@ -32,6 +32,32 @@ export interface Marquee {
   y1: number;
 }
 
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
+/** 导入状态条的视图行(队列内核状态的只读投影,见 importer/import-queue) */
+export interface ImportJobView {
+  id: string;
+  name: string;
+  phase: 'queued' | 'running' | 'done' | 'failed' | 'canceled';
+  pct: number;
+  phaseText: string;
+  error?: { code: string; message: string; retryable: boolean };
+  thumb?: string | null;
+}
+
+/** IMP-05 单位确认:对话框打开期间对象以「幽灵预览」形态在床上实时换算,未入库未入栈 */
+export interface UnitAskState {
+  jobId: string;
+  name: string;
+  bboxRaw: { min: [number, number, number]; max: [number, number, number] };
+  unit: 'mm' | 'cm' | 'inch' | 'm';
+  recommended: 'mm' | 'cm' | 'inch' | 'm';
+  slotX: number;
+}
+
 interface UiState {
   rev: number; // 场景文档版本号:每次 command 后 +1,驱动订阅组件重渲染
   bump: () => void;
@@ -45,8 +71,15 @@ interface UiState {
   setGizmoMode: (m: GizmoMode) => void;
   hud: { text: string; x: number; y: number } | null; // VIEW-05 增量浮标(视口局部像素坐标)
   setHud: (h: { text: string; x: number; y: number } | null) => void;
-  toast: { text: string; id: number } | null; // 全局轻提示(如 TREE-01 深度软上限「提示不禁止」)
-  setToast: (text: string) => void;
+  toast: { text: string; id: number; action?: ToastAction } | null; // 全局轻提示;action 为可选跟随按钮(IMP-05「可撤 toast」)
+  setToast: (text: string, action?: ToastAction) => void;
+  importJobs: ImportJobView[]; // T10 导入状态条(IMP-08:占位可见、失败不静默消失)
+  upsertImportJob: (j: ImportJobView) => void;
+  dropImportJob: (id: string) => void;
+  dragImport: boolean; // 视口拖放高亮
+  setDragImport: (v: boolean) => void;
+  unitAsk: UnitAskState | null; // IMP-05 单位确认对话框(一次一件,余者排队)
+  setUnitAsk: (u: UnitAskState | null) => void;
   histHover: string[] | null; // HIST-08:hover 历史条目 → 视口高亮受影响实例(低频,入 zustand 无性能顾虑)
   setHistHover: (ids: string[] | null) => void;
 }
@@ -65,7 +98,21 @@ export const useUi = create<UiState>()((set) => ({
   hud: null,
   setHud: (hud) => set({ hud }),
   toast: null,
-  setToast: (text) => set({ toast: { text, id: Date.now() } }),
+  setToast: (text, action) => set({ toast: { text, id: Date.now(), action } }),
+  importJobs: [],
+  upsertImportJob: (j) =>
+    set((s) => {
+      const i = s.importJobs.findIndex((x) => x.id === j.id);
+      const next = [...s.importJobs];
+      if (i >= 0) next[i] = { ...next[i], ...j };
+      else next.push(j);
+      return { importJobs: next };
+    }),
+  dropImportJob: (id) => set((s) => ({ importJobs: s.importJobs.filter((x) => x.id !== id) })),
+  dragImport: false,
+  setDragImport: (dragImport) => set({ dragImport }),
+  unitAsk: null,
+  setUnitAsk: (unitAsk) => set({ unitAsk }),
   histHover: null,
   setHistHover: (histHover) => set({ histHover }),
 }));
@@ -97,6 +144,8 @@ export function sendCam(c: CamCmd) {
 // ---------- 几何注册表(非序列化资源,活在内核之外) ----------
 
 export const geometryRegistry = new Map<string, THREE.BufferGeometry>();
+/** 资产缩略图 dataURL(IMP-07)。留在内核之外:撤销快照 structuredClone 资产时不背图片字节 */
+export const thumbRegistry = new Map<string, string>();
 /** 实例 id → 视口 mesh,供聚焦包围盒与框选投影使用 */
 export const meshRegistry = new Map<string, THREE.Object3D>();
 /** Gizmo 把手网格注册表(T6):交互层的拾取候选;Gizmo 组件挂载/卸载时增删 */
@@ -124,7 +173,8 @@ export function expandToInstances(ids: Iterable<string>): InstanceNode[] {
   return [...out.values()];
 }
 
-// ---------- 示例场景(T5 演示与验收用;T10 解析管线就位后由真实导入替代) ----------
+// ---------- 示例场景(T5–T9 验收回归夹具)。T10 真实导入已就位后仍保留:
+// 持久化(T11)与欢迎页(T17)未落地前,刷新即失,固定夹具是回归点测的稳定基准 ----------
 
 function bboxOf(g: THREE.BufferGeometry): Asset['meta']['bbox'] {
   g.computeBoundingBox();

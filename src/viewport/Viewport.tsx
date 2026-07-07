@@ -12,6 +12,14 @@ import {
   sendCam,
   useUi,
 } from '../state/store';
+import {
+  DragHighlight,
+  GhostPreview,
+  ImportButton,
+  ImportStatusStrip,
+  UnitDialog,
+  useImportDrop,
+} from '../importer/ImportUI';
 import { Bed } from './Bed';
 import { CameraRig } from './CameraRig';
 import { Gizmo } from './Gizmo';
@@ -61,6 +69,8 @@ function Toolbar() {
       }}
     >
       <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+        {/* T10 临时入口:文件选择器与拖放同语义(入库+建实例);T11 资产面板就位后改绑「仅入库」(IMP-02) */}
+        <ImportButton style={{ ...btn, borderColor: '#ffb454', color: '#ffb454' }} />
         <button style={btn} onClick={() => setOrtho(!ortho)} title="快捷键 5">
           {ortho ? '正交' : '透视'}
         </button>
@@ -290,9 +300,10 @@ export function Viewport() {
   }, [setOrtho]);
 
   const bed = useUi((s) => s.bed);
+  const dropProps = useImportDrop(); // IMP-02:拖入视口 = 入库 + 建实例(床中心 + 自动沉底)
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%' }} {...dropProps}>
       <Canvas
         style={{ background: '#141417' }}
         onContextMenu={(e) => e.preventDefault()} // 右键归 orbit,屏蔽浏览器菜单
@@ -303,6 +314,7 @@ export function Viewport() {
         <CameraRig />
         <Bed bed={bed} />
         <SceneInstances />
+        <GhostPreview />
         <Gizmo />
         <InteractionBridge />
       </Canvas>
@@ -310,6 +322,9 @@ export function Viewport() {
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />
+      <DragHighlight />
+      <ImportStatusStrip />
+      <UnitDialog />
     </div>
   );
 }
