@@ -26,14 +26,18 @@ export function colorFor(assetId: string): string {
   return c;
 }
 
+const HIST_HOVER_OUTLINE = '#5aa9e6'; // HIST-08 历史条目 hover 高亮:与选中琥珀区分的冷色
+
 function InstanceMesh({
   node,
   selected,
   locked,
+  histHl,
 }: {
   node: InstanceNode;
   selected: boolean;
   locked: boolean; // 等效锁定(自身或随组,C7)
+  histHl: boolean; // HIST-08:hover 历史条目高亮受影响对象
 }) {
   const ref = useRef<THREE.Mesh>(null);
   const geo = geometryRegistry.get(node.assetId);
@@ -81,12 +85,19 @@ function InstanceMesh({
           <meshBasicMaterial color={SELECT_OUTLINE} side={THREE.BackSide} depthWrite={false} />
         </mesh>
       )}
+      {/* HIST-08:外层再套一圈冷色壳,选中态下也可见(两壳半径错开,互不遮盖) */}
+      {histHl && outlineGeo && (
+        <mesh geometry={outlineGeo} scale={[1.085, 1.085, 1.085]} renderOrder={1}>
+          <meshBasicMaterial color={HIST_HOVER_OUTLINE} side={THREE.BackSide} depthWrite={false} />
+        </mesh>
+      )}
     </group>
   );
 }
 
 export function SceneInstances() {
   useUi((s) => s.rev); // 订阅文档版本:任何 command 后重派生
+  const histHover = useUi((s) => s.histHover); // HIST-08(低频,不影响拖拽帧率)
   const nodes = [...doc.nodes.values()].filter(
     (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
   );
@@ -98,6 +109,7 @@ export function SceneInstances() {
           node={n}
           selected={doc.selection.has(n.id)}
           locked={doc.effectiveLocked(n.id)}
+          histHl={!!histHover?.includes(n.id)}
         />
       ))}
     </group>

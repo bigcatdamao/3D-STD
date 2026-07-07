@@ -414,7 +414,7 @@ function useMatSession(ids: string[], label: string) {
   const update = (mut: (inst: InstanceNode) => void) => {
     if (!ids.length) return;
     if (!active.current) {
-      dispatch((d) => d.beginInteraction(label, ids));
+      dispatch((d) => d.beginInteraction(label, ids, 'material')); // HIST-07:滑杆/取色会话归入材质类
       active.current = true;
     }
     dispatch((d) =>

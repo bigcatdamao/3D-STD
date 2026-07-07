@@ -1,9 +1,13 @@
 // HistoryManager —— PRD C1 / HIST-01/02/03/06 的实现。
 // Command 模式:每条记录持有 apply/revert 闭包(内部为受影响节点的 before/after 快照),不做场景全量快照。
 
+import type { OpKind } from './history-labels.js';
+
 export interface HistoryEntry {
-  label: string; // HIST-07 命名规范由上层查表生成
+  label: string; // 显示文案:基础词取自 HIST-07 命名表(history-labels),调用点追加上下文
+  op: OpKind; // HIST-07 操作类型:历史面板据此取图标与归类
   targetIds: string[];
+  targetNames: string[]; // 入栈时刻的目标名快照:删除类操作撤销前节点已不在文档,面板无法活查(HIST-04 目标名列)
   apply: () => void;
   revert: () => void;
   selectionBefore: string[]; // HIST-06:撤销恢复操作前选中态
@@ -60,8 +64,14 @@ export class HistoryManager {
   get canRedo() {
     return !this.frozen && this.cursor < this.entries.length;
   }
-  list(): ReadonlyArray<Pick<HistoryEntry, 'label' | 'targetIds' | 'at'>> {
-    return this.entries.map(({ label, targetIds, at }) => ({ label, targetIds, at }));
+  list(): ReadonlyArray<Pick<HistoryEntry, 'label' | 'op' | 'targetIds' | 'targetNames' | 'at'>> {
+    return this.entries.map(({ label, op, targetIds, targetNames, at }) => ({
+      label,
+      op,
+      targetIds,
+      targetNames,
+      at,
+    }));
   }
 
   /** 入栈。条目在此前必须已被执行(commit 流程负责)。 */
@@ -82,6 +92,8 @@ export class HistoryManager {
       top.apply = entry.apply;
       top.selectionAfter = entry.selectionAfter;
       top.label = entry.label;
+      top.op = entry.op;
+      top.targetNames = entry.targetNames;
       top.at = at;
       // revert 保持 top 原有(回到最早 before);cursor 不变
       return;

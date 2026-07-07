@@ -2,6 +2,7 @@
 // 所有变更必须经 command(commit/interaction/mergedInput)派发,禁止旁路修改(技术方案 §3)。
 
 import { HistoryManager } from './history.js';
+import type { OpKind } from './history-labels.js';
 import { dedupeName, nextGroupName, sanitizeName } from './naming.js';
 import {
   Asset,
@@ -38,7 +39,9 @@ export class SceneDocument {
 
   private interaction: {
     label: string;
+    op: OpKind;
     targets: string[];
+    targetNames: string[];
     before: StructSnapshot;
     selectionBefore: string[];
   } | null = null;
@@ -169,8 +172,10 @@ export class SceneDocument {
     }
   }
 
-  /** 立即入栈类操作的统一提交通道(C1 第一类) */
+  /** 立即入栈类操作的统一提交通道(C1 第一类)。
+   *  op 为必填首参:每次入栈都必须在 HIST-07 命名表中声明操作类型,禁止无类型条目。 */
   private commit(
+    op: OpKind,
     label: string,
     touchedNodeIds: string[],
     mutate: () => void,
@@ -179,12 +184,19 @@ export class SceneDocument {
     if (this.history.isFrozen) throw new Error('预览态禁用编辑(VIEW-07)');
     const beforeSel = [...this.selection];
     const before = this.capture(touchedNodeIds, opts.assetIds ?? []);
+    // 目标名快照:优先取变更前的名字(删除类),新建类(变更前不存在)在 mutate 后补取
+    const beforeNames = new Map(touchedNodeIds.map((id) => [id, this.nodes.get(id)?.name]));
     mutate();
+    const targetNames = touchedNodeIds
+      .map((id) => beforeNames.get(id) ?? this.nodes.get(id)?.name)
+      .filter((n): n is string => !!n);
     const after = this.capture(touchedNodeIds, opts.assetIds ?? [], before.orders.keys());
     const afterSel = [...this.selection];
     this.history.push({
       label,
+      op,
       targetIds: touchedNodeIds,
+      targetNames,
       apply: () => this.restore(after),
       revert: () => this.restore(before),
       selectionBefore: beforeSel,
@@ -224,6 +236,7 @@ export class SceneDocument {
       .filter((n) => n.kind === 'instance' && n.assetId === assetId)
       .map((n) => n.id);
     this.commit(
+      'removeAsset',
       `删除资产及 ${victims.length} 个实例`,
       victims,
       () => {
@@ -238,7 +251,7 @@ export class SceneDocument {
   // ---------- 实例 ----------
   /** 导入落场 / AI 落入共用:资产 → 根层级新实例,自动选中(TREE 边界 4)。
    *  HIST-05:撤销此步移除实例、资产保留 —— capture 不含 assetId,天然满足。 */
-  placeInstance(assetId: string, label = '导入'): InstanceNode {
+  placeInstance(assetId: string, label = '导入', op: OpKind = 'place'): InstanceNode {
     const asset = this.assets.get(assetId);
     if (!asset) throw new Error(`资产不存在: ${assetId}`);
     const id = genId('ins');
@@ -252,7 +265,7 @@ export class SceneDocument {
       visible: true,
       locked: false,
     };
-    this.commit(label, [id], () => {
+    this.commit(op, label, [id], () => {
       this.nodes.set(id, inst);
       this.order.get(ROOT)!.push(id);
       this.selection = new Set([id]);
@@ -263,7 +276,7 @@ export class SceneDocument {
   /** 多选删除 = 一步(C1);组带内容整树删除(TREE 边界 1) */
   removeNodes(ids: string[]) {
     const full = [...new Set(ids.flatMap((id) => [id, ...this.descendants(id)]))];
-    this.commit(`删除 ${ids.length} 个对象`, full, () => {
+    this.commit('remove', `删除 ${ids.length} 个对象`, full, () => {
       for (const id of full) this.detach(id);
       this.selection = new Set([...this.selection].filter((s) => !full.includes(s)));
     });
@@ -285,19 +298,19 @@ export class SceneDocument {
     const clean = sanitizeName(name);
     if (!clean) return; // 空名不成立,UI 侧还原输入框(允许重名但不允许空名,TREE-05)
     if (this.nodes.get(id)?.name === clean) return; // 无变化不入栈
-    this.commit(`重命名 · ${clean}`, [id], () => {
+    this.commit('rename', `重命名 · ${clean}`, [id], () => {
       this.nodes.get(id)!.name = clean;
     });
   }
 
   setVisible(ids: string[], visible: boolean) {
-    this.commit(visible ? '显示' : '隐藏', ids, () => {
+    this.commit(visible ? 'show' : 'hide', visible ? '显示' : '隐藏', ids, () => {
       for (const id of ids) this.nodes.get(id)!.visible = visible;
     });
   }
 
   setLocked(ids: string[], locked: boolean) {
-    this.commit(locked ? '锁定' : '解锁', ids, () => {
+    this.commit(locked ? 'lock' : 'unlock', locked ? '锁定' : '解锁', ids, () => {
       for (const id of ids) this.nodes.get(id)!.locked = locked;
     });
   }
@@ -307,7 +320,7 @@ export class SceneDocument {
   setMaterialOverride(ids: string[], mat: Record<string, unknown>): { skipped: number } {
     const editable = ids.filter((id) => !this.effectiveLocked(id));
     const skipped = ids.length - editable.length;
-    this.commit(`修改材质(${editable.length} 个对象)`, editable, () => {
+    this.commit('material', `修改材质(${editable.length} 个对象)`, editable, () => {
       for (const id of editable) this.instance(id).materialOverride = clone(mat);
     });
     return { skipped };
@@ -333,7 +346,7 @@ export class SceneDocument {
       locked: false,
     };
     const touched = [gid, ...tops, ...(parentKey === ROOT ? [] : [parentKey])];
-    this.commit(`成组 · ${gname}`, touched, () => {
+    this.commit('group', `成组 · ${gname}`, touched, () => {
       const parr = this.order.get(parentKey)!;
       const anchor =
         parentSet.size === 1
@@ -369,7 +382,7 @@ export class SceneDocument {
       .map((g) => this.nodes.get(g)!.parentId)
       .filter((p): p is string => !!p);
     const label = groups.length > 1 ? `解组(${groups.length} 个组)` : '解组';
-    this.commit(label, [...groups, ...members, ...parents], () => {
+    this.commit('ungroup', label, [...groups, ...members, ...parents], () => {
       const sel = new Set<string>();
       for (const g of groups) {
         const node = this.nodes.get(g)!;
@@ -414,7 +427,7 @@ export class SceneDocument {
         ? `移入 · ${this.nodes.get(parentId)!.name}`
         : '移至根层级';
     const before = ids.includes(beforeId ?? '') ? null : beforeId;
-    this.commit(label, [...ids, ...(parentId ? [parentId] : [])], () => {
+    this.commit(sameParent ? 'reorder' : 'reparent', label, [...ids, ...(parentId ? [parentId] : [])], () => {
       for (const id of ids) {
         const n = this.nodes.get(id)!;
         const from = this.order.get(n.parentId ?? ROOT)!;
@@ -430,12 +443,16 @@ export class SceneDocument {
 
   // ---------- 变换:两个输入通道(C6) ----------
   /** gizmo/滑杆:交互会话 = 一步(C1 第二类)。pointer-down 调 begin,期间任意次 update,pointer-up 调 commit。 */
-  beginInteraction(label: string, targets: string[]) {
+  beginInteraction(label: string, targets: string[], op: OpKind = 'gizmo') {
     if (this.history.isFrozen) throw new Error('预览态禁用编辑(VIEW-07)');
     if (this.interaction) throw new Error('已有进行中的交互会话');
     this.interaction = {
       label,
+      op,
       targets,
+      targetNames: targets
+        .map((id) => this.nodes.get(id)?.name)
+        .filter((n): n is string => !!n),
       before: this.capture(targets),
       selectionBefore: [...this.selection],
     };
@@ -457,7 +474,9 @@ export class SceneDocument {
     const after = this.capture(s.targets, [], s.before.orders.keys());
     this.history.push({
       label: s.label,
+      op: s.op,
       targetIds: s.targets,
+      targetNames: s.targetNames,
       apply: () => this.restore(after),
       revert: () => this.restore(s.before),
       selectionBefore: s.selectionBefore,
@@ -481,6 +500,7 @@ export class SceneDocument {
     if (!targets.length) return;
     if (targets.every((id) => this.instance(id).transform[field][axis] === value)) return;
     this.commit(
+      'transform',
       `${FIELD_LABEL[field]} ${'XYZ'[axis]}${cnt(targets.length)}`,
       targets,
       () => {
@@ -496,6 +516,7 @@ export class SceneDocument {
     const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
     if (!targets.length || delta === 0) return;
     this.commit(
+      'transform',
       `位置 ${'XYZ'[axis]}${cnt(targets.length)}`,
       targets,
       () => {
@@ -510,6 +531,7 @@ export class SceneDocument {
     const targets = ids.filter((id) => this.nodes.get(id)?.kind === 'instance');
     if (!targets.length || factor === 1) return;
     this.commit(
+      'transform',
       `等比缩放${cnt(targets.length)}`,
       targets,
       () => {
@@ -533,6 +555,7 @@ export class SceneDocument {
     if (!targets.length) return;
     if (targets.every((id) => this.instance(id).transform.scale.every((s) => s === v))) return;
     this.commit(
+      'transform',
       `统一缩放${cnt(targets.length)}`,
       targets,
       () => {
@@ -555,6 +578,7 @@ export class SceneDocument {
     const skipped = ids.length - editable.length;
     if (!editable.length) return { skipped };
     this.commit(
+      'material',
       `${MAT_LABEL[key]}${cnt(editable.length)}`,
       editable,
       () => {
@@ -570,7 +594,7 @@ export class SceneDocument {
 
   /** VIEW-06 沉底:底面 Z 归零(此内核以 bbox 近似;几何精确版在检查 Worker 中) */
   dropToBed(ids: string[], zMinOf: (inst: InstanceNode) => number) {
-    this.commit('沉底', ids, () => {
+    this.commit('drop', '沉底', ids, () => {
       for (const id of ids) {
         const inst = this.instance(id);
         inst.transform.position[2] -= zMinOf(inst);

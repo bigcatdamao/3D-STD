@@ -47,6 +47,8 @@ interface UiState {
   setHud: (h: { text: string; x: number; y: number } | null) => void;
   toast: { text: string; id: number } | null; // 全局轻提示(如 TREE-01 深度软上限「提示不禁止」)
   setToast: (text: string) => void;
+  histHover: string[] | null; // HIST-08:hover 历史条目 → 视口高亮受影响实例(低频,入 zustand 无性能顾虑)
+  setHistHover: (ids: string[] | null) => void;
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -64,6 +66,8 @@ export const useUi = create<UiState>()((set) => ({
   setHud: (hud) => set({ hud }),
   toast: null,
   setToast: (text) => set({ toast: { text, id: Date.now() } }),
+  histHover: null,
+  setHistHover: (histHover) => set({ histHover }),
 }));
 
 /** 命令派发:执行内核操作并通知 React。所有写操作必须走这里。 */
