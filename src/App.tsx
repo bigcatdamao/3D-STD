@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { initPersistence } from './assets/persist';
 import { HistoryPanel } from './history/HistoryPanel';
+import { ServiceStatus } from './net/ServiceStatus';
 import { ParamPanel } from './panel/ParamPanel';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
@@ -18,12 +19,6 @@ const zone: React.CSSProperties = {
 };
 
 export function App() {
-  const [health, setHealth] = useState<'检测中' | '在线' | '离线'>('检测中');
-  useEffect(() => {
-    fetch('/api/health')
-      .then((r) => (r.ok ? setHealth('在线') : setHealth('离线')))
-      .catch(() => setHealth('离线'));
-  }, []);
   useEffect(() => {
     void initPersistence(); // T11:装载资产库并启动对账同步(不可用则降级会话模式,不阻断)
   }, []);
@@ -43,12 +38,7 @@ export function App() {
       <header style={{ ...zone, gridColumn: '1 / 4', justifyContent: 'space-between', padding: '0 14px' }}>
         <span style={{ color: '#e8e8ea', fontWeight: 600 }}>3D STD</span>
         <span>项目 · 导入 · 编辑/预览 · 检查 · 导出(T17/T18 落位)</span>
-        <span>
-          服务层:
-          <b style={{ color: health === '在线' ? '#5dcaa5' : health === '离线' ? '#f09595' : '#8b8b93' }}>
-            {' '}{health}
-          </b>
-        </span>
+        <ServiceStatus />
       </header>
       <aside style={{ minHeight: 0 }}>
         <TreePanel />

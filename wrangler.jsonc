@@ -7,6 +7,17 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
+  },
+  // T3:配额账务 Durable Object(SQLite 存储后端,免费档可用;强一致,KV 不参与账务/熔断)
+  "durable_objects": {
+    "bindings": [{ "name": "QUOTA_DO", "class_name": "QuotaDO" }]
+  },
+  "migrations": [{ "tag": "t3-quota", "new_sqlite_classes": ["QuotaDO"] }],
+  // 可在 dashboard 覆盖的运行参数(Secrets 另设:TURNSTILE_SECRET_KEY、DEMO_CODES,T13 加 TRIPO_API_KEY)
+  "vars": {
+    "VISITOR_DAILY_LIMIT": "3",
+    "DEMO_DEFAULT_LIMIT": "20",
+    "BREAKER_DAILY_CREDITS": "3000"
   }
-  // T3 起在此追加:Durable Objects(配额账务)、KV(任务映射/熔断)、R2(生成结果转存)、Secrets(引擎 key)
+  // T13 起在此追加:R2(生成结果转存)、KV(任务映射)、Cron(30 天清理)
 }
