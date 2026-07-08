@@ -6,7 +6,10 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    // T3-r2:SPA 回退模式会把「导航请求」(地址栏直接访问)接走返回 index.html;
+    // /api/* 必须无条件先进 Worker,否则浏览器直开 /api/health 看到的是应用页面而非 JSON。
+    "run_worker_first": ["/api/*"]
   },
   // T3:配额账务 Durable Object(SQLite 存储后端,免费档可用;强一致,KV 不参与账务/熔断)
   "durable_objects": {
