@@ -1,4 +1,4 @@
-// T3/T4 服务层路由(技术方案 §4)。管线次序即成本归因次序(PRD AI-07):
+// T3/T4/T13a 服务层路由(技术方案 §4)。管线次序即成本归因次序(PRD AI-07):
 //   校验(不扣)→ Turnstile(不扣)→ 配额扣减(DO 强一致)→ 引擎提交 → 提交失败即返还;
 //   任务失败(AI-05 三分类)与取消(AI-06)在 /api/task 路由观察到时执行幂等返还。
 // 自带 key 通道(D6 ④):携 x-engine-key 的请求跳过配额与熔断(成本归用户),Turnstile 仍验。
@@ -15,7 +15,7 @@ import type {
   TaskResponse,
 } from './api-types';
 import { CREDITS_BY_TYPE } from './api-types';
-import { getEngine } from './engine';
+import { getEngine, type Engine, type TaskMapStore } from './engine';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
@@ -36,7 +36,9 @@ export interface WorkerEnv {
   // Secrets(dashboard 设置):
   TURNSTILE_SECRET_KEY?: string;
   DEMO_CODES?: string; // `code[:每日次数]`,逗号分隔;删码即撤销
-  TRIPO_API_KEY?: string; // T13
+  TRIPO_API_KEY?: string; // T13a(Workers Secret)
+  TRIPO_MODEL_VERSION?: string; // T13a,默认 v2.5-20250123
+  TRIPO_TIMEOUT_MS?: string; // T13a,默认 600000
   // Vars(wrangler.jsonc,可覆盖):
   VISITOR_DAILY_LIMIT?: string; // 默认 3(PRD AI-11 / §9)
   DEMO_DEFAULT_LIMIT?: string; // 默认 20
@@ -69,6 +71,20 @@ async function quotaCall<T>(env: WorkerEnv, op: QuotaOp): Promise<T> {
   return (await res.json()) as T;
 }
 
+// T13a:任务映射后端 —— 复用配额 DO(mapPut/mapGet),自带 key 任务不经此(无账务)
+function taskMapOf(env: WorkerEnv): TaskMapStore {
+  return {
+    put: async (engineId, billingId) => {
+      await quotaCall(env, { op: 'mapPut', engineId, billingId });
+    },
+    get: async (engineId) => (await quotaCall<{ billingId: string | null }>(env, { op: 'mapGet', engineId })).billingId,
+  };
+}
+
+function engineOf(env: WorkerEnv, deps: RouterDeps): Engine | null {
+  return getEngine(env, { now: deps.now, fetchImpl: deps.fetchImpl, taskMap: taskMapOf(env) });
+}
+
 interface VisitorCtx {
   visitorKey: string;
   limitTimes: number;
@@ -91,8 +107,8 @@ async function visitorCtxOf(req: Request, env: WorkerEnv): Promise<VisitorCtx> {
 
 // —— 各端点 ——
 
-function health(env: WorkerEnv): Response {
-  const engine = getEngine(env);
+function health(env: WorkerEnv, deps: RouterDeps): Response {
+  const engine = engineOf(env, deps);
   const body: HealthResponse = {
     ok: true,
     service: '3d-std worker',
@@ -143,7 +159,13 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   }
   const prompt = body.prompt?.trim() ?? '';
   if (!prompt) return err(400, 'empty_prompt', 'validation', 'prompt 不能为空。');
-  if (prompt.length > 2000) return err(400, 'prompt_too_long', 'validation', 'prompt 超长(上限 2000 字符)。');
+  // T13a:上限取引擎上报值(Tripo 上游硬限 1024 < 服务层默认 2000)——在校验层如实拦截,
+  // 而非提交后由上游打回(那会走「扣减 → 返还」白绕一圈,且报错含糊)
+  const engine = engineOf(env, deps);
+  const promptMax = engine?.promptMaxLength ?? 2000;
+  if (prompt.length > promptMax) {
+    return err(400, 'prompt_too_long', 'validation', `prompt 超长(上限 ${promptMax} 字符)。`);
+  }
 
   // 2. Turnstile(D6 ①):secret 未配置按 service 类失败关闭入口(fail-closed),不静默放行
   const token = body.turnstileToken?.trim();
@@ -186,7 +208,6 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   }
 
   // 4. 引擎提交(引擎缺位 → 立即返还,保留 T3 账务验收路径;ENGINE_MODE 置空即可回到此分支)
-  const engine = getEngine(env, deps.now);
   if (!engine) {
     let refunded = false;
     if (charged) {
@@ -216,7 +237,7 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
 // —— /api/task/:id(T4:轮询代理 + 失败返还;T13 换真实引擎时本函数零改动)——
 
 async function taskQuery(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: string): Promise<Response> {
-  const engine = getEngine(env, deps.now);
+  const engine = engineOf(env, deps);
   if (!engine) return err(501, 'task_query_not_wired', 'not_implemented', '生成引擎未接入(ENGINE_MODE 未配)。');
   let task: EngineTask;
   try {
@@ -238,7 +259,7 @@ async function taskQuery(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: 
 }
 
 async function taskCancel(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: string): Promise<Response> {
-  const engine = getEngine(env, deps.now);
+  const engine = engineOf(env, deps);
   if (!engine) return err(501, 'task_cancel_not_wired', 'not_implemented', '生成引擎未接入(ENGINE_MODE 未配)。');
   try {
     await engine.cancel(id, ownKey);
@@ -254,6 +275,44 @@ async function taskCancel(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?:
   return Response.json({ ok: true, canceled: true, refunded } satisfies CancelResponse);
 }
 
+// —— /api/task/:id/result(T13a:结果代理,技术方案 D3 的 AI-02 硬需求)——
+// 上游预签名地址不落盘、不透传给浏览器(CORS 姿态不可控且会过期);
+// 每次代理现查上游取新鲜地址并流式转发。自带 key 任务需随请求携 x-engine-key。
+
+async function taskResult(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: string): Promise<Response> {
+  const engine = engineOf(env, deps);
+  if (!engine) return err(501, 'result_not_wired', 'not_implemented', '生成引擎未接入(ENGINE_MODE 未配)。');
+  if (!engine.resultAsset) {
+    // mock 的结果本就同源(/mock-assets/*),不经代理
+    return err(404, 'result_proxy_unsupported', 'validation', '当前引擎无结果代理(mock 结果为同源静态资产)。');
+  }
+  let asset: { url: string } | null;
+  try {
+    asset = await engine.resultAsset(id, ownKey);
+  } catch {
+    return err(502, 'engine_query_failed', 'service', '引擎查询失败,请稍后重试。');
+  }
+  if (!asset) {
+    return err(404, 'result_unavailable', 'validation', '结果不存在或已过期(上游保留期有限;「接受」后资产已入本地库,不受影响)。');
+  }
+  let upstream: Response;
+  try {
+    upstream = await (deps.fetchImpl ?? fetch)(asset.url);
+  } catch {
+    return err(502, 'result_fetch_failed', 'service', '结果拉取失败,请稍后重试。');
+  }
+  if (!upstream.ok || !upstream.body) {
+    return err(502, 'result_fetch_failed', 'service', `结果拉取失败(上游 ${upstream.status}),请稍后重试。`);
+  }
+  return new Response(upstream.body, {
+    headers: {
+      'content-type': upstream.headers.get('content-type') ?? 'model/gltf-binary',
+      'content-disposition': 'inline; filename="model.glb"',
+      'cache-control': 'private, no-store', // 预签名会过期,不缓存陈旧地址的产物
+    },
+  });
+}
+
 // —— 总入口 ——
 
 export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDeps = {}): Promise<Response> {
@@ -261,11 +320,13 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   const path = url.pathname;
   if (!path.startsWith('/api/')) return env.ASSETS.fetch(req);
 
-  if (path === '/api/health' && req.method === 'GET') return health(env);
+  if (path === '/api/health' && req.method === 'GET') return health(env, deps);
   if (path === '/api/quota' && req.method === 'GET') return quota(req, env);
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
 
   const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
+  const taskResultM = /^\/api\/task\/([^/]+)\/result$/.exec(path);
+  if (taskResultM && req.method === 'GET') return taskResult(env, deps, decodeURIComponent(taskResultM[1]), ownKey);
   const taskGet = /^\/api\/task\/([^/]+)$/.exec(path);
   if (taskGet && req.method === 'GET') return taskQuery(env, deps, decodeURIComponent(taskGet[1]), ownKey);
   const taskCancelM = /^\/api\/task\/([^/]+)\/cancel$/.exec(path);

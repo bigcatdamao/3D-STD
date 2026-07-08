@@ -84,6 +84,13 @@ export function ServiceStatus() {
 
   const runDrill = useCallback(
     async (kind: 'fail' | 'success') => {
+      // T13a:演练是 mock 通道的专属工具 —— @mock 故障注入真实引擎不识别(提交前会被剥离),
+      // 且演练的 20 秒收敛窗对真实生成(分钟级)必然超时,白白消耗真实 credits。
+      // 真实引擎的链路验收走生成面板主链(README「T13a 验收」)。按钮已禁用,此处兜底。
+      if (conf?.engine && conf.engineName !== 'mock') {
+        setDiag([{ icon: '⚠️', text: '当前为真实引擎,演练已停用(会消耗真实 credits 且必然超时)。请走生成面板主链验收。' }]);
+        return;
+      }
       setRunning(kind);
       const lines: DiagLine[] = [];
       const push = (l: DiagLine) => {
@@ -184,10 +191,11 @@ export function ServiceStatus() {
       }
       setRunning(null);
     },
-    [quota],
+    [quota, conf],
   );
 
   const color = health === '在线' ? '#5dcaa5' : health === '离线' ? '#f09595' : '#8b8b93';
+  const realEngine = Boolean(conf?.engine) && conf?.engineName !== 'mock'; // T13a:tripo 等真实引擎
   const chip = (
     <span style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => setOpen((v) => !v)} title="服务层诊断">
       服务层: <b style={{ color }}>{health}</b>
@@ -208,7 +216,7 @@ export function ServiceStatus() {
       {open && (
         <div style={card}>
           <div style={{ ...row, marginBottom: 6 }}>
-            <b style={{ color: '#e8e8ea' }}>服务层诊断(T3/T4)</b>
+            <b style={{ color: '#e8e8ea' }}>服务层诊断(T3/T4/T13a)</b>
             <span style={{ ...dim, cursor: 'pointer' }} onClick={() => setOpen(false)}>✕</span>
           </div>
           <div style={row}><span style={dim}>访客标识</span><span>{getClientId().slice(0, 8)}…(+IP 复合键)</span></div>
@@ -220,7 +228,7 @@ export function ServiceStatus() {
             <span style={dim}>Turnstile</span>
             <span>{conf ? (conf.turnstile ? '已配置' : '未配置(README T3 第 0 步)') : '—'}</span>
           </div>
-          <div style={row}><span style={dim}>生成引擎</span><span>{conf?.engine ? `已接入(${conf.engineName ?? '?'})` : '未接入(T4 mock / T13 Tripo)'}</span></div>
+          <div style={row}><span style={dim}>生成引擎</span><span>{conf?.engine ? `已接入(${conf.engineName ?? '?'})` : '未接入(ENGINE_MODE 未配)'}</span></div>
           {quota && (
             <>
               <div style={row}>
@@ -235,13 +243,29 @@ export function ServiceStatus() {
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
             <button style={btn} onClick={() => void refresh()}>刷新</button>
-            <button style={btn} disabled={running !== null} onClick={() => void runDrill('fail')}>
+            {/* T13a:演练仅 mock 通道提供 —— 真实引擎下禁用(防误耗 credits;主链验收见 README) */}
+            <button
+              style={btn}
+              disabled={running !== null || realEngine}
+              title={realEngine ? '真实引擎下停用:@mock 故障注入不生效' : undefined}
+              onClick={() => void runDrill('fail')}
+            >
               {running === 'fail' ? '演练中…' : '失败链演练(免费)'}
             </button>
-            <button style={btn} disabled={running !== null} onClick={() => void runDrill('success')}>
+            <button
+              style={btn}
+              disabled={running !== null || realEngine}
+              title={realEngine ? '真实引擎下停用:会消耗真实 credits 且演练窗必然超时' : undefined}
+              onClick={() => void runDrill('success')}
+            >
               {running === 'success' ? '演练中…' : '成功链演练(耗 1 次)'}
             </button>
           </div>
+          {realEngine && (
+            <div style={{ ...dim, marginTop: 6 }}>
+              真实引擎({conf?.engineName})在线:演练停用,链路验收走生成面板主链;成本护栏 = 配额 + 熔断。
+            </div>
+          )}
           {diag.length > 0 && (
             <div style={{ marginTop: 8, borderTop: '1px solid #2f2f37', paddingTop: 6 }}>
               {diag.map((l, i) => (

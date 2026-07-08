@@ -16,17 +16,27 @@
     "bindings": [{ "name": "QUOTA_DO", "class_name": "QuotaDO" }]
   },
   "migrations": [{ "tag": "t3-quota", "new_sqlite_classes": ["QuotaDO"] }],
-  // 可在 dashboard 覆盖的运行参数(Secrets 另设:TURNSTILE_SECRET_KEY、DEMO_CODES,T13 加 TRIPO_API_KEY)
+  // 可在 dashboard 覆盖的运行参数(Secrets 另设:TURNSTILE_SECRET_KEY、DEMO_CODES、TRIPO_API_KEY)。
+  // 注意:Git 集成部署会以本文件覆盖 dashboard 改过的 vars(Secrets 不受影响)——
+  // 所以引擎切换以改此文件为准,dashboard 改 var 活不过下一次 push。
   "vars": {
     "VISITOR_DAILY_LIMIT": "3",
     "DEMO_DEFAULT_LIMIT": "20",
     "BREAKER_DAILY_CREDITS": "3000",
-    // T4:mock 引擎默认在线(T13 接 Tripo 时改/删此值;置空即回到「未接入 → 扣减立返」的 T3 行为)
-    "ENGINE_MODE": "mock",
+    // T13a:真实引擎上线('tripo')。回退演示/降级通道:改回 "mock" 后 push(@mock 指令随之可用);
+    // 置空即回到「未接入 → 扣减立返」的 T3 行为。成本护栏:访客配额 3 次/日 + 全局熔断 3000 credits/日。
+    "ENGINE_MODE": "tripo",
+    // T13a:文生模型版本(v2.5-20250123 = 20 credits 档,与 api-types 的 CREDITS_BY_TYPE 对齐;
+    // 升 v3.x 时须同步核对计费常量,consumed_credit 对账日志会暴露价差)
+    "TRIPO_MODEL_VERSION": "v2.5-20250123",
+    // T13a:排队+生成超时合成阈值(超过即按 AI-05 timeout 类失败并返还)
+    "TRIPO_TIMEOUT_MS": "600000",
+    // mock 参数保留:ENGINE_MODE 切回 "mock" 时生效
     "MOCK_QUEUE_MS": "4000",
     "MOCK_RUN_MS": "10000",
     // 随机失败率 0–1(演示混沌注入用;prompt 内 @mock:fail= 指令优先于此)
     "MOCK_FAIL_RATE": "0"
   }
-  // T13 起在此追加:R2(生成结果转存)、KV(任务映射)、Cron(30 天清理)
+  // T13b(演示范围外,backlog v1.1):R2(生成结果转存)、清理 Cron —— 恢复时在此追加 binding。
+  // 任务映射已随 T13a 落入 QuotaDO(mapPut/mapGet),KV 不再需要(论证见 worker/tripo-engine.ts)。
 }

@@ -245,7 +245,9 @@ export function GenPanel() {
     const cur = genRef.current;
     if (cur.phase !== 'success' || !cur.resultUrl) return;
     try {
-      const r = await fetch(cur.resultUrl);
+      // T13a:结果经服务层代理(/api/task/:id/result),自带 key 通道靠 x-engine-key 头鉴权上游;
+      // mock 的同源静态结果对多余头不敏感——同一行代码覆盖两个引擎。
+      const r = await fetch(cur.resultUrl, { headers: apiHeaders() });
       if (!r.ok) throw new Error();
       const blob = await r.blob();
       const file = new File([blob], resultFileName(cur.context.prompt), { type: 'model/gltf-binary' });
