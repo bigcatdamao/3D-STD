@@ -2,10 +2,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.3(T4 落地修订) |
+| 版本 | v1.4(T12 落地修订) |
 | 日期 | 2026-07-07 |
 | 上游文档 | 《PRD v0.93》 |
 | 外部数据核实日 | 2026-07-06(Tripo/Meshy 官方文档、Cloudflare 官方文档) |
+
+**v1.4 变更记录(T12 落地修订)**:① Turnstile widget 接线定稿:site key 走构建变量 `VITE_TURNSTILE_SITE_KEY`(Cloudflare 构建设置配置),缺位回退官方测试 key(与测试 secret 配对,零账号配置即全链路可走);widget 用 `appearance: interaction-only`(指令条内不常驻占位,仅需交互时浮现);token 单次使用——提交即 consume 并 reset 预取下一枚,过期由 expired-callback 自愈;「点提交但 token 未就绪」记 pending,token 回调到达后自动续提交(重试出路复用同机制)。② 刷新恢复(AI 边界 1)落地 = localStorage 活动任务票据(`{taskId, context, startedAt}`,仅 queued/running 持有)× mock 引擎无状态时间表:装载见票即恢复轮询并立即问一拍,未知/过期任务由服务端稳定收敛到 timeout+返还,客户端无需本地兜底超时。③ 自带 key 通道(D6 ④)前端面:key 仅存 sessionStorage,经 `apiHeaders()` 以 `x-engine-key` 透传;配额拦截(AI-07 提交前拦截)在 idle 态状态区呈现「明日再来 / 自带 API key」双出路。④ 「接受」在 T12 的语义 = 结果 GLB 送入 T10 导入管线(解析→单位→水密预检→贴床);AI-09 完整落入链(自动选中+聚焦+首检+R2 转存)仍归 T16,届时替换此调用点即可。
 
 **v1.3 变更记录(T4 落地修订)**:① D4 统一任务协议补充可选字段 `queuePosition`(排队位置反馈,PRD AI-03 的服务侧供给);接口定稿:`submit` 接收路由层账务键(扣减先于提交,键必然先存在),引擎负责「引擎侧 taskId → 账务键」映射并以 `billingIdOf` 暴露——mock 内嵌进 taskId(零存储),Tripo 经 KV(T13,存储分工表既定)。② mock 引擎采用无状态时间表设计:排队/生成时长与结局在提交瞬间定案、编码进 taskId,查询按当前时间纯计算——零存储成本、跨 isolate 天然一致、页面刷新恢复轮询(AI 边界 1)免费获得;取消由路由层承接(账务返还 + 客户端停轮询)。③ 失败注入指令(`@mock:fail/queue/run/asset`)写入 prompt,T12 开发与演示可在零 credit 成本下确定性遍历 AI-05 三分类;三类失败时间线各异(moderation 排队即拒 / service 中途崩 / timeout 到点失败),供前端三出路做差异化体验。④ 返还的执行点统一在路由层(提交失败、轮询观察到失败、取消三处),幂等语义只有 quota-core ledger 一套。
 

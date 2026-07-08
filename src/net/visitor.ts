@@ -6,6 +6,7 @@
 
 const CLIENT_KEY = '3dstd:client-id';
 const DEMO_KEY = '3dstd:demo-code';
+const ENGINE_KEY = '3dstd:engine-key'; // 自带 API key(D6 ④):仅 sessionStorage,服务层透传不落盘
 
 let ephemeralId: string | null = null; // 无 storage 环境(SSR/测试/被禁)的会话级回退
 
@@ -50,10 +51,30 @@ export function getDemoCode(): string | null {
   }
 }
 
+/** 自带 API key(PRD AI-11 / D6 ④)。仅存 sessionStorage:关标签页即失效,永不落盘。 */
+export function getEngineKey(): string | null {
+  try {
+    return sessionStorage.getItem(ENGINE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setEngineKey(key: string | null): void {
+  try {
+    if (key && key.trim()) sessionStorage.setItem(ENGINE_KEY, key.trim());
+    else sessionStorage.removeItem(ENGINE_KEY);
+  } catch {
+    /* 无 storage 环境:自带 key 通道静默不可用 */
+  }
+}
+
 /** 服务层请求头(/api/quota、/api/generate 等统一使用)。 */
 export function apiHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'x-client-id': getClientId() };
   const demo = getDemoCode();
   if (demo) h['x-demo-code'] = demo;
+  const engineKey = getEngineKey();
+  if (engineKey) h['x-engine-key'] = engineKey; // 服务层见此头即跳过配额(成本归用户)
   return h;
 }

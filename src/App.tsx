@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { GenPanel } from './ai/GenPanel';
 import { initPersistence } from './assets/persist';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ServiceStatus } from './net/ServiceStatus';
@@ -50,7 +51,7 @@ export function App() {
         <ParamPanel />
       </aside>
       <footer style={{ gridColumn: '1 / 4', display: 'flex', gap: 8, minHeight: 0 }}>
-        <div style={{ ...zone, flex: '0 0 300px' }}>AI 指令条(T12)</div>
+        <GenPanel />
         <HistoryPanel />
       </footer>
       <ToastLayer />
