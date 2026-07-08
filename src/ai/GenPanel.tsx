@@ -14,6 +14,7 @@ import {
   applyTask,
   emptyContext,
   idleState,
+  inputLockedIn,
   onSubmitted,
   outletOf,
   parseActiveTicket,
@@ -461,7 +462,7 @@ export function GenPanel() {
     }
   };
 
-  const inputLocked = gen.phase !== 'idle';
+  const inputLocked = inputLockedIn(gen.phase); // 失败/取消态不锁:直接编辑即回到输入态
 
   return (
     <div style={shell} data-testid="gen-panel">

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { EngineTask, GenerateResponse } from '../worker/api-types';
 import {
   applyTask,
+  inputLockedIn,
   emptyContext,
   idleState,
   onSubmitted,
@@ -146,6 +147,19 @@ describe('AI 边界 1 · 刷新恢复票据', () => {
     expect(parseActiveTicket('{}')).toBeNull();
     expect(parseActiveTicket(JSON.stringify({ taskId: 't', context: { type: 'video', prompt: 'x' } }))).toBeNull();
     expect(parseActiveTicket(JSON.stringify({ taskId: '', context: { type: 'text', prompt: 'x' } }))).toBeNull();
+  });
+});
+
+describe('输入区锁定规则(回归哨兵:失败态必须可编辑)', () => {
+  it('在途与预览确认锁定;idle/failed/canceled 可编辑', () => {
+    // 曾有 bug:failed 态输入框被锁,timeout 失败只有「重试」一个出口,想改 prompt 被锁死。
+    expect(inputLockedIn('submitting')).toBe(true);
+    expect(inputLockedIn('queued')).toBe(true);
+    expect(inputLockedIn('running')).toBe(true);
+    expect(inputLockedIn('success')).toBe(true); // 三选(接受/调整/丢弃)须显式,不允许静默略过
+    expect(inputLockedIn('idle')).toBe(false);
+    expect(inputLockedIn('failed')).toBe(false);
+    expect(inputLockedIn('canceled')).toBe(false);
   });
 });
 

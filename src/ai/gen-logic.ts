@@ -122,6 +122,17 @@ export function applyTask(state: GenState, task: EngineTask, refunded?: boolean)
 /** 失败出路(AI-05)。文案与分类的权威源是 FAIL_REASON_COPY,此处只补前端动作语义。 */
 export type FailAction = 'retry' | 'edit' | 'dismiss';
 
+/**
+ * 输入区锁定规则:仅「任务在途」(submitting/queued/running)与「预览确认」(success)锁定——
+ * 前者防止输入与在途任务的上下文脱钩(AI-08 完整上下文以任务为锚),
+ * 后者要求对结果做显式三选(接受/调整/丢弃,涉及配额归因,不允许静默略过)。
+ * failed / canceled 不锁:直接编辑即回到输入态,出路按钮之外始终留着「改字重来」这条路
+ * (否则 timeout 失败只有「重试」一个出口,想改 prompt 会被锁死)。
+ */
+export function inputLockedIn(phase: GenPhase): boolean {
+  return phase === 'submitting' || phase === 'queued' || phase === 'running' || phase === 'success';
+}
+
 export function outletOf(reason: EngineFailReason): { label: string; outlet: string; message: string; action: FailAction } {
   const copy = FAIL_REASON_COPY[reason];
   const action: FailAction = reason === 'timeout' ? 'retry' : reason === 'moderation' ? 'edit' : 'dismiss';
