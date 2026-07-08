@@ -187,6 +187,7 @@ export function resumeState(ticket: ActiveTicket): GenState {
 
 export function resultFileName(prompt: string): string {
   const slug = prompt
+    .replace(/@mock:\S+/g, '') // 演练注入指令不进对象名(真实引擎 prompt 无此段,零影响)
     .trim()
     .slice(0, 40)
     .replace(/[\\/:*?"<>|\s]+/g, '-')

@@ -170,6 +170,12 @@ describe('结果文件名(接受 → T10 导入管线)', () => {
     expect(resultFileName('   ')).toBe('ai-model.glb');
     expect(resultFileName('x'.repeat(100)).length).toBeLessThanOrEqual(44 + 4);
   });
+
+  it('@mock: 演练指令不进对象名(纯指令 prompt 兜底为 ai-model)', () => {
+    expect(resultFileName('一个球 @mock:run=30s')).toBe('一个球.glb');
+    expect(resultFileName('一个杯子 @mock:queue=8s @mock:run=20s')).toBe('一个杯子.glb');
+    expect(resultFileName('@mock:fail=timeout')).toBe('ai-model.glb');
+  });
 });
 
 // 状态类型完备性哨兵:新增 phase 时此处编译期报警,提醒同步 UI 分支
