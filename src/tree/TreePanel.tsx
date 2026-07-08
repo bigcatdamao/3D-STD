@@ -1,5 +1,5 @@
 // 场景树面板(T7)—— TREE-01~05 全部 P0 + 边界 1/3/6。
-// 双页签壳:场景树 | 资产(T11 落位)。选中集与视口共享单一事实源(doc.selection,TREE-03);
+// 双页签壳:场景树 | 资产(T11 已落位,见 assets/AssetPanel)。选中集与视口共享单一事实源(doc.selection,TREE-03);
 // 树内允许选中与重命名锁定对象(TREE 验收样例 2)——锁定只约束视口拾取与变换,不约束树内管理(C7)。
 //
 // 交互约定:
@@ -9,6 +9,7 @@
 //   👁 / 🔒 = 显隐与锁定各自独立开关(C7 三状态正交);组状态对成员继承叠加,行内灰显提示
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AssetPanel } from '../assets/AssetPanel';
 import { SceneNode } from '../kernel/types';
 import { dispatch, doc, sendCam, useUi } from '../state/store';
 import { DEPTH_SOFT_CAP, DropRef, FlatRow, flattenVisible, resolveDrop, subtreeHeight } from './tree-logic';
@@ -79,17 +80,7 @@ export function TreePanel() {
         <div style={tabBtn(tab === 'tree')} onClick={() => setTab('tree')}>场景树</div>
         <div style={tabBtn(tab === 'assets')} onClick={() => setTab('assets')}>资产</div>
       </div>
-      {tab === 'tree' ? (
-        <TreeTab />
-      ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <span style={{ color: '#8b8b93', fontSize: 12, textAlign: 'center', lineHeight: 1.7 }}>
-            资产面板 · T11 落位
-            <br />
-            导入 / AI 资产库与 IndexedDB 持久化将在此呈现
-          </span>
-        </div>
-      )}
+      {tab === 'tree' ? <TreeTab /> : <AssetPanel />}
     </div>
   );
 }

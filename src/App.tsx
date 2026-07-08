@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { initPersistence } from './assets/persist';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ParamPanel } from './panel/ParamPanel';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
@@ -22,6 +23,9 @@ export function App() {
     fetch('/api/health')
       .then((r) => (r.ok ? setHealth('在线') : setHealth('离线')))
       .catch(() => setHealth('离线'));
+  }, []);
+  useEffect(() => {
+    void initPersistence(); // T11:装载资产库并启动对账同步(不可用则降级会话模式,不阻断)
   }, []);
 
   return (

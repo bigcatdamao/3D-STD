@@ -17,6 +17,14 @@ import {
 let seq = 0;
 const genId = (p: string) => `${p}_${(++seq).toString(36)}`;
 
+/** 解析 `前缀_序号36` 形态的 id,把全局计数抬到其上(演示夹具等非该形态的 id 自然跳过) */
+function raiseSeqFloor(id: string) {
+  const m = /^[a-z]+_([0-9a-z]+)$/.exec(id);
+  if (!m) return;
+  const n = parseInt(m[1], 36);
+  if (Number.isFinite(n) && n > seq) seq = n;
+}
+
 const clone = <T>(v: T): T => structuredClone(v);
 
 interface NodeSnapshot {
@@ -222,7 +230,24 @@ export class SceneDocument {
     this.selection = new Set();
   }
 
+  /** T11 持久化装载专用:按原 id 写入资产(不产生历史),并抬高 id 序号地板防止
+   *  刷新后 genId 从头计数与已持久化 id 撞车。只增不覆盖:演示夹具先行装载时互不干扰。 */
+  hydrateAssets(assets: Asset[]) {
+    for (const a of assets) {
+      if (!this.assets.has(a.id)) this.assets.set(a.id, clone(a));
+      raiseSeqFloor(a.id);
+    }
+  }
+
   // ---------- 资产 ----------
+  /** 资产重命名属库操作,不入历史栈(栈只管场景编辑);实例名在落场时已快照,互不牵连(C2) */
+  renameAsset(assetId: string, name: string) {
+    const a = this.assets.get(assetId);
+    if (!a) return;
+    const clean = sanitizeName(name);
+    if (clean) a.name = clean;
+  }
+
   addAsset(a: Omit<Asset, 'id'>): Asset {
     // 资产库操作不入栈(导入解析属资产侧;历史栈只管场景编辑)
     const asset: Asset = { ...clone(a), id: genId('ast') } as Asset;

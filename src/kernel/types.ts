@@ -17,6 +17,7 @@ export interface AssetMeta {
   degenerate: boolean | null;
   vertices?: number; // 焊接后唯一顶点数(IMP-07 网格统计;T10 起由解析管线填写)
   materialMissing?: boolean; // OBJ 缺 MTL 降级默认材质的标记(IMP-07;T11 面板呈现)
+  createdAt?: number; // 入库时间戳(AST-02;演示夹具无此字段,面板排序时垫底)
 }
 
 export interface Asset {

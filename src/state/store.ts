@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { create } from 'zustand';
+import { renderThumbnail } from '../importer/thumbnail';
 import { SceneDocument } from '../kernel/scene';
 import { Asset, InstanceNode } from '../kernel/types';
 import type { GizmoMode } from '../viewport/gizmo-math';
@@ -58,6 +59,15 @@ export interface UnitAskState {
   slotX: number;
 }
 
+/** 持久层状态(T11)。mode:idb = 正常;session = IndexedDB 不可用,纯内存会话(AST 边界 1);
+ *  init = 首次装载未完成。unsavedIds:超容量拒写、仅存活于本会话的资产(AST-04) */
+export interface StorageState {
+  mode: 'init' | 'idb' | 'session';
+  usedBytes: number;
+  capBytes: number;
+  unsavedIds: string[];
+}
+
 interface UiState {
   rev: number; // 场景文档版本号:每次 command 后 +1,驱动订阅组件重渲染
   bump: () => void;
@@ -76,8 +86,10 @@ interface UiState {
   importJobs: ImportJobView[]; // T10 导入状态条(IMP-08:占位可见、失败不静默消失)
   upsertImportJob: (j: ImportJobView) => void;
   dropImportJob: (id: string) => void;
-  dragImport: boolean; // 视口拖放高亮
-  setDragImport: (v: boolean) => void;
+  dragImport: false | 'files' | 'asset'; // 视口拖放高亮(文件导入 / 资产建实例两种来源,文案不同)
+  setDragImport: (v: false | 'files' | 'asset') => void;
+  storage: StorageState; // T11 持久层状态(C5/AST-04):会话模式常驻提示与容量条的数据源
+  setStorage: (s: StorageState) => void;
   unitAsk: UnitAskState | null; // IMP-05 单位确认对话框(一次一件,余者排队)
   setUnitAsk: (u: UnitAskState | null) => void;
   histHover: string[] | null; // HIST-08:hover 历史条目 → 视口高亮受影响实例(低频,入 zustand 无性能顾虑)
@@ -111,6 +123,8 @@ export const useUi = create<UiState>()((set) => ({
   dropImportJob: (id) => set((s) => ({ importJobs: s.importJobs.filter((x) => x.id !== id) })),
   dragImport: false,
   setDragImport: (dragImport) => set({ dragImport }),
+  storage: { mode: 'init', usedBytes: 0, capBytes: 500 * 1024 * 1024, unsavedIds: [] },
+  setStorage: (storage) => set({ storage }),
   unitAsk: null,
   setUnitAsk: (unitAsk) => set({ unitAsk }),
   histHover: null,
@@ -173,8 +187,8 @@ export function expandToInstances(ids: Iterable<string>): InstanceNode[] {
   return [...out.values()];
 }
 
-// ---------- 示例场景(T5–T9 验收回归夹具)。T10 真实导入已就位后仍保留:
-// 持久化(T11)与欢迎页(T17)未落地前,刷新即失,固定夹具是回归点测的稳定基准 ----------
+// ---------- 示例场景(T5–T9 验收回归夹具)。T10/T11 真实导入与持久化就位后仍保留:
+// 夹具每次启动重建、不落库(persist.isDemoAsset 过滤),是回归点测的稳定基准;T17 欢迎页后再撤 ----------
 
 function bboxOf(g: THREE.BufferGeometry): Asset['meta']['bbox'] {
   g.computeBoundingBox();
@@ -184,6 +198,8 @@ function bboxOf(g: THREE.BufferGeometry): Asset['meta']['bbox'] {
 
 function demoAsset(id: string, name: string, g: THREE.BufferGeometry, faces: number): Asset {
   geometryRegistry.set(id, g);
+  const thumb = renderThumbnail(g); // 资产面板网格视图用;无 WebGL 环境返回 null,字形占位
+  if (thumb) thumbRegistry.set(id, thumb);
   return {
     id,
     name,

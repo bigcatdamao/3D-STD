@@ -86,9 +86,14 @@ describe('UnitDialog(IMP-05)', () => {
 });
 
 describe('DragHighlight', () => {
-  it('拖入时提示支持格式', () => {
-    useUi.setState({ dragImport: true });
+  it('拖入文件时提示支持格式', () => {
+    useUi.setState({ dragImport: 'files' });
     expect(render(<DragHighlight />)).toContain('GLB / glTF / STL / OBJ');
+    useUi.setState({ dragImport: false });
+  });
+  it('拖入资产条目时提示放置语义(AST-03)', () => {
+    useUi.setState({ dragImport: 'asset' });
+    expect(render(<DragHighlight />)).toContain('放置实例');
     useUi.setState({ dragImport: false });
   });
 });

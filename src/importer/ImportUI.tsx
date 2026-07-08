@@ -8,12 +8,14 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useUi } from '../state/store';
+import { ASSET_DRAG_MIME } from '../assets/AssetPanel';
 import {
   cancelImport,
   cancelUnitAsk,
   confirmUnitAsk,
   dismissImport,
   ghostStore,
+  placeFromLibrary,
   retryImport,
   startImport,
 } from './ingest';
@@ -43,10 +45,12 @@ export function useImportDrop() {
   const setDrag = useUi((s) => s.setDragImport);
   return {
     onDragOver: (e: React.DragEvent) => {
-      if (![...e.dataTransfer.types].includes('Files')) return;
+      const types = [...e.dataTransfer.types];
+      const kind = types.includes('Files') ? 'files' : types.includes(ASSET_DRAG_MIME) ? 'asset' : null;
+      if (!kind) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
-      setDrag(true);
+      setDrag(kind);
     },
     onDragLeave: (e: React.DragEvent) => {
       if (e.currentTarget.contains(e.relatedTarget as Node)) return;
@@ -55,7 +59,12 @@ export function useImportDrop() {
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       setDrag(false);
-      if (e.dataTransfer.files.length) startImport(e.dataTransfer.files);
+      if (e.dataTransfer.files.length) {
+        startImport(e.dataTransfer.files, 'viewport'); // IMP-02:拖入视口 = 入库+建实例
+        return;
+      }
+      const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
+      if (assetId) placeFromLibrary(assetId); // AST-03:资产条目拖入视口 = 建实例(床中心+沉底)
     },
   };
 }
@@ -81,19 +90,19 @@ export function DragHighlight() {
         zIndex: 30,
       }}
     >
-      松开以导入(GLB / glTF / STL / OBJ)
+      {on === 'asset' ? '松开以放置实例(床中心 + 自动沉底)' : '松开以导入并放置(GLB / glTF / STL / OBJ)'}
     </div>
   );
 }
 
-/** 工具栏「导入」临时入口(T10):文件选择器,当前与拖放同语义;T11 改绑「仅入库」 */
+/** 工具栏「导入」(T11 起改绑「仅入库」,IMP-02):文件选择器入库不放置;拖入视口才直接落床 */
 export function ImportButton({ style }: { style?: React.CSSProperties }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <>
       <button
         style={style}
-        title="导入模型文件(GLB/glTF/STL/OBJ),也可直接拖入视口"
+        title="导入文件到资产库(不放置);直接拖文件进视口 = 导入并放置"
         onClick={() => ref.current?.click()}
       >
         导入
@@ -105,7 +114,7 @@ export function ImportButton({ style }: { style?: React.CSSProperties }) {
         accept=".glb,.gltf,.stl,.obj"
         style={{ display: 'none' }}
         onChange={(e) => {
-          if (e.target.files?.length) startImport(e.target.files);
+          if (e.target.files?.length) startImport(e.target.files, 'library');
           e.target.value = ''; // 允许连续选择同一文件
         }}
       />
