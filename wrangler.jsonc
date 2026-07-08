@@ -20,7 +20,13 @@
   "vars": {
     "VISITOR_DAILY_LIMIT": "3",
     "DEMO_DEFAULT_LIMIT": "20",
-    "BREAKER_DAILY_CREDITS": "3000"
+    "BREAKER_DAILY_CREDITS": "3000",
+    // T4:mock 引擎默认在线(T13 接 Tripo 时改/删此值;置空即回到「未接入 → 扣减立返」的 T3 行为)
+    "ENGINE_MODE": "mock",
+    "MOCK_QUEUE_MS": "4000",
+    "MOCK_RUN_MS": "10000",
+    // 随机失败率 0–1(演示混沌注入用;prompt 内 @mock:fail= 指令优先于此)
+    "MOCK_FAIL_RATE": "0"
   }
   // T13 起在此追加:R2(生成结果转存)、KV(任务映射)、Cron(30 天清理)
 }

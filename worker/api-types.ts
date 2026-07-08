@@ -24,7 +24,8 @@ export interface HealthResponse {
   at: string;
   config: {
     turnstile: boolean; // TURNSTILE_SECRET_KEY 是否已配置
-    engine: boolean; // 生成引擎是否接入(T3 恒 false,T4 mock / T13 Tripo 后为 true)
+    engine: boolean; // 生成引擎是否接入(T4 起 ENGINE_MODE='mock' 为 true,T13 Tripo 同)
+    engineName: string | null; // 接入的引擎名('mock' / 'tripo'),未接入为 null
     demoCodes: number; // 已配置演示码数量(不泄露码本身)
   };
 }
@@ -43,7 +44,7 @@ export interface GenerateRequest {
   turnstileToken?: string;
 }
 
-// 引擎抽象层的统一任务协议(技术方案 D4)。T3 只定型,T4 才有实现。
+// 引擎抽象层的统一任务协议(技术方案 D4;T4 起由 mock 引擎实现,T13 换 Tripo 时前端零改动)。
 export type EngineTaskStatus = 'queued' | 'running' | 'success' | 'failed';
 export type EngineFailReason = 'timeout' | 'moderation' | 'service';
 
@@ -53,6 +54,37 @@ export interface EngineTask {
   progress: number; // 0–100
   resultUrl?: string;
   failReason?: EngineFailReason;
+  queuePosition?: number; // 排队位置反馈(PRD AI-03;技术方案 v1.3 协议补充,引擎可选供给)
+}
+
+// AI-05 失败三分类三出路(前后端共用文案权威源;T12 状态机按 outlet 渲染出路按钮)。
+// service 类不暴露账务/引擎细节,仅示「服务暂时不可用」并触发运营告警(worker 侧 console 记录,M1 简化)。
+export const FAIL_REASON_COPY: Record<EngineFailReason, { label: string; outlet: string; message: string }> = {
+  timeout: { label: '超时', outlet: '重试', message: '生成超时,请重试。' },
+  moderation: { label: '审核未通过', outlet: '修改输入', message: '输入未通过内容审核,请修改后重新提交。' },
+  service: { label: '服务异常', outlet: '稍后再试', message: '服务暂时不可用,请稍后再试。' },
+};
+
+// —— T4 起的成功响应封套 ——
+
+export interface GenerateResponse {
+  ok: true;
+  engine: string; // 引擎名(诊断用;前端逻辑不得依赖具体引擎,AI-10)
+  task: EngineTask;
+}
+
+export interface TaskResponse {
+  ok: true;
+  task: EngineTask;
+  // 本次查询是否执行了失败返还(AI-05/07:三类失败均返还)。幂等:首个观察到失败的
+  // 轮询为 true,后续为 false —— 客户端判断「已返还」应看配额复查而非此瞬时标记。
+  refunded?: boolean;
+}
+
+export interface CancelResponse {
+  ok: true;
+  canceled: true;
+  refunded: boolean; // 本次取消是否执行了返还(AI-07「取消还」;重复取消幂等为 false)
 }
 
 // Tripo credit 价(技术方案 D2,核实于 2026-07):文生 $0.20 = 20 credits,图生带纹理 $0.30 = 30 credits。

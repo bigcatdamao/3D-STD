@@ -1,8 +1,19 @@
-// T3 服务层路由(技术方案 §4)。管线次序即成本归因次序(PRD AI-07):
-//   校验(不扣)→ Turnstile(不扣)→ 配额扣减(DO 强一致)→ 引擎提交 → 失败即返还。
+// T3/T4 服务层路由(技术方案 §4)。管线次序即成本归因次序(PRD AI-07):
+//   校验(不扣)→ Turnstile(不扣)→ 配额扣减(DO 强一致)→ 引擎提交 → 提交失败即返还;
+//   任务失败(AI-05 三分类)与取消(AI-06)在 /api/task 路由观察到时执行幂等返还。
 // 自带 key 通道(D6 ④):携 x-engine-key 的请求跳过配额与熔断(成本归用户),Turnstile 仍验。
 
-import type { ApiError, ApiErrorClass, GenerateRequest, HealthResponse, QuotaResponse } from './api-types';
+import type {
+  ApiError,
+  ApiErrorClass,
+  CancelResponse,
+  EngineTask,
+  GenerateRequest,
+  GenerateResponse,
+  HealthResponse,
+  QuotaResponse,
+  TaskResponse,
+} from './api-types';
 import { CREDITS_BY_TYPE } from './api-types';
 import { getEngine } from './engine';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
@@ -30,7 +41,10 @@ export interface WorkerEnv {
   VISITOR_DAILY_LIMIT?: string; // 默认 3(PRD AI-11 / §9)
   DEMO_DEFAULT_LIMIT?: string; // 默认 20
   BREAKER_DAILY_CREDITS?: string; // 默认 3000(= $30/日,技术方案 §6)
-  ENGINE_MODE?: string; // T4
+  ENGINE_MODE?: string; // T4:'mock' 启用 mock 引擎(wrangler.jsonc 已默认;T13 切真实引擎)
+  MOCK_QUEUE_MS?: string; // mock 排队时长,默认 4000
+  MOCK_RUN_MS?: string; // mock 生成时长,默认 10000
+  MOCK_FAIL_RATE?: string; // mock 随机失败率 0–1,默认 0
 }
 
 export interface RouterDeps {
@@ -78,13 +92,15 @@ async function visitorCtxOf(req: Request, env: WorkerEnv): Promise<VisitorCtx> {
 // —— 各端点 ——
 
 function health(env: WorkerEnv): Response {
+  const engine = getEngine(env);
   const body: HealthResponse = {
     ok: true,
     service: '3d-std worker',
     at: new Date().toISOString(),
     config: {
       turnstile: Boolean(env.TURNSTILE_SECRET_KEY),
-      engine: getEngine(env) !== null,
+      engine: engine !== null,
+      engineName: engine?.name ?? null,
       demoCodes: parseDemoCodes(env.DEMO_CODES, num(env.DEMO_DEFAULT_LIMIT, 20)).size,
     },
   };
@@ -169,22 +185,73 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
     charged = true;
   }
 
-  // 4. 引擎提交(T3 未接入 → 立即走返还路径,账务链先行可验收;T4 起此分支被 mock/真实引擎替换)
-  const engine = getEngine(env);
+  // 4. 引擎提交(引擎缺位 → 立即返还,保留 T3 账务验收路径;ENGINE_MODE 置空即可回到此分支)
+  const engine = getEngine(env, deps.now);
   if (!engine) {
     let refunded = false;
     if (charged) {
       const r = await quotaCall<RefundResult>(env, { op: 'refund', taskId });
       refunded = r.refunded;
     }
-    return err(503, 'engine_unavailable', 'service', '生成引擎随 T4(mock)/T13(Tripo)接线;本次扣减已按 AI-07 返还。', {
+    return err(503, 'engine_unavailable', 'service', '生成引擎未接入(ENGINE_MODE 未配);本次扣减已按 AI-07 返还。', {
       refunded,
       taskId,
     });
   }
 
-  // (T4 起)const task = await engine.submit(body, ownKey); return Response.json({ ok: true, task });
-  return err(500, 'unreachable', 'service', '内部状态异常。');
+  try {
+    const task = await engine.submit(body, taskId, ownKey);
+    return Response.json({ ok: true, engine: engine.name, task } satisfies GenerateResponse);
+  } catch {
+    // 提交即失败 = 服务侧问题,不让用户买单(AI-07)
+    let refunded = false;
+    if (charged) {
+      const r = await quotaCall<RefundResult>(env, { op: 'refund', taskId });
+      refunded = r.refunded;
+    }
+    return err(502, 'engine_submit_failed', 'service', '任务提交到引擎失败;本次扣减已按 AI-07 返还。', { refunded, taskId });
+  }
+}
+
+// —— /api/task/:id(T4:轮询代理 + 失败返还;T13 换真实引擎时本函数零改动)——
+
+async function taskQuery(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: string): Promise<Response> {
+  const engine = getEngine(env, deps.now);
+  if (!engine) return err(501, 'task_query_not_wired', 'not_implemented', '生成引擎未接入(ENGINE_MODE 未配)。');
+  let task: EngineTask;
+  try {
+    task = await engine.query(id, ownKey);
+  } catch {
+    return err(502, 'engine_query_failed', 'service', '引擎查询失败,请稍后重试。');
+  }
+  let refunded: boolean | undefined;
+  if (task.status === 'failed') {
+    // AI-05:三类失败均返还(幂等:重复轮询只有首个观察者真正执行);service 类留运营告警痕迹
+    if (task.failReason === 'service') console.error(`[alert] engine service failure task=${id}`);
+    const billingId = await engine.billingIdOf(id);
+    if (billingId) {
+      const r = await quotaCall<RefundResult>(env, { op: 'refund', taskId: billingId });
+      refunded = r.refunded;
+    }
+  }
+  return Response.json({ ok: true, task, ...(refunded === undefined ? {} : { refunded }) } satisfies TaskResponse);
+}
+
+async function taskCancel(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?: string): Promise<Response> {
+  const engine = getEngine(env, deps.now);
+  if (!engine) return err(501, 'task_cancel_not_wired', 'not_implemented', '生成引擎未接入(ENGINE_MODE 未配)。');
+  try {
+    await engine.cancel(id, ownKey);
+  } catch {
+    // 引擎侧取消失败不阻塞返还:成本归因看用户意图,不看上游配合度(AI-07)
+  }
+  const billingId = await engine.billingIdOf(id);
+  let refunded = false;
+  if (billingId) {
+    const r = await quotaCall<RefundResult>(env, { op: 'refund', taskId: billingId });
+    refunded = r.refunded;
+  }
+  return Response.json({ ok: true, canceled: true, refunded } satisfies CancelResponse);
 }
 
 // —— 总入口 ——
@@ -198,13 +265,11 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/quota' && req.method === 'GET') return quota(req, env);
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
 
-  // T4/T13 占位:路由已立,能力随任务接线
-  if (/^\/api\/task\/[^/]+$/.test(path) && req.method === 'GET') {
-    return err(501, 'task_query_not_wired', 'not_implemented', '任务查询随 T4 接线(mock 引擎)。');
-  }
-  if (/^\/api\/task\/[^/]+\/cancel$/.test(path) && req.method === 'POST') {
-    return err(501, 'task_cancel_not_wired', 'not_implemented', '任务取消随 T4 接线。');
-  }
+  const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
+  const taskGet = /^\/api\/task\/([^/]+)$/.exec(path);
+  if (taskGet && req.method === 'GET') return taskQuery(env, deps, decodeURIComponent(taskGet[1]), ownKey);
+  const taskCancelM = /^\/api\/task\/([^/]+)\/cancel$/.exec(path);
+  if (taskCancelM && req.method === 'POST') return taskCancel(env, deps, decodeURIComponent(taskCancelM[1]), ownKey);
   if (path === '/api/transfer' && req.method === 'POST') {
     return err(501, 'transfer_not_wired', 'not_implemented', 'R2 转存随 T13 接线。');
   }

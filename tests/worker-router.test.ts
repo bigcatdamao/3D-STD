@@ -1,7 +1,16 @@
-// T3:路由层集成测试——用真实 QuotaDO(内存存储)跑通「校验 → Turnstile → 扣减 → 引擎缺位 → 返还」全管线,
-// 验证 PRD AI-07 成本归因次序与 D6 四层防滥用在 HTTP 边界上的行为。
+// T3/T4:路由层集成测试——用真实 QuotaDO(内存存储)跑通两条管线:
+//   T3 引擎缺位:「校验 → Turnstile → 扣减 → 立即返还」(ENGINE_MODE 置空时的降级保底);
+//   T4 mock 引擎:「扣减 → 提交 → 轮询 → 成功计费 / 失败返还 / 取消返还」的完整任务生命周期,
+// 验证 PRD AI-05/06/07 成本归因与 D6 四层防滥用在 HTTP 边界上的行为。
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ApiError, HealthResponse, QuotaResponse } from '../worker/api-types';
+import type {
+  ApiError,
+  CancelResponse,
+  GenerateResponse,
+  HealthResponse,
+  QuotaResponse,
+  TaskResponse,
+} from '../worker/api-types';
 import { QuotaDO, type DurableState } from '../worker/quota-do';
 import { handleRequest, type WorkerEnv } from '../worker/router';
 
@@ -30,7 +39,13 @@ function makeEnv(over: Partial<WorkerEnv> = {}): WorkerEnv {
 const okTurnstile: typeof fetch = async () => Response.json({ success: true });
 const failTurnstile: typeof fetch = async () => Response.json({ success: false, 'error-codes': ['invalid-input-response'] });
 
-const gen = (env: WorkerEnv, body: unknown, headers: Record<string, string> = {}, fetchImpl: typeof fetch = okTurnstile) =>
+const gen = (
+  env: WorkerEnv,
+  body: unknown,
+  headers: Record<string, string> = {},
+  fetchImpl: typeof fetch = okTurnstile,
+  now?: () => number,
+) =>
   handleRequest(
     new Request('https://x.dev/api/generate', {
       method: 'POST',
@@ -38,8 +53,34 @@ const gen = (env: WorkerEnv, body: unknown, headers: Record<string, string> = {}
       body: typeof body === 'string' ? body : JSON.stringify(body),
     }),
     env,
-    { fetchImpl },
+    { fetchImpl, now },
   );
+
+const taskGet = async (env: WorkerEnv, id: string, now?: () => number, headers: Record<string, string> = {}) => {
+  const res = await handleRequest(
+    new Request(`https://x.dev/api/task/${encodeURIComponent(id)}`, { headers }),
+    env,
+    { now },
+  );
+  return { status: res.status, body: (await res.json()) as TaskResponse | ApiError };
+};
+
+const taskCancel = async (env: WorkerEnv, id: string, now?: () => number, headers: Record<string, string> = {}) => {
+  const res = await handleRequest(
+    new Request(`https://x.dev/api/task/${encodeURIComponent(id)}/cancel`, { method: 'POST', headers }),
+    env,
+    { now },
+  );
+  return { status: res.status, body: (await res.json()) as CancelResponse | ApiError };
+};
+
+/** T4 试验台:mock 引擎在线(短时间表)+ 可拨时钟 */
+const mockRig = (over: Partial<WorkerEnv> = {}) => {
+  const clock = { t: 1_000_000 };
+  const now = () => clock.t;
+  const env = makeEnv({ ENGINE_MODE: 'mock', MOCK_QUEUE_MS: '1000', MOCK_RUN_MS: '2000', ...over });
+  return { clock, now, env };
+};
 
 const quotaOf = async (env: WorkerEnv, headers: Record<string, string> = {}) => {
   const res = await handleRequest(
@@ -58,7 +99,7 @@ describe('router · 基础路由', () => {
     const res = await handleRequest(new Request('https://x.dev/api/health'), makeEnv({ DEMO_CODES: 'a,b:5' }));
     const j = (await res.json()) as HealthResponse;
     expect(j.ok).toBe(true);
-    expect(j.config).toEqual({ turnstile: true, engine: false, demoCodes: 2 });
+    expect(j.config).toEqual({ turnstile: true, engine: false, engineName: null, demoCodes: 2 });
   });
 
   it('非 /api 路径回退静态资产', async () => {
@@ -66,8 +107,8 @@ describe('router · 基础路由', () => {
     expect(await res.text()).toBe('spa');
   });
 
-  it('T4/T13 占位路由返回 501 not_implemented', async () => {
-    const env = makeEnv();
+  it('引擎未接入时任务路由 501;/api/transfer 占位到 T13', async () => {
+    const env = makeEnv(); // 无 ENGINE_MODE
     for (const [url, method] of [
       ['https://x.dev/api/task/abc', 'GET'],
       ['https://x.dev/api/task/abc/cancel', 'POST'],
@@ -77,6 +118,9 @@ describe('router · 基础路由', () => {
       expect(res.status).toBe(501);
       expect(((await res.json()) as ApiError).class).toBe('not_implemented');
     }
+    // mock 在线后 transfer 仍占位(R2 转存属 T13)
+    const res = await handleRequest(new Request('https://x.dev/api/transfer', { method: 'POST' }), makeEnv({ ENGINE_MODE: 'mock' }));
+    expect(res.status).toBe(501);
   });
 
   it('未知 API 路由 404', async () => {
@@ -185,5 +229,110 @@ describe('router · 演示码(AI-11 / D6 ⑤)', () => {
     const q2 = await quotaOf(env, { 'x-client-id': 'cid-B' });
     expect(q1.visitor.remaining).toBe(1);
     expect(q2.visitor.remaining).toBe(1);
+  });
+});
+
+// ============================== T4:mock 引擎生命周期 ==============================
+
+describe('router · T4 mock 引擎在线', () => {
+  it('/api/health 报告 engine=true + engineName=mock', async () => {
+    const { env } = mockRig();
+    const res = await handleRequest(new Request('https://x.dev/api/health'), env);
+    const j = (await res.json()) as HealthResponse;
+    expect(j.config.engine).toBe(true);
+    expect(j.config.engineName).toBe('mock');
+  });
+
+  it('成功链:提交扣 1 → 排队 → 生成中 → success(resultUrl),成功不返还(AI-07)', async () => {
+    const { clock, now, env } = mockRig();
+    const res = await gen(env, validBody, {}, okTurnstile, now);
+    expect(res.status).toBe(200);
+    const j = (await res.json()) as GenerateResponse;
+    expect(j.ok).toBe(true);
+    expect(j.engine).toBe('mock');
+    expect(j.task.status).toBe('queued');
+    expect((await quotaOf(env)).visitor.used).toBe(1);
+
+    clock.t += 1500; // 进入生成
+    const mid = await taskGet(env, j.task.taskId, now);
+    expect((mid.body as TaskResponse).task.status).toBe('running');
+
+    clock.t += 2000; // 越过 runEnd
+    const done = await taskGet(env, j.task.taskId, now);
+    const dt = (done.body as TaskResponse).task;
+    expect(dt.status).toBe('success');
+    expect(dt.resultUrl).toMatch(/^\/mock\/(cube|ico|cyl)\.glb$/);
+    expect((await quotaOf(env)).visitor.used).toBe(1); // 成功计费,不返还
+  });
+
+  it('失败链:@mock:fail=service → 轮询观察到失败即返还,重复轮询幂等(AI-05/07)', async () => {
+    const { clock, now, env } = mockRig();
+    const res = await gen(env, { ...validBody, prompt: 'x @mock:fail=service' }, {}, okTurnstile, now);
+    const j = (await res.json()) as GenerateResponse;
+    expect((await quotaOf(env)).visitor.used).toBe(1);
+
+    clock.t += 10_000;
+    const p1 = await taskGet(env, j.task.taskId, now);
+    const b1 = p1.body as TaskResponse;
+    expect(b1.task).toMatchObject({ status: 'failed', failReason: 'service' });
+    expect(b1.refunded).toBe(true); // 首个观察者执行返还
+    expect((await quotaOf(env)).visitor.used).toBe(0);
+
+    const p2 = await taskGet(env, j.task.taskId, now);
+    expect((p2.body as TaskResponse).refunded).toBe(false); // 幂等:二次轮询不再返还
+    expect((await quotaOf(env)).visitor.used).toBe(0); // 不会返成负账
+  });
+
+  it('取消链:排队/生成中取消均返还,重复取消幂等(AI-06/07)', async () => {
+    const { clock, now, env } = mockRig();
+    const j = (await (await gen(env, validBody, {}, okTurnstile, now)).json()) as GenerateResponse;
+    expect((await quotaOf(env)).visitor.used).toBe(1);
+
+    clock.t += 1500; // 生成中
+    const c1 = await taskCancel(env, j.task.taskId, now);
+    expect(c1.body).toMatchObject({ ok: true, canceled: true, refunded: true });
+    expect((await quotaOf(env)).visitor.used).toBe(0);
+
+    const c2 = await taskCancel(env, j.task.taskId, now);
+    expect((c2.body as CancelResponse).refunded).toBe(false);
+  });
+
+  it('自带 key:提交不扣减;失败轮询返还为 no-op,账目不受扰(D6 ④)', async () => {
+    const { clock, now, env } = mockRig();
+    const res = await gen(env, { ...validBody, prompt: 'x @mock:fail=timeout' }, { 'x-engine-key': 'user-key' }, okTurnstile, now);
+    expect(res.status).toBe(200);
+    expect((await quotaOf(env)).visitor.used).toBe(0);
+    const j = (await res.json()) as GenerateResponse;
+    clock.t += 10_000;
+    const p = await taskGet(env, j.task.taskId, now);
+    expect((p.body as TaskResponse).task.failReason).toBe('timeout');
+    expect((p.body as TaskResponse).refunded).toBe(false); // ledger 无此账目,幂等 no-op
+    expect((await quotaOf(env)).visitor.used).toBe(0);
+  });
+
+  it('垃圾 taskId 轮询:按 timeout 类失败返回(§4 失败语义),不炸不返还', async () => {
+    const { now, env } = mockRig();
+    const p = await taskGet(env, 'not-a-real-task', now);
+    expect(p.status).toBe(200);
+    const b = p.body as TaskResponse;
+    expect(b.task).toMatchObject({ status: 'failed', failReason: 'timeout' });
+    expect(b.refunded).toBeUndefined(); // 无账务键,跳过返还
+  });
+
+  it('注入指令覆盖时长:@mock:queue=0 直接进入生成', async () => {
+    const { now, env } = mockRig();
+    const res = await gen(env, { ...validBody, prompt: 'x @mock:queue=0 @mock:run=5s' }, {}, okTurnstile, now);
+    const j = (await res.json()) as GenerateResponse;
+    expect(j.task.status).toBe('running');
+  });
+
+  it('引擎缺位回退:去掉 ENGINE_MODE 即回到 T3「扣减→立即返还」链', async () => {
+    const env = makeEnv(); // 无 ENGINE_MODE
+    const res = await gen(env, validBody);
+    expect(res.status).toBe(503);
+    const j = (await res.json()) as ApiError;
+    expect(j.error).toBe('engine_unavailable');
+    expect(j.refunded).toBe(true);
+    expect((await quotaOf(env)).visitor.used).toBe(0);
   });
 });
