@@ -34,6 +34,26 @@ const baseOpts = (over: Partial<ConstructorParameters<typeof TripoEngine>[0]> = 
   ...over,
 });
 
+describe('默认 fetch 的 this 绑定(fix2 生产回归)', () => {
+  it('未注入 fetchImpl 时,全局 fetch 不以引擎实例为 this 调用', async () => {
+    const orig = globalThis.fetch;
+    let seenThis: unknown = 'unset';
+    globalThis.fetch = function (this: unknown) {
+      seenThis = this; // workerd 里 this 为引擎实例即抛 Illegal invocation;这里捕获验证
+      return Promise.resolve(Response.json({ code: 0, data: { task_id: 'tp_this' } }));
+    } as unknown as typeof fetch;
+    try {
+      const map = { store: new Map<string, string>(), async put(k: string, v: string) { this.store.set(k, v); }, async get(k: string) { return this.store.get(k) ?? null; } };
+      const eng = new TripoEngine(baseOpts({ taskMap: map }));
+      const t = await eng.submit({ type: 'text', prompt: 'x' }, 'bill-this', undefined);
+      expect(t.taskId).toBe('tp_this');
+      expect(seenThis === undefined || seenThis === globalThis).toBe(true); // 绝不能是引擎实例
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+});
+
 describe('stripDrillDirectives(@mock 指令剥离)', () => {
   it('剥掉指令并收敛空白', () => {
     expect(stripDrillDirectives('一个球 @mock:run=30s')).toBe('一个球');

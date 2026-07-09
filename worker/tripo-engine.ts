@@ -146,7 +146,9 @@ export class TripoEngine implements Engine {
   }
 
   private get fetchImpl(): typeof fetch {
-    return this.o.fetchImpl ?? fetch;
+    // fix2:必须 bind——`this.fetchImpl(...)` 的属性访问会把引擎实例作为 this 传给全局 fetch,
+    // workerd 抛 Illegal invocation(测试注入的桩函数不校验 this,286 测试全绿仍漏网;线上首验即炸)。
+    return this.o.fetchImpl ?? fetch.bind(globalThis);
   }
 
   async submit(req: GenerateRequest, serviceTaskId: string, ownKey?: string): Promise<EngineTask> {
