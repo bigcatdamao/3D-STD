@@ -3,6 +3,7 @@ import { GenPanel } from './ai/GenPanel';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { runPrintCheck, useCheck } from './check/check-state';
+import { ExportDialog, HeaderExportButton } from './export/ExportDialog';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ServiceStatus } from './net/ServiceStatus';
 import { ParamPanel } from './panel/ParamPanel';
@@ -65,10 +66,11 @@ export function App() {
     >
       <header style={{ ...zone, gridColumn: '1 / 4', justifyContent: 'space-between', padding: '0 14px' }}>
         <span style={{ color: '#e8e8ea', fontWeight: 600 }}>3D STD</span>
-        <span>项目 · 导入 · 编辑/预览 · 导出(T15/T17/T18 落位)</span>
+        <span>项目 · 导入 · 编辑/预览(T17/T18 落位)</span>
         <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {/* PROJ-06 顶栏右区「出口」:检查在 T14 落位;导出主 CTA 归 T15 */}
+          {/* PROJ-06 顶栏右区「出口」:检查(T14)+ 导出主 CTA(T15) */}
           <HeaderCheckButton />
+          <HeaderExportButton />
           <ServiceStatus />
         </span>
       </header>
@@ -89,6 +91,7 @@ export function App() {
         <HistoryPanel />
       </footer>
       <ToastLayer />
+      <ExportDialog />
     </div>
   );
 }

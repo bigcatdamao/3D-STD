@@ -2,10 +2,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.6(T14 落地修订) |
+| 版本 | v1.7(T15 落地修订) |
 | 日期 | 2026-07-09 |
 | 上游文档 | 《PRD v0.94》 |
 | 外部数据核实日 | 2026-07-08(Tripo 官方 Python SDK v0.4.2 与 OpenAPI schema;此前 Tripo/Meshy/Cloudflare 官方文档) |
+
+**v1.7 变更记录(T15 落地修订,STL 导出)**:① **D5 落地修订:写出器弃 STLExporter,改用与检查器同源的 composeTRS 逐顶点直写**——「客户端导出、零转换、零 credit」的 D5 本体不变,变的是实现载体。论证:检查器(v1.6 ②)已用 composeTRS 逐顶点求世界几何,导出复用同一构造路径 = **检查报告度量的世界几何与导出文件字节严格同口径**(检查说 zMin=0 的对象,导出后在切片软件里就贴在 z=0);顺带修掉 STLExporter 不覆盖的两个坑:**负缩放(镜像)按矩阵行列式判定并交换 v1/v2 绕序**,否则镜像件导出后法向内翻、切片软件视为内外反转;**二进制头部不以 "solid" 开头**(部分解析器以此嗅探 ASCII 格式,误判后读崩),头部同时声明 units: mm · Z-up。facet normal 由世界顶点叉积重算(变换后局部法线失效),退化面写零法线不产 NaN(STL 规范允许,切片器自行重算)。② **逐对象 zip = 手写 STORE 法 PKZIP(约 80 行,零依赖)**——STL 打包不值得为压缩率引一个压缩库依赖;条目名带 UTF-8 标志位(bit 11)保中文对象名跨平台可读;固定时间戳(2026-01-01)使同输入产出字节完全一致,单测以独立解析器回读对拍(签名/条目数/CRC32/偏移自洽,CRC32 过标准测试向量)。③ **导出闸门语义(CHK-02 自动触发分支定稿)**——报告新鲜(phase=done 且 editVersion+床与检查时刻一致)直接复用不重跑;过期/缺失则自动发起一轮**与手动完全同源**的检查(结果面板、树黄标照常更新——导出触发的检查不是私有旁路);检查已在跑则搭现车等结果。「返回」以令牌作废闸门回调,检查本身照常跑完入面板。④ **确认框三类如实列明(CHK-08/C4)**——导出集内错误级条目 + 超时未检对象(不假装成功)+ 范围排除名单(边界 4:仅选中含隐藏/未就绪),任一非空即弹确认,确认后放行,**绝不禁用导出**;错误只挂在导出集外(如隐藏对象)不触发确认。⑤ **导出不入栈(C1 第三类)由测试钉死**:全流程 editVersion 与历史栈长度零变化。⑥ **锁定可导出**——锁定 = 视口不可变换,不是不可导出(C7 三状态正交),导出范围只看有效可见性与资产就绪。
 
 **v1.6 变更记录(T14 落地修订,打印检查)**:① **`editVersion` 作为过期信号源(CHK-03)**——`SceneDocument` 增单调计数 `editVersion`,经 `HistoryManager.bindOnChange` 在 push(常规/合并)/undo/redo 时递增,`hydrate` 手动递增;**选中与相机不递增**,与 C1 的「编辑」定义严格同口径(检查结果只应因几何/位置变化而过期,不因视图操作抖动)。过期判定 `isReportStale` 复合 editVersion + 床配置三轴——改床尺寸会令「床外」结论失真,故床变化亦过期。② **逐顶点精确世界包围盒**——实例级检查在 Worker 内以 `composeTRS`(`THREE.Matrix4.compose`,与 gizmo-math 同构造路径保证欧拉 XYZ 口径一致)对每个顶点变换求真实世界 zMin/包围盒,**替代内核 dropToBed 的 bbox 角点近似**;旋转体的 bbox 角点会外扩虚报更低的 zMin,逐顶点法才能让悬空判定与沉底修复不过冲(`check-core.test.ts` 用斜置八面体证明二者差异)。手写矩阵乘避免百万级 Vector3 分配。③ **Worker 常驻复用 + 资产级缓存(CHK-04/C2)**——检查 Worker 生命周期内缓存 `assetId→{positions, topo}`,几何只在首次需要时经 Transferable 传输(runner 侧 `sentAssets` 去重),后续轮次只传 id;资产级属性(水密/退化/面数)一次分析缓存,实例级属性(床外/悬空/微小/尺寸)随变换重算。验收样例「1 资产 × 6 实例 → 分析 1 次」即此分层的可观测证据(汇总行 + Console 日志)。超时 `terminate` 后缓存随实例销毁,`sentAssets` 同步清空,重试轮自动重传。④ **超时按未完成呈现(CHK-02)**——`CheckRunner` 30s 超时(`CHECK_TIMEOUT_MS`,可注入)处决 Worker、保留已流回的逐实例部分结果、未检对象列入 `unfinished` 供分对象重试(边界 5「不假装成功」);Worker `onerror` 崩溃同路径收口。逐实例流式返回是「部分结果保留」的前提。⑤ **修复后语义 = 编辑 → 过期(CHK-03 同规则)**——确定性修复(悬空沉底 / 超床 clamp 回最近合法位)本身是一次入栈编辑,触发 editVersion 递增 → 整份报告过期;条目额外标「已执行修复」承接验收样例的可读性,`fixedKeys` 新一轮清空。新增 OpKind `'fix'`(🩹 修复)入 history-labels 权威表;内核加 `nudgeInstances`(平移增量,超床修复用)与 `dropToBed` 可选 label 参数。⑥ **树黄标只在新鲜报告亮(CHK-05)**——`flaggedIds` 派生带错误/警告的实例及其祖先组链,过期即熄灭(黄标承诺「当前场景确有此问题」,过期后承诺失效);锁定对象可检查但修复禁用(C7),点击其条目只聚焦不选中。⑦ **纯前端零 credit**——检查全程在浏览器 Worker,不碰服务层与 Tripo;非水密边界边描红线段在资产首次分析时采集(`parse-core` 的 `collectBoundarySegments`,上限 `MAX_HIGHLIGHT_SEGMENTS=4000`)回传主线程 `edgeRegistry` 供高亮,随实例变换渲染。阈值 `FLOATING_MM=0.5` / `TINY_MM=2` 待上线对照切片软件默认值校准(§9)。
 
@@ -54,7 +56,7 @@
 `{ type: text|image, prompt/imageKey, options } → { taskId } → { status: queued|running|success|failed, progress, resultUrl, failReason: timeout|moderation|service }`
 Tripo 映射:`text_to_model` / `image_to_model`(H3 版本,带纹理);`consumed_credit` 字段用于成本对账;错误码 2000(超并发)映射为对用户不可见的服务层排队重试(指数退避 + Retry-After),不占用用户失败分类。Meshy 映射同构,M2 实现。
 
-**D5 STL 导出走客户端。** Three.js STLExporter 直接从场景写出二进制 STL(Z-up + mm 已是世界设定,零转换)。不用 Tripo 的付费 Conversion 任务(5–10 credits/次)——但记录其 `flatten_bottom` 能力于注释层,作为「服务端也有沉底概念」的佐证。
+**D5 STL 导出走客户端。** 复用检查器的 composeTRS 逐顶点直写二进制 STL(Z-up + mm 已是世界设定,零转换;v1.7 自 STLExporter 方案收进——检查与导出同口径、镜像绕序修正、头部嗅探兼容)。不用 Tripo 的付费 Conversion 任务(5–10 credits/次)——但记录其 `flatten_bottom` 能力于注释层,作为「服务端也有沉底概念」的佐证。
 
 **D6 防滥用四层。** ① Cloudflare Turnstile(免费、无感)拦机器人于任务提交前;② 访客配额:浏览器指纹 + IP 复合键,3 次/日(见 §6 成本模型),计数与账务存 Durable Object——KV 为最终一致且无原子操作,并发读改写会产生配额双花,不得用于计数;③ 全局预算熔断:当日总消耗 credits 记于配额 Durable Object(v1.2:与个人配额同实例记账,原子且无双花),达上限(可配)后全站生成入口降级为「今日额度已用完 + 自带 key」;④ 自带 key 通道:用户 key 仅存 sessionStorage、每请求透传、服务层不落盘;⑤ 演示码:URL 携带的提升配额令牌(如 20 次/日),供面试与演示链接使用,服务层可逐码撤销——防御机制不应卡住最高价值访客。
 
