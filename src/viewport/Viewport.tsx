@@ -24,6 +24,7 @@ import { Bed } from './Bed';
 import { CameraRig } from './CameraRig';
 import { Gizmo } from './Gizmo';
 import { SceneInstances } from './SceneInstances';
+import { CheckHighlight } from '../check/CheckHighlight';
 import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
 
@@ -314,6 +315,7 @@ export function Viewport() {
         <CameraRig />
         <Bed bed={bed} />
         <SceneInstances />
+        <CheckHighlight />
         <GhostPreview />
         <Gizmo />
         <InteractionBridge />

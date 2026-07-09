@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssetPanel } from '../assets/AssetPanel';
 import { SceneNode } from '../kernel/types';
 import { dispatch, doc, sendCam, useUi } from '../state/store';
+import { flaggedIds, useCheck } from '../check/check-state';
 import { DEPTH_SOFT_CAP, DropRef, FlatRow, flattenVisible, resolveDrop, subtreeHeight } from './tree-logic';
 
 const AMBER = '#ffb454';
@@ -88,6 +89,8 @@ export function TreePanel() {
 function TreeTab() {
   const rev = useUi((s) => s.rev); // 订阅文档版本:任何 command 后重派生
   const setToast = useUi((s) => s.setToast);
+  const checkIssues = useCheck((s) => s.issues); // CHK-05 树黄标联动(过期后 flaggedIds 自动清空)
+  const checkPhase = useCheck((s) => s.phase);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -99,6 +102,8 @@ function TreeTab() {
 
   const rows = useMemo(() => flattenVisible(doc, collapsed), [rev, collapsed]);
   const rowIndex = useMemo(() => new Map(rows.map((r, i) => [r.id, i])), [rows]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const flagged = useMemo(() => flaggedIds(), [rev, checkIssues, checkPhase]);
 
   // 选中变化(单选)→ 滚动入视(与视口点选联动的可见性)
   const selSig = [...doc.selection].join(',');
@@ -301,6 +306,7 @@ function TreeTab() {
           <TreeRow
             key={row.id}
             row={row}
+            flagged={flagged.has(row.id)}
             drag={drag}
             renaming={renaming === row.id}
             registerEl={(el) => {
@@ -361,6 +367,7 @@ const DISABLED: React.CSSProperties = { opacity: 0.4, cursor: 'default' };
 
 function TreeRow({
   row,
+  flagged,
   drag,
   renaming,
   registerEl,
@@ -371,6 +378,7 @@ function TreeRow({
   onFocusInViewport,
 }: {
   row: FlatRow;
+  flagged: boolean; // CHK-05:打印检查黄标(自身或成员带错误/警告;过期后熄灭)
   drag: DragView | null;
   renaming: boolean;
   registerEl: (el: HTMLDivElement | null) => void;
@@ -467,6 +475,11 @@ function TreeRow({
           title={[node.name, inheritedHidden ? '随组隐藏' : '', inheritedLocked ? '随组锁定' : ''].filter(Boolean).join(' · ')}
         >
           {node.name}
+          {flagged && (
+            <span title="打印检查:存在错误/警告(结果面板点条目定位,CHK-05)" style={{ marginLeft: 4 }}>
+              ⚠️
+            </span>
+          )}
           {row.kind === 'group' && !row.hasChildren && <span style={{ color: '#8b8b93', fontWeight: 400 }}>(空)</span>}
         </span>
       )}

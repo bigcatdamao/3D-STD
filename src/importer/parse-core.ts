@@ -302,6 +302,9 @@ export interface Topology {
   boundaryEdges: number; // 邻面数 = 1
   nonManifoldEdges: number; // 邻面数 > 2
   watertight: boolean;
+  /** T14/CHK-05:边界边线段端点(资产局部坐标,x0y0z0x1y1z1 × 段数)。
+   *  仅在 opts.collectBoundarySegments > 0 时产出,超出上限截断(高亮示意足够,防超大网格撑爆传输)。 */
+  boundarySegments?: Float32Array;
 }
 
 export function bboxOfPositions(p: Float32Array): { min: [number, number, number]; max: [number, number, number] } {
@@ -316,7 +319,11 @@ export function bboxOfPositions(p: Float32Array): { min: [number, number, number
   return { min, max };
 }
 
-export function weldAndAnalyze(positions: Float32Array, index: Uint32Array | null): Topology {
+export function weldAndAnalyze(
+  positions: Float32Array,
+  index: Uint32Array | null,
+  opts: { collectBoundarySegments?: number } = {}, // 上限段数;0/缺省 = 不采集(解析管线沿用旧行为)
+): Topology {
   const triCount = (index ? index.length : positions.length / 3) / 3 | 0;
   const bb = bboxOfPositions(positions);
   const diag = Math.hypot(bb.max[0] - bb.min[0], bb.max[1] - bb.min[1], bb.max[2] - bb.min[2]) || 1;
@@ -327,6 +334,7 @@ export function weldAndAnalyze(positions: Float32Array, index: Uint32Array | nul
   const weldMap = new Map<string, number>();
   const vertexCount = positions.length / 3;
   const remap = new Uint32Array(vertexCount);
+  const repIndex: number[] = []; // 焊接 id → 首个原始顶点索引(边界边端点坐标经此还原)
   let unique = 0;
   for (let v = 0; v < vertexCount; v++) {
     const key = `${Math.round(positions[v * 3] / eps)},${Math.round(positions[v * 3 + 1] / eps)},${Math.round(positions[v * 3 + 2] / eps)}`;
@@ -334,6 +342,7 @@ export function weldAndAnalyze(positions: Float32Array, index: Uint32Array | nul
     if (id === undefined) {
       id = unique++;
       weldMap.set(key, id);
+      repIndex.push(v);
     }
     remap[v] = id;
   }
@@ -384,9 +393,32 @@ export function weldAndAnalyze(positions: Float32Array, index: Uint32Array | nul
 
   let boundary = 0;
   let nonManifold = 0;
-  for (const n of edges.values()) {
-    if (n === 1) boundary++;
-    else if (n > 2) nonManifold++;
+  const segCap = opts.collectBoundarySegments ?? 0;
+  const segs: number[] = [];
+  for (const [k, n] of edges.entries()) {
+    if (n === 1) {
+      boundary++;
+      if (segCap > 0 && segs.length / 6 < segCap) {
+        // 解码边 key → 焊接 id 对 → 代表顶点坐标
+        let lo: number;
+        let hi: number;
+        if (usePacked) {
+          const kn = k as number;
+          lo = Math.floor(kn / PACK);
+          hi = kn % PACK;
+        } else {
+          const [a, b] = (k as string).split('_');
+          lo = Number(a);
+          hi = Number(b);
+        }
+        const i0 = repIndex[lo] * 3;
+        const i1 = repIndex[hi] * 3;
+        segs.push(
+          positions[i0], positions[i0 + 1], positions[i0 + 2],
+          positions[i1], positions[i1 + 1], positions[i1 + 2],
+        );
+      }
+    } else if (n > 2) nonManifold++;
   }
 
   return {
@@ -396,5 +428,6 @@ export function weldAndAnalyze(positions: Float32Array, index: Uint32Array | nul
     boundaryEdges: boundary,
     nonManifoldEdges: nonManifold,
     watertight: triCount > 0 && boundary === 0 && nonManifold === 0,
+    ...(segCap > 0 ? { boundarySegments: new Float32Array(segs) } : {}),
   };
 }

@@ -196,7 +196,13 @@ function bboxOf(g: THREE.BufferGeometry): Asset['meta']['bbox'] {
   return { min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] };
 }
 
-function demoAsset(id: string, name: string, g: THREE.BufferGeometry, faces: number): Asset {
+function demoAsset(
+  id: string,
+  name: string,
+  g: THREE.BufferGeometry,
+  faces: number,
+  metaOverride: Partial<Asset['meta']> = {},
+): Asset {
   geometryRegistry.set(id, g);
   const thumb = renderThumbnail(g); // 资产面板网格视图用;无 WebGL 环境返回 null,字形占位
   if (thumb) thumbRegistry.set(id, thumb);
@@ -205,7 +211,7 @@ function demoAsset(id: string, name: string, g: THREE.BufferGeometry, faces: num
     name,
     source: 'import',
     state: 'ready',
-    meta: { faces, bbox: bboxOf(g), unitChoice: 'mm', watertight: true, degenerate: false },
+    meta: { faces, bbox: bboxOf(g), unitChoice: 'mm', watertight: true, degenerate: false, ...metaOverride },
   };
 }
 
@@ -237,12 +243,14 @@ export function bootstrapDemoScene() {
   const cyl = new THREE.CylinderGeometry(14, 14, 44, 48).rotateX(Math.PI / 2); // 圆柱轴对齐 Z(C3)
   const knot = new THREE.TorusKnotGeometry(12, 3.6, 128, 24);
   const plate = new THREE.BoxGeometry(60, 40, 6);
+  const openBox = makeOpenBox(24, 24, 16); // T14 夹具:顶面缺失 → 非水密(4 条边界边)
 
   const assets = [
     demoAsset('ast_demo_box', '立方体 30mm', box, 12),
     demoAsset('ast_demo_cyl', '圆柱 Ø28×44', cyl, 96),
     demoAsset('ast_demo_knot', '扭结样件', knot, 6144),
     demoAsset('ast_demo_plate', '校准板 60×40', plate, 12),
+    demoAsset('ast_demo_open', '开口盒 · 非水密样例', openBox, 10, { watertight: false }),
   ];
   const nodes = [
     demoInstance('ins_demo_box', 'ast_demo_box', '立方体 30mm', [-60, 40, 15]),
@@ -250,7 +258,34 @@ export function bootstrapDemoScene() {
     demoInstance('ins_demo_knot', 'ast_demo_knot', '扭结样件', [55, 30, 16]),
     // 锁定示例:VIEW-04 验收用 —— 点选/框选/全选都应跳过它
     demoInstance('ins_demo_plate', 'ast_demo_plate', '已锁定 · 校准板', [-70, -70, 3], true),
+    // T14 验收示例:落位即悬空 6mm(底面 z = 14 − 8),检查应报「非水密(错误)+ 悬空(警告)」
+    demoInstance('ins_demo_open', 'ast_demo_open', '开口盒 · 非水密样例', [70, -60, 14]),
   ];
 
   doc.hydrate(assets, nodes);
+}
+
+/** 顶面缺失的开口盒(w×d×h,几何中心在原点):非水密(顶缘 4 条边界边)、面片朝外的手工三角网格。
+ *  T14 检查器的常驻演示件 —— 描红高亮、悬空修复、资产级缓存(拖多个实例)都能在它身上点验 */
+function makeOpenBox(w: number, d: number, h: number): THREE.BufferGeometry {
+  const x = w / 2;
+  const y = d / 2;
+  const z = h / 2;
+  // 8 角点:下面 a b c d(逆时针俯视),上面 e f g h 对应正上方
+  const a = [-x, -y, -z], b = [x, -y, -z], c = [x, y, -z], dd = [-x, y, -z];
+  const e = [-x, -y, z], f = [x, -y, z], g = [x, y, z], hh = [-x, y, z];
+  // 每面 2 三角,外向绕序;顶面(e f g hh)刻意缺失
+  const tris = [
+    [a, dd, c], [a, c, b], // 底(-Z)
+    [a, b, f], [a, f, e], // 前(-Y)
+    [b, c, g], [b, g, f], // 右(+X)
+    [c, dd, hh], [c, hh, g], // 后(+Y)
+    [dd, a, e], [dd, e, hh], // 左(-X)
+  ];
+  const pos = new Float32Array(tris.length * 9);
+  tris.flat().forEach((p, i) => pos.set(p, i * 3));
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
 }

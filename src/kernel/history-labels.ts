@@ -20,7 +20,8 @@ export type OpKind =
   | 'reparent' // 跨层移动(移入组/移至根)
   | 'transform' // 参数面板数值通道(C6 绝对值语义)
   | 'gizmo' // 视口拖拽通道(C6 相对增量语义;含直接拖动)
-  | 'drop'; // 沉底(VIEW-06)
+  | 'drop' // 沉底(VIEW-06;T14 悬空修复复用同语义)
+  | 'fix'; // 打印检查确定性修复:移回床内(CHK-06)
 
 export const OP_TABLE: Record<OpKind, { icon: string; name: string }> = {
   place: { icon: '📥', name: '导入' },
@@ -40,4 +41,5 @@ export const OP_TABLE: Record<OpKind, { icon: string; name: string }> = {
   transform: { icon: '📐', name: '数值变换' },
   gizmo: { icon: '✥', name: '拖拽变换' },
   drop: { icon: '⬇️', name: '沉底' },
+  fix: { icon: '🩹', name: '修复' },
 };

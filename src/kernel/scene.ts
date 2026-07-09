@@ -44,6 +44,9 @@ export class SceneDocument {
   order = new Map<string, string[]>([[ROOT, []]]);
   selection = new Set<string>();
   readonly history: HistoryManager;
+  /** 单调编辑版本号(T14/CHK-03):入栈/合并/撤销/重做/装载后递增;选中与相机不递增。
+   *  打印检查完成时记下此值,此后任何编辑令结果过期(灰显 + 重新检查,不自动重跑)。 */
+  editVersion = 0;
 
   private interaction: {
     label: string;
@@ -58,6 +61,9 @@ export class SceneDocument {
     this.history = history ?? new HistoryManager();
     this.history.bindSelection((ids) => {
       this.selection = new Set(ids);
+    });
+    this.history.bindOnChange(() => {
+      this.editVersion += 1;
     });
   }
 
@@ -228,6 +234,7 @@ export class SceneDocument {
       if (n.kind === 'group' && !this.order.has(n.id)) this.order.set(n.id, []);
     }
     this.selection = new Set();
+    this.editVersion += 1; // 装载改变场景内容,既有检查结果随之过期(CHK-03 同口径)
   }
 
   /** T11 持久化装载专用:按原 id 写入资产(不产生历史),并抬高 id 序号地板防止
@@ -625,12 +632,28 @@ export class SceneDocument {
     return { skipped };
   }
 
-  /** VIEW-06 沉底:底面 Z 归零(此内核以 bbox 近似;几何精确版在检查 Worker 中) */
-  dropToBed(ids: string[], zMinOf: (inst: InstanceNode) => number) {
-    this.commit('drop', '沉底', ids, () => {
+  /** VIEW-06 沉底:底面 Z 归零(此内核以 bbox 近似;几何精确版在检查 Worker 中)。
+   *  T14 悬空修复(CHK-06)复用本命令,zMin 直接取检查 Worker 的逐顶点精确值,label 注明修复语境。 */
+  dropToBed(ids: string[], zMinOf: (inst: InstanceNode) => number, label = '沉底') {
+    this.commit('drop', label, ids, () => {
       for (const id of ids) {
         const inst = this.instance(id);
         inst.transform.position[2] -= zMinOf(inst);
+      }
+    });
+  }
+
+  /** CHK-06 确定性修复「移回最近合法位」:按检查 Worker 算出的平移增量整体挪动,一步入栈可撤销。
+   *  跳过等效锁定成员由调用侧保证(修复按钮对锁定对象禁用,C7)。 */
+  nudgeInstances(moves: { id: string; delta: [number, number, number] }[], label = '移回床内') {
+    const targets = moves.filter((m) => this.nodes.get(m.id)?.kind === 'instance');
+    if (!targets.length) return;
+    this.commit('fix', label, targets.map((m) => m.id), () => {
+      for (const { id, delta } of targets) {
+        const p = this.instance(id).transform.position;
+        p[0] += delta[0];
+        p[1] += delta[1];
+        p[2] += delta[2];
       }
     });
   }

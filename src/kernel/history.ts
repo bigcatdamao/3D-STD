@@ -31,6 +31,7 @@ export class HistoryManager {
   readonly mergeWindowMs: number;
   private readonly now: () => number;
   private applySelection: (ids: string[]) => void = () => {};
+  private onChange: () => void = () => {}; // 任何入栈/撤销/重做后触发(T14:检查结果过期信号源,CHK-03)
 
   constructor(opts: HistoryOptions = {}) {
     this.cap = opts.cap ?? 50;
@@ -40,6 +41,12 @@ export class HistoryManager {
 
   bindSelection(fn: (ids: string[]) => void) {
     this.applySelection = fn;
+  }
+
+  /** T14/CHK-03:订阅「文档编辑发生」。入栈(含合并入栈)、撤销、重做均触发;
+   *  选中/相机等不入栈操作天然不触发 —— 与 C1 的编辑定义严格同口径。 */
+  bindOnChange(fn: () => void) {
+    this.onChange = fn;
   }
 
   setFrozen(v: boolean) {
@@ -96,6 +103,7 @@ export class HistoryManager {
       top.targetNames = entry.targetNames;
       top.at = at;
       // revert 保持 top 原有(回到最早 before);cursor 不变
+      this.onChange();
       return;
     }
 
@@ -107,6 +115,7 @@ export class HistoryManager {
       this.cursor -= 1;
       this.overflowed = true;
     }
+    this.onChange();
   }
 
   undo(): boolean {
@@ -115,6 +124,7 @@ export class HistoryManager {
     e.revert();
     this.applySelection(e.selectionBefore); // HIST-06
     this.cursor -= 1;
+    this.onChange();
     return true;
   }
 
@@ -124,6 +134,7 @@ export class HistoryManager {
     e.apply();
     this.applySelection(e.selectionAfter);
     this.cursor += 1;
+    this.onChange();
     return true;
   }
 
