@@ -91,6 +91,8 @@ const barFill = (pct: number, color: string): React.CSSProperties => ({
 export function GenPanel() {
   const [gen, setGen] = useState<GenState>(() => idleState());
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
+  const [promptMax, setPromptMax] = useState(PROMPT_MAX_CHARS); // T13a-fix1:随 /api/health 的引擎上报值收紧(Tripo=1024)
+  const promptMaxRef = useRef(PROMPT_MAX_CHARS);
   const [waitingToken, setWaitingToken] = useState(false); // 已点提交、等 widget 出 token
   const [tsBroken, setTsBroken] = useState(false); // 脚本装载失败/错误回调
   const [ownKeyOpen, setOwnKeyOpen] = useState(false);
@@ -172,7 +174,7 @@ export function GenPanel() {
   // ---- 提交(AI-01 校验在前;token 单次使用)----
   const doSubmit = useCallback(
     async (context: GenContext) => {
-      const v = validateText(context.prompt);
+      const v = validateText(context.prompt, promptMaxRef.current);
       if (!v.ok) {
         commit(idleState(context, v.message));
         return;
@@ -290,6 +292,21 @@ export function GenPanel() {
     setHasOwnKey(Boolean(getEngineKey()));
     void refreshQuota();
 
+    // T13a-fix1:prompt 上限以引擎上报为准;失败保持兜底 2000(服务端仍会二次校验)
+    void (async () => {
+      try {
+        const h = await fetch('/api/health');
+        const hj = (await h.json()) as { config?: { promptMax?: number } };
+        const m = hj?.config?.promptMax;
+        if (typeof m === 'number' && m > 0) {
+          setPromptMax(m);
+          promptMaxRef.current = m;
+        }
+      } catch {
+        /* 离线/失败:保持兜底 */
+      }
+    })();
+
     // AI 边界 1:存在活动票据 → 恢复轮询(服务端无状态时间表保证未知/过期稳定收敛到 timeout+返还)
     try {
       const ticket = parseActiveTicket(localStorage.getItem(ACTIVE_TASK_KEY));
@@ -334,7 +351,7 @@ export function GenPanel() {
   const breakerOpen = quota?.breaker.open ?? false;
   const blocked = !hasOwnKey && (breakerOpen || remaining === 0); // 提交前拦截(AI-07:不进入扣减)
   const p = gen.context.prompt;
-  const overLimit = p.trim().length > PROMPT_MAX_CHARS;
+  const overLimit = p.trim().length > promptMax;
 
   const saveOwnKey = () => {
     setEngineKey(ownKeyDraft || null);
@@ -508,7 +525,7 @@ export function GenPanel() {
             生成
           </button>
           <span style={{ ...dim, fontSize: 10, ...(overLimit ? { color: '#e0a8a8' } : {}) }}>
-            {p.trim().length}/{PROMPT_MAX_CHARS}
+            {p.trim().length}/{promptMax}
           </span>
         </div>
       </div>

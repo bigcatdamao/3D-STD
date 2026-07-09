@@ -117,6 +117,7 @@ function health(env: WorkerEnv, deps: RouterDeps): Response {
       turnstile: Boolean(env.TURNSTILE_SECRET_KEY),
       engine: engine !== null,
       engineName: engine?.name ?? null,
+      promptMax: engine?.promptMaxLength ?? 2000,
       demoCodes: parseDemoCodes(env.DEMO_CODES, num(env.DEMO_DEFAULT_LIMIT, 20)).size,
     },
   };
@@ -223,14 +224,22 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   try {
     const task = await engine.submit(body, taskId, ownKey);
     return Response.json({ ok: true, engine: engine.name, task } satisfies GenerateResponse);
-  } catch {
+  } catch (e) {
     // 提交即失败 = 服务侧问题,不让用户买单(AI-07)
     let refunded = false;
     if (charged) {
       const r = await quotaCall<RefundResult>(env, { op: 'refund', taskId });
       refunded = r.refunded;
     }
-    return err(502, 'engine_submit_failed', 'service', '任务提交到引擎失败;本次扣减已按 AI-07 返还。', { refunded, taskId });
+    // T13a-fix1:原因必须可诊断——日志记全文,响应带脱敏摘要(自造的错误串只含状态码/错误码,无密钥)。
+    const reason = e instanceof Error ? e.message.slice(0, 120) : String(e).slice(0, 120);
+    console.error(`[submit-fail] engine=${engine.name} task=${taskId} reason=${reason}`);
+    const hint = reason.includes('tripo_key_missing')
+      ? '服务端未配置 TRIPO_API_KEY(检查 Secret 名与是否重新部署)'
+      : /http=40[13]/.test(reason)
+        ? '引擎鉴权失败:API key 无效、过期或复制时混入空白字符'
+        : reason;
+    return err(502, 'engine_submit_failed', 'service', `任务提交到引擎失败;本次扣减已按 AI-07 返还。(${hint})`, { refunded, taskId });
   }
 }
 

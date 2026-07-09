@@ -36,6 +36,7 @@ function makeWorld() {
     submitCount: 0,
     lastSubmitBody: null as unknown,
     lastAuth: '',
+    submitStatus: 0, // 非 0 时提交端点返回该 HTTP 状态(T13a-fix1 鉴权分类测试用)
     modelBytes: new Uint8Array([0x67, 0x6c, 0x54, 0x46]).buffer, // "glTF"
   };
 
@@ -43,6 +44,7 @@ function makeWorld() {
     const url = String(input);
     if (url.includes('challenges.cloudflare.com')) return Response.json({ success: true });
     if (url === `${TRIPO_BASE}/task` && init?.method === 'POST') {
+      if (upstream.submitStatus) return Response.json({ code: 9, message: 'stub' }, { status: upstream.submitStatus });
       upstream.submitCount++;
       upstream.lastSubmitBody = JSON.parse(String(init.body));
       upstream.lastAuth = (init.headers as Record<string, string>).authorization;
@@ -101,7 +103,7 @@ beforeEach(() => {
 describe('T13a · /api/health', () => {
   it('engineName = tripo(前端诊断面板据此禁用演练)', async () => {
     const j = (await (await w.call('/api/health')).json()) as HealthResponse;
-    expect(j.config).toMatchObject({ engine: true, engineName: 'tripo' });
+    expect(j.config).toMatchObject({ engine: true, engineName: 'tripo', promptMax: 1024 }); // T13a-fix1:前端计数器数据源
   });
 });
 
@@ -236,7 +238,20 @@ describe('T13a · 校验与降级', () => {
     expect(r.status).toBe(502);
     const e = (await r.json()) as ApiError;
     expect(e).toMatchObject({ error: 'engine_submit_failed', refunded: true });
+    expect(e.message).toContain('未配置 TRIPO_API_KEY'); // T13a-fix1:原因分类外显,可自诊断
     expect(await w.remaining()).toBe(before);
+  });
+
+  it('上游 401:提交失败原因归为鉴权,响应可自诊断(T13a-fix1)', async () => {
+    w.upstream.submitStatus = 401;
+    const before = await w.remaining();
+    const r = await w.gen('x');
+    expect(r.status).toBe(502);
+    const e = (await r.json()) as ApiError;
+    expect(e).toMatchObject({ error: 'engine_submit_failed', refunded: true });
+    expect(e.message).toContain('鉴权失败');
+    expect(await w.remaining()).toBe(before);
+    w.upstream.submitStatus = 0;
   });
 
   it('mock 引擎下结果代理如实 404(mock 结果为同源静态资产)', async () => {

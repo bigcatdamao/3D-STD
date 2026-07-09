@@ -51,15 +51,15 @@ export const idleState = (context: GenContext = emptyContext(), notice?: string)
 
 // ---------- 前端即时校验(AI-01,失败不发请求 = 不消耗配额) ----------
 
-export const PROMPT_MAX_CHARS = 2000; // 与服务侧上限一致(worker/router.ts)
+export const PROMPT_MAX_CHARS = 2000; // 兜底值;运行时以 /api/health 的 config.promptMax 为准(T13a-fix1:引擎上报,Tripo=1024)
 
 export type Validation = { ok: true } | { ok: false; code: string; message: string };
 
-export function validateText(prompt: string): Validation {
+export function validateText(prompt: string, maxChars: number = PROMPT_MAX_CHARS): Validation {
   const p = prompt.trim();
   if (!p) return { ok: false, code: 'empty_prompt', message: '请输入描述后再提交。' };
-  if (p.length > PROMPT_MAX_CHARS) {
-    return { ok: false, code: 'prompt_too_long', message: `描述超长(${p.length}/${PROMPT_MAX_CHARS} 字符)。` };
+  if (p.length > maxChars) {
+    return { ok: false, code: 'prompt_too_long', message: `描述超长(${p.length}/${maxChars} 字符)。` };
   }
   return { ok: true };
 }

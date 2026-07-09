@@ -26,6 +26,7 @@ export interface HealthResponse {
     turnstile: boolean; // TURNSTILE_SECRET_KEY 是否已配置
     engine: boolean; // 生成引擎是否接入(T4 起 ENGINE_MODE='mock' 为 true,T13 Tripo 同)
     engineName: string | null; // 接入的引擎名('mock' / 'tripo'),未接入为 null
+    promptMax: number; // 当前引擎的 prompt 字符上限(T13a-fix1:前端计数器与校验以此为准)
     demoCodes: number; // 已配置演示码数量(不泄露码本身)
   };
 }

@@ -99,7 +99,7 @@ describe('router · 基础路由', () => {
     const res = await handleRequest(new Request('https://x.dev/api/health'), makeEnv({ DEMO_CODES: 'a,b:5' }));
     const j = (await res.json()) as HealthResponse;
     expect(j.ok).toBe(true);
-    expect(j.config).toEqual({ turnstile: true, engine: false, engineName: null, demoCodes: 2 });
+    expect(j.config).toEqual({ turnstile: true, engine: false, engineName: null, promptMax: 2000, demoCodes: 2 }); // 无引擎:兜底 2000
   });
 
   it('非 /api 路径回退静态资产', async () => {
@@ -241,6 +241,7 @@ describe('router · T4 mock 引擎在线', () => {
     const j = (await res.json()) as HealthResponse;
     expect(j.config.engine).toBe(true);
     expect(j.config.engineName).toBe('mock');
+    expect(j.config.promptMax).toBe(2000); // mock 不上报上限 → 路由默认
   });
 
   it('成功链:提交扣 1 → 排队 → 生成中 → success(resultUrl),成功不返还(AI-07)', async () => {

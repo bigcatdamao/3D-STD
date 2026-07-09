@@ -40,6 +40,10 @@ describe('AI-01 前端即时校验(失败不发请求 = 零配额消耗)', () =>
   it('超长被拒且上限与服务侧一致(2000)', () => {
     expect(PROMPT_MAX_CHARS).toBe(2000);
     expect(validateText('a'.repeat(2000)).ok).toBe(true);
+    const vMax = validateText('a'.repeat(1025), 1024); // T13a-fix1:上限可由引擎上报收紧
+    expect(vMax.ok).toBe(false);
+    if (!vMax.ok) expect(vMax.message).toContain('1024');
+    expect(validateText('a'.repeat(1024), 1024).ok).toBe(true);
     const v = validateText('a'.repeat(2001));
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.code).toBe('prompt_too_long');
