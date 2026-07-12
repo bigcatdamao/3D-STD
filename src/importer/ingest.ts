@@ -13,6 +13,8 @@
 import * as THREE from 'three';
 import { doc, dispatch, thumbRegistry, useUi, geometryRegistry } from '../state/store';
 import type { UnitAskState } from '../state/store';
+import type { OpKind } from '../kernel/history-labels';
+import type { AssetSource } from '../kernel/types';
 import { ImportQueue, type ImportJob } from './import-queue';
 import {
   FACE_WARN_LIMIT,
@@ -29,7 +31,27 @@ type OkReply = Extract<WorkerReply, { t: 'ok' }>;
 
 /** IMP-02 三入口双语义(T11 定稿):拖入视口 = 入库+建实例;拖入资产面板 / 工具栏文件选择器 = 仅入库 */
 export type ImportTarget = 'viewport' | 'library';
-const jobTarget = new Map<string, ImportTarget>(); // jobId → 目标语义(贯穿单位裁决全程)
+
+export interface ImportResult {
+  assetId: string;
+  instanceId: string | null;
+}
+
+/** 导入管线的来源上下文。普通文件导入维持默认值;AI 接受路径借此复用同一解析/入库管线，
+ *  只在落场历史标签、资产来源与完成后的汇聚动作上分流(T16 / AI-09 / HIST-05)。 */
+export interface ImportOptions {
+  source?: AssetSource;
+  genParams?: Record<string, unknown>;
+  placementLabel?: string;
+  placementOp?: OpKind;
+  onComplete?: (result: ImportResult) => void;
+}
+
+interface JobContext extends ImportOptions {
+  target: ImportTarget;
+}
+
+const jobContext = new Map<string, JobContext>(); // jobId → 目标语义 + 来源上下文(贯穿单位裁决全程)
 
 /** 落床横向错位:同批多件按槽位左右展开(单件恰为床中心,IMP-02 字面语义) */
 export const BATCH_SLOT_SPACING = 60;
@@ -43,7 +65,7 @@ interface PendingRaw {
   normals: Float32Array | null;
   meta: OkReply['meta'];
   slotX: number;
-  target: ImportTarget;
+  context: JobContext;
 }
 const rawStore = new Map<string, PendingRaw>(); // jobId → raw
 const askWaitline: string[] = []; // 单位确认一次一件,余者排队(jobId)
@@ -98,7 +120,11 @@ function syncJobView(job: ImportJob, thumb?: string | null) {
 
 // ---------- 入口(IMP-08:入口即分类,失败挂条目不静默消失) ----------
 
-export function startImport(fileList: FileList | File[], target: ImportTarget = 'viewport') {
+export function startImport(
+  fileList: FileList | File[],
+  target: ImportTarget = 'viewport',
+  options: ImportOptions = {},
+) {
   const files = [...fileList];
   if (files.length === 0) return;
   const q = ensureQueue();
@@ -115,18 +141,20 @@ export function startImport(fileList: FileList | File[], target: ImportTarget = 
   }
   valid.forEach(({ file, format }, i) => {
     const job = q.enqueue(file.name, file, format, i, valid.length);
-    jobTarget.set(job.id, target);
+    jobContext.set(job.id, { ...options, target });
   });
 }
 
 export function cancelImport(jobId: string) {
   ensureQueue().cancel(jobId);
+  jobContext.delete(jobId);
 }
 export function retryImport(jobId: string) {
   ensureQueue().retry(jobId);
 }
 export function dismissImport(jobId: string) {
   ensureQueue().remove(jobId);
+  jobContext.delete(jobId);
   useUi.getState().dropImportJob(jobId);
 }
 
@@ -137,11 +165,11 @@ function onParsed(job: ImportJob, ok: OkReply) {
   const normals = ok.normals ? new Float32Array(ok.normals) : null;
   const slotX = slotXOf(job.slot, job.batchSize);
   const baseName = job.name.replace(/\.[^.]+$/, '');
-  const target = jobTarget.get(job.id) ?? 'viewport';
+  const context = jobContext.get(job.id) ?? { target: 'viewport' };
 
   if (ok.meta.gltfBaked) {
     // glTF:米→毫米已烘焙,按规范直换不询问(IMP-05);unitChoice 记录源单位 m
-    finalize(job.id, baseName, positions, normals, ok.meta, 'm', 1, slotX, target);
+    finalize(job.id, baseName, positions, normals, ok.meta, 'm', 1, slotX, context.target, context);
     return;
   }
 
@@ -153,13 +181,13 @@ function onParsed(job: ImportJob, ok: OkReply) {
   const decision = inferUnit(maxEdge);
 
   if (decision.kind === 'silent-mm') {
-    const assetId = finalize(job.id, baseName, positions, normals, ok.meta, 'mm', 1, slotX, target);
+    const assetId = finalize(job.id, baseName, positions, normals, ok.meta, 'mm', 1, slotX, context.target, context);
     // 可撤 toast:原始顶点留一个重选窗口
-    rawStore.set(job.id, { name: baseName, positions: positions.slice(), normals, meta: ok.meta, slotX, target });
+    rawStore.set(job.id, { name: baseName, positions: positions.slice(), normals, meta: ok.meta, slotX, context });
     setTimeout(() => rawStore.delete(job.id), RAW_RETENTION_MS);
     useUi
       .getState()
-      .setToast(`已按毫米${target === 'library' ? '入库' : '导入'}「${baseName}」`, {
+      .setToast(`已按毫米${context.target === 'library' ? '入库' : '导入'}「${baseName}」`, {
         label: '重选单位',
         run: () => redecideUnit(job.id, assetId),
       });
@@ -167,7 +195,7 @@ function onParsed(job: ImportJob, ok: OkReply) {
   }
 
   // 弹确认:进入幽灵预览,未入库未入栈(仅入库同样借床上幽灵体做尺寸判断)
-  rawStore.set(job.id, { name: baseName, positions, normals, meta: ok.meta, slotX, target });
+  rawStore.set(job.id, { name: baseName, positions, normals, meta: ok.meta, slotX, context });
   askWaitline.push(job.id);
   pumpAsk(decision.recommended);
 }
@@ -213,7 +241,18 @@ export function confirmUnitAsk(unit: UnitChoice) {
   const raw = rawStore.get(ask.jobId);
   closeAsk(ask.jobId);
   if (!raw) return;
-  finalize(ask.jobId, raw.name, raw.positions, raw.normals, raw.meta, unit, UNIT_FACTOR[unit], raw.slotX, raw.target);
+  finalize(
+    ask.jobId,
+    raw.name,
+    raw.positions,
+    raw.normals,
+    raw.meta,
+    unit,
+    UNIT_FACTOR[unit],
+    raw.slotX,
+    raw.context.target,
+    raw.context,
+  );
 }
 
 /** 对话框「取消导入」:幽灵退场,历史栈与资产库全程零写入 */
@@ -221,6 +260,7 @@ export function cancelUnitAsk() {
   const ask = useUi.getState().unitAsk;
   if (!ask) return;
   closeAsk(ask.jobId);
+  jobContext.delete(ask.jobId);
   const view = useUi.getState().importJobs.find((j) => j.id === ask.jobId);
   if (view)
     useUi.getState().upsertImportJob({ ...view, phase: 'canceled', phaseText: '已取消(未选单位)', pct: 0 });
@@ -267,6 +307,7 @@ export function finalize(
   factor: number,
   slotX: number,
   target: ImportTarget = 'viewport',
+  options: ImportOptions = {},
 ): string {
   if (factor !== 1) for (let i = 0; i < positions.length; i++) positions[i] *= factor;
   const bbox = {
@@ -285,7 +326,8 @@ export function finalize(
   const asset = dispatch((d) =>
     d.addAsset({
       name,
-      source: 'import',
+      source: options.source ?? 'import',
+      genParams: options.genParams ? structuredClone(options.genParams) : undefined,
       state: 'ready',
       meta: {
         faces: meta.faces,
@@ -303,9 +345,18 @@ export function finalize(
   const thumb = renderThumbnail(geo);
   if (thumb) thumbRegistry.set(asset.id, thumb);
 
+  let instanceId: string | null = null;
   if (target === 'viewport') {
     // 床中心(批内错位)+ 自动沉底,一步入栈(IMP-02 / C1)
-    dispatch((d) => d.placeInstance(asset.id, '导入', 'place', [slotX, 0, -bbox.min[2]]));
+    const inst = dispatch((d) =>
+      d.placeInstance(
+        asset.id,
+        options.placementLabel ?? '导入',
+        options.placementOp ?? 'place',
+        [slotX, 0, -bbox.min[2]],
+      ),
+    );
+    instanceId = inst.id;
   }
   // 仅入库:不建实例、不入历史栈(资产库操作不入栈);对账同步器随 bump 落库
 
@@ -320,6 +371,9 @@ export function finalize(
     notes.push(`面数 ${(meta.faces / 10000).toFixed(0)} 万超过建议上限,编辑可能变慢`);
   if (meta.materialMissing) notes.push('OBJ 缺 MTL,已用默认材质');
   if (notes.length) useUi.getState().setToast(`「${name}」${notes.join(';')}`);
+
+  options.onComplete?.({ assetId: asset.id, instanceId });
+  jobContext.delete(jobId);
 
   return asset.id;
 }

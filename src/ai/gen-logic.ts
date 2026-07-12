@@ -183,7 +183,7 @@ export function resumeState(ticket: ActiveTicket): GenState {
   };
 }
 
-// ---------- 结果文件名(接受 → 走 T10 导入管线;完整 AI-09 落入链随 T16) ----------
+// ---------- 结果文件名(接受 → T10/T11 同源导入管线 → T16 AI-09 落入汇聚) ----------
 
 export function resultFileName(prompt: string): string {
   const slug = prompt

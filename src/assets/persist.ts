@@ -13,7 +13,7 @@
 // 边界(PRD AST):
 //   1. IndexedDB 不可用 → 纯内存会话模式,面板常驻提示「本次会话的资产不会被保存」;
 //   3. 几何记录丢失/损坏 → 条目转「失效」,元数据与缩略图保留可查(导入源资产无云端副本,
-//      不可恢复;AI 资产的云端回源属 AST-05,随 T16 生成链路接线)。
+//      不可恢复;AI 资产的云端回源属 AST-05,随 T13b 裁出演示范围;T16 只接本地持久化主链)。
 
 import { openDB, type IDBPDatabase } from 'idb';
 import * as THREE from 'three';

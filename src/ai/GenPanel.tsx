@@ -1,14 +1,12 @@
 // T12 · AI 指令条(PRD AI-01/03/04/05/06/08 + AI-07/11 的前端侧 + AI 边界 1)。
 // 布局:底部横条,左"输入区"右"状态区",全生命周期不弹窗、不遮视口——AI 嵌于工作流(AI-01)。
 // 与服务层的全部往来走 worker/api-types 协议;不感知具体引擎(AI-10),T13 换 Tripo 零改动。
-// 「接受」将结果 GLB 送入 T10 导入管线(解析→单位→水密预检→贴床);
-// 完整 AI-09 落入链(自动选中+聚焦+首检+R2 转存)随 T16 收口。
+// 「接受」将结果 GLB 送入 T10/T11 同源管线，并由 T16 汇聚点完成
+// 资产→实例→选中→聚焦→沉底→首检；R2 转存随 T13b 裁出演示范围。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiError, CancelResponse, GenerateResponse, QuotaResponse, TaskResponse } from '../../worker/api-types';
-import { startImport } from '../importer/ingest';
 import { apiHeaders, getEngineKey, setEngineKey } from '../net/visitor';
-import { useUi } from '../state/store';
 import {
   ACTIVE_TASK_KEY,
   applyTask,
@@ -28,6 +26,7 @@ import {
   type GenState,
 } from './gen-logic';
 import { mountTurnstile, usingTestSiteKey, type TurnstileHandle } from './turnstile';
+import { startAiLanding } from './landing';
 
 // ---------- 样式 ----------
 
@@ -93,11 +92,13 @@ export function GenPanel() {
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
   const [promptMax, setPromptMax] = useState(PROMPT_MAX_CHARS); // T13a-fix1:随 /api/health 的引擎上报值收紧(Tripo=1024)
   const promptMaxRef = useRef(PROMPT_MAX_CHARS);
+  const engineNameRef = useRef<string | null>(null);
   const [waitingToken, setWaitingToken] = useState(false); // 已点提交、等 widget 出 token
   const [tsBroken, setTsBroken] = useState(false); // 脚本装载失败/错误回调
   const [ownKeyOpen, setOwnKeyOpen] = useState(false);
   const [ownKeyDraft, setOwnKeyDraft] = useState('');
   const [hasOwnKey, setHasOwnKey] = useState(false);
+  const [accepting, setAccepting] = useState(false);
 
   const genRef = useRef(gen);
   genRef.current = gen;
@@ -106,6 +107,7 @@ export function GenPanel() {
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingSubmit = useRef(false); // token 就绪后自动续提交(重试出路 / 首次验证慢)
+  const acceptingRef = useRef(false); // 防成功态「接受」双击生成重复资产/实例
 
   // ---- 状态更新统一入口:同步维护刷新恢复票据(AI 边界 1)----
   const commit = useCallback((next: GenState) => {
@@ -245,7 +247,9 @@ export function GenPanel() {
   // ---- 预览确认三键(AI-03 / AI-08 / AI-07)----
   const doAccept = useCallback(async () => {
     const cur = genRef.current;
-    if (cur.phase !== 'success' || !cur.resultUrl) return;
+    if (cur.phase !== 'success' || !cur.resultUrl || acceptingRef.current) return;
+    acceptingRef.current = true;
+    setAccepting(true);
     try {
       // T13a:结果经服务层代理(/api/task/:id/result),自带 key 通道靠 x-engine-key 头鉴权上游;
       // mock 的同源静态结果对多余头不敏感——同一行代码覆盖两个引擎。
@@ -253,10 +257,18 @@ export function GenPanel() {
       if (!r.ok) throw new Error();
       const blob = await r.blob();
       const file = new File([blob], resultFileName(cur.context.prompt), { type: 'model/gltf-binary' });
-      startImport([file], 'viewport');
-      useUi.getState().setToast('AI 结果已进入导入管线(自动选中/聚焦/首检随 T16 落位)');
+      startAiLanding(file, {
+        prompt: cur.context.prompt,
+        type: cur.context.type,
+        taskId: cur.taskId ?? null,
+        engine: engineNameRef.current,
+      });
+      acceptingRef.current = false;
+      setAccepting(false);
       commit(idleState());
     } catch {
+      acceptingRef.current = false;
+      setAccepting(false);
       commit({ ...cur, notice: '结果下载失败,请重试「接受」或稍后再试(链接仍有效)。' });
     }
   }, [commit]);
@@ -296,8 +308,9 @@ export function GenPanel() {
     void (async () => {
       try {
         const h = await fetch('/api/health');
-        const hj = (await h.json()) as { config?: { promptMax?: number } };
+        const hj = (await h.json()) as { config?: { promptMax?: number; engineName?: string } };
         const m = hj?.config?.promptMax;
+        engineNameRef.current = typeof hj?.config?.engineName === 'string' ? hj.config.engineName : null;
         if (typeof m === 'number' && m > 0) {
           setPromptMax(m);
           promptMaxRef.current = m;
@@ -402,8 +415,12 @@ export function GenPanel() {
               </a>
             )}
             <span style={{ flex: 1 }} />
-            <button style={primaryBtn} onClick={() => void doAccept()}>
-              接受
+            <button
+              style={{ ...primaryBtn, ...(accepting ? { opacity: 0.6, cursor: 'wait' } : {}) }}
+              disabled={accepting}
+              onClick={() => void doAccept()}
+            >
+              {accepting ? '落入中…' : '接受'}
             </button>
             <button style={btn} onClick={doAdjust}>
               调整
