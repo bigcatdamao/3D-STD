@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
@@ -7,89 +7,232 @@ import { ExportDialog, HeaderExportButton } from './export/ExportDialog';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ServiceStatus } from './net/ServiceStatus';
 import { ParamPanel } from './panel/ParamPanel';
+import {
+  DEFAULT_WORKSPACE_LAYOUT,
+  parseWorkspaceLayout,
+  serializeWorkspaceLayout,
+  WORKSPACE_LAYOUT_KEY,
+  type InspectorTab,
+  type WorkspaceLayout,
+} from './product/workspace-layout';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
-// T1 冒烟壳:五区布局占位(PRD 6.1 顶栏动线 / 整站 IA)。各区在 T5–T9 陆续替换为真实模块。
-const zone: React.CSSProperties = {
-  border: '1px solid #2b2b31',
-  background: '#1b1b20',
-  borderRadius: 8,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  color: '#8b8b93',
-  fontSize: 13,
-};
-
-/** 顶栏「出口」区检查按钮:触发全量检查并展开结果面板(CHK-02 手动触发入口之一) */
-function HeaderCheckButton() {
+function HeaderCheckButton({ onOpen }: { onOpen: () => void }) {
   const phase = useCheck((s) => s.phase);
   const running = phase === 'running';
   return (
     <button
-      style={{
-        background: running ? '#26262e' : 'transparent',
-        color: running ? '#8b8b93' : '#ffb454',
-        border: '1px solid #ffb45455',
-        borderRadius: 6,
-        padding: '4px 10px',
-        fontSize: 12,
-        cursor: running ? 'default' : 'pointer',
-        fontWeight: 600,
-      }}
+      className="app-secondary-button"
       disabled={running}
-      onClick={() => runPrintCheck()}
-      title="打印前检查:水密性 · 退化几何 · 床内位置 · 悬空 · 微小件(CHK-01)"
+      onClick={() => {
+        onOpen();
+        void runPrintCheck();
+      }}
+      title="检查水密性、退化几何、床内位置、悬空与微小件"
     >
-      {running ? '检查中…' : '✓ 打印检查'}
+      {running ? '检查中…' : '打印检查'}
     </button>
   );
 }
 
+function WorkflowStrip() {
+  return (
+    <nav className="workflow-strip" aria-label="核心工作流">
+      <span className="workflow-step" data-step="1">生成 / 导入</span>
+      <span className="workflow-divider">›</span>
+      <span className="workflow-step is-active" data-step="2">编辑摆盘</span>
+      <span className="workflow-divider">›</span>
+      <span className="workflow-step" data-step="3">打印检查</span>
+      <span className="workflow-divider">›</span>
+      <span className="workflow-step" data-step="4">导出</span>
+    </nav>
+  );
+}
+
+function CollapsedRail({ label, onOpen }: { label: string; onOpen: () => void }) {
+  return (
+    <div className="workspace-panel__rail">
+      <button className="app-icon-button" onClick={onOpen} title={`展开${label}`} aria-label={`展开${label}`}>
+        ＋
+      </button>
+      <span className="workspace-panel__rail-label">{label}</span>
+    </div>
+  );
+}
+
+function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTab) => void }) {
+  const issues = useCheck((s) => s.issues);
+  const issueCount = issues.filter((issue) => issue.level !== 'info').length;
+  return (
+    <div className="inspector-shell">
+      <div className="inspector-tabs" role="tablist" aria-label="右侧检查器">
+        <button
+          className={`inspector-tab${tab === 'properties' ? ' is-active' : ''}`}
+          role="tab"
+          aria-selected={tab === 'properties'}
+          onClick={() => onTab('properties')}
+        >
+          属性
+        </button>
+        <button
+          className={`inspector-tab${tab === 'check' ? ' is-active' : ''}`}
+          role="tab"
+          aria-selected={tab === 'check'}
+          onClick={() => onTab('check')}
+        >
+          打印检查
+          {issueCount > 0 && <span className="inspector-tab__count">{issueCount}</span>}
+        </button>
+      </div>
+      <div className="inspector-content">
+        {tab === 'properties' ? <ParamPanel /> : <CheckPanel embedded />}
+      </div>
+    </div>
+  );
+}
+
+function initialLayout(): WorkspaceLayout {
+  if (typeof window === 'undefined') return { ...DEFAULT_WORKSPACE_LAYOUT };
+  return parseWorkspaceLayout(window.localStorage.getItem(WORKSPACE_LAYOUT_KEY));
+}
+
 export function App() {
+  const [layout, setLayout] = useState<WorkspaceLayout>(initialLayout);
+
   useEffect(() => {
-    void initPersistence(); // T11:装载资产库并启动对账同步(不可用则降级会话模式,不阻断)
+    void initPersistence();
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_LAYOUT_KEY, serializeWorkspaceLayout(layout));
+    } catch {
+      // 私密模式或存储受限时只影响界面偏好，不阻断工作台。
+    }
+  }, [layout]);
+
+  useEffect(() => {
+    const openAi = () => {
+      setLayout((current) => ({ ...current, dockOpen: true }));
+      window.setTimeout(() => {
+        document.querySelector<HTMLTextAreaElement>('[data-testid="gen-panel"] textarea')?.focus();
+      }, 220);
+    };
+    window.addEventListener('3dstd:open-ai', openAi);
+    return () => window.removeEventListener('3dstd:open-ai', openAi);
+  }, []);
+
+  const patchLayout = (patch: Partial<WorkspaceLayout>) => setLayout((current) => ({ ...current, ...patch }));
+  const openCheck = () => patchLayout({ inspectorOpen: true, inspectorTab: 'check' });
 
   return (
     <div
-      style={{
-        height: '100%',
-        display: 'grid',
-        gridTemplateRows: '48px 1fr 96px',
-        gridTemplateColumns: '240px 1fr 280px',
-        gap: 8,
-        padding: 8,
-        boxSizing: 'border-box',
-      }}
+      className="app-shell"
+      data-left-open={layout.leftOpen}
+      data-inspector-open={layout.inspectorOpen}
+      data-dock-open={layout.dockOpen}
     >
-      <header style={{ ...zone, gridColumn: '1 / 4', justifyContent: 'space-between', padding: '0 14px' }}>
-        <span style={{ color: '#e8e8ea', fontWeight: 600 }}>3D STD</span>
-        <span>项目 · 导入 · 编辑/预览(T17/T18 落位)</span>
-        <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {/* PROJ-06 顶栏右区「出口」:检查(T14)+ 导出主 CTA(T15) */}
-          <HeaderCheckButton />
+      <header className="app-header">
+        <div className="brand-lockup">
+          <div className="brand-mark" aria-hidden="true">3D</div>
+          <div className="brand-copy">
+            <div className="brand-name">3D Studio</div>
+            <div className="brand-scene">AI 创作到打印就绪 · 当前场景</div>
+          </div>
+        </div>
+
+        <WorkflowStrip />
+
+        <div className="header-actions">
+          <button
+            className={`app-icon-button${layout.leftOpen ? ' is-active' : ''}`}
+            onClick={() => patchLayout({ leftOpen: !layout.leftOpen })}
+            title={layout.leftOpen ? '收起场景与资产' : '展开场景与资产'}
+            aria-label={layout.leftOpen ? '收起场景与资产' : '展开场景与资产'}
+          >
+            ◧
+          </button>
+          <button
+            className={`app-icon-button${layout.dockOpen ? ' is-active' : ''}`}
+            onClick={() => patchLayout({ dockOpen: !layout.dockOpen })}
+            title={layout.dockOpen ? '收起 AI 与历史' : '展开 AI 与历史'}
+            aria-label={layout.dockOpen ? '收起 AI 与历史' : '展开 AI 与历史'}
+          >
+            ▤
+          </button>
+          <button
+            className={`app-icon-button${layout.inspectorOpen ? ' is-active' : ''}`}
+            onClick={() => patchLayout({ inspectorOpen: !layout.inspectorOpen })}
+            title={layout.inspectorOpen ? '收起检查器' : '展开检查器'}
+            aria-label={layout.inspectorOpen ? '收起检查器' : '展开检查器'}
+          >
+            ◨
+          </button>
+          <HeaderCheckButton onOpen={openCheck} />
           <HeaderExportButton />
           <ServiceStatus />
-        </span>
+        </div>
       </header>
-      <aside style={{ minHeight: 0 }}>
-        <TreePanel />
+
+      <aside className="workspace-panel" aria-label="场景与资产">
+        {layout.leftOpen ? (
+          <>
+            <div className="workspace-panel__body"><TreePanel /></div>
+            <button
+              className="app-icon-button workspace-panel__collapse"
+              onClick={() => patchLayout({ leftOpen: false })}
+              title="收起场景与资产"
+              aria-label="收起场景与资产"
+            >
+              ‹
+            </button>
+          </>
+        ) : <CollapsedRail label="场景与资产" onOpen={() => patchLayout({ leftOpen: true })} />}
       </aside>
-      <main style={{ ...zone, padding: 0, overflow: 'hidden' }}>
+
+      <main className="viewport-frame" aria-label="3D 视口">
         <Viewport />
       </main>
-      <aside style={{ minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <ParamPanel />
-        </div>
-        <CheckPanel />
+
+      <aside className="workspace-panel" aria-label="属性与打印检查">
+        {layout.inspectorOpen ? (
+          <>
+            <div className="workspace-panel__body">
+              <Inspector tab={layout.inspectorTab} onTab={(inspectorTab) => patchLayout({ inspectorTab })} />
+            </div>
+            <button
+              className="app-icon-button workspace-panel__collapse"
+              onClick={() => patchLayout({ inspectorOpen: false })}
+              title="收起检查器"
+              aria-label="收起检查器"
+            >
+              ›
+            </button>
+          </>
+        ) : <CollapsedRail label="属性与检查" onOpen={() => patchLayout({ inspectorOpen: true })} />}
       </aside>
-      <footer style={{ gridColumn: '1 / 4', display: 'flex', gap: 8, minHeight: 0 }}>
-        <GenPanel />
-        <HistoryPanel />
+
+      <footer className="bottom-dock">
+        <div className="bottom-dock__bar">
+          <span className="bottom-dock__title">AI 创作与操作历史</span>
+          <span>生成结果进入资产库，场景编辑可逐步撤销</span>
+          <span className="bottom-dock__hint">Enter 生成 · Ctrl+Z 撤销</span>
+          <button
+            className="app-icon-button"
+            onClick={() => patchLayout({ dockOpen: !layout.dockOpen })}
+            title={layout.dockOpen ? '收起底部面板' : '展开底部面板'}
+            aria-label={layout.dockOpen ? '收起底部面板' : '展开底部面板'}
+          >
+            {layout.dockOpen ? '⌄' : '⌃'}
+          </button>
+        </div>
+        <div className="bottom-dock__body">
+          <GenPanel />
+          <HistoryPanel />
+        </div>
       </footer>
+
       <ToastLayer />
       <ExportDialog />
     </div>

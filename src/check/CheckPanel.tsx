@@ -111,7 +111,7 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
   );
 }
 
-export function CheckPanel() {
+export function CheckPanel({ embedded = false }: { embedded?: boolean }) {
   useUi((s) => s.rev); // 文档任何变化 → 重算过期/存活过滤
   useUi((s) => s.bed); // 床配置变化 → 过期
   const s = useCheckSnapshot();
@@ -128,8 +128,9 @@ export function CheckPanel() {
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
-        maxHeight: s.panelOpen ? '52%' : undefined,
-        flex: 'none',
+        maxHeight: embedded ? undefined : s.panelOpen ? '52%' : undefined,
+        height: embedded ? '100%' : undefined,
+        flex: embedded ? 1 : 'none',
       }}
     >
       {/* 头行:折叠态唯一可见区 */}

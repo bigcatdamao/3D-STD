@@ -247,6 +247,29 @@ function isTyping(e: KeyboardEvent): boolean {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
+function EmptySceneGuide() {
+  useUi((s) => s.rev);
+  const hasInstance = [...doc.nodes.values()].some((node) => node.kind === 'instance');
+  if (hasInstance) return null;
+  return (
+    <div className="empty-scene-guide">
+      <div className="empty-scene-guide__eyebrow">Start a printable idea</div>
+      <h2>从一个想法或模型开始</h2>
+      <p>用一句话生成 3D 模型，或导入现有文件直接放到打印床；之后可继续编辑、检查并导出 STL。</p>
+      <div className="empty-scene-guide__actions">
+        <button
+          className="empty-scene-guide__primary"
+          onClick={() => window.dispatchEvent(new CustomEvent('3dstd:open-ai'))}
+        >
+          使用 AI 生成
+        </button>
+        <ImportButton target="viewport" label="导入并放置" className="empty-scene-guide__secondary" />
+      </div>
+      <div className="empty-scene-guide__formats">支持 GLB / glTF / STL / OBJ，也可直接拖入视口</div>
+    </div>
+  );
+}
+
 export function Viewport() {
   const setOrtho = useUi((s) => s.setOrtho);
 
@@ -324,6 +347,7 @@ export function Viewport() {
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />
+      <EmptySceneGuide />
       <DragHighlight />
       <ImportStatusStrip />
       <UnitDialog />

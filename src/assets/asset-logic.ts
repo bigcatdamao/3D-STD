@@ -29,6 +29,8 @@ export interface AssetTile {
   retryable?: boolean;
 }
 
+export type AssetSort = 'recent' | 'name' | 'faces';
+
 const mm = (v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1));
 
 export function sizeTextOf(meta: Asset['meta']): string {
@@ -92,6 +94,26 @@ export function buildTiles(
   }
   ready.sort((x, y) => (y.createdAt ?? -1) - (x.createdAt ?? -1) || x.name.localeCompare(y.name, 'zh'));
   return [...tiles, ...ready];
+}
+
+/** AST-06/M1.5:搜索与排序只改变资产库视图，不改变资产数据、场景或历史栈。 */
+export function filterAndSortTiles(tiles: AssetTile[], query: string, sort: AssetSort): AssetTile[] {
+  const needle = query.trim().toLocaleLowerCase('zh-CN');
+  const filtered = needle
+    ? tiles.filter((tile) => {
+        const source = tile.source === 'ai' ? 'ai 生成' : '导入';
+        return `${tile.name} ${source} ${tile.state}`.toLocaleLowerCase('zh-CN').includes(needle);
+      })
+    : [...tiles];
+
+  const jobs = filtered.filter((tile) => tile.kind === 'job');
+  const assets = filtered.filter((tile) => tile.kind === 'asset');
+  assets.sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name, 'zh-CN');
+    if (sort === 'faces') return (b.faces ?? -1) - (a.faces ?? -1) || a.name.localeCompare(b.name, 'zh-CN');
+    return (b.createdAt ?? -1) - (a.createdAt ?? -1) || a.name.localeCompare(b.name, 'zh-CN');
+  });
+  return [...jobs, ...assets];
 }
 
 /** 级联删除信息(AST-03):列出受影响实例。项目维度在 T17 项目化后补充(当前即「当前场景」) */

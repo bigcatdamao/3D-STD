@@ -2,7 +2,14 @@
 // done 不重复)、排序(时间倒序、演示垫底)、级联删除信息(AST-03)、确认口径(边界 5)。
 
 import { describe, expect, it } from 'vitest';
-import { buildTiles, cascadeInfo, needsDeleteConfirm, sizeTextOf, tileTooltip } from '../src/assets/asset-logic';
+import {
+  buildTiles,
+  cascadeInfo,
+  filterAndSortTiles,
+  needsDeleteConfirm,
+  sizeTextOf,
+  tileTooltip,
+} from '../src/assets/asset-logic';
 import { SceneDocument } from '../src/kernel/scene';
 import type { Asset } from '../src/kernel/types';
 import type { ImportJobView } from '../src/state/store';
@@ -98,5 +105,45 @@ describe('条目摘要(AST-02 元数据)', () => {
     expect(tip).toContain('单位:cm');
     expect(tip).toContain('水密:未检');
     expect(tip).toContain('材质缺失');
+  });
+});
+
+describe('M1.5 资产查找与排序(AST-06)', () => {
+  const ranked = (id: string, name: string, source: Asset['source'], faces: number, createdAt: number): Asset => asset(
+    id,
+    name,
+    {
+      source,
+      meta: {
+        faces,
+        bbox: { min: [0, 0, 0], max: [10, 10, 10] },
+        unitChoice: 'mm',
+        watertight: true,
+        degenerate: false,
+        createdAt,
+      },
+    },
+  );
+
+  const tiles = buildTiles(
+    [
+      ranked('ast_a', 'A 机械齿轮', 'ai', 500, 2),
+      ranked('ast_b', 'B 校准方块', 'import', 12, 3),
+      ranked('ast_c', 'C 小蘑菇', 'ai', 900, 1),
+    ],
+    [],
+    () => null,
+    [],
+  );
+
+  it('名称和来源都可搜索', () => {
+    expect(filterAndSortTiles(tiles, '齿轮', 'recent').map((tile) => tile.id)).toEqual(['ast_a']);
+    expect(filterAndSortTiles(tiles, 'AI', 'recent').map((tile) => tile.id)).toEqual(['ast_a', 'ast_c']);
+  });
+
+  it('支持最近、名称、面数排序', () => {
+    expect(filterAndSortTiles(tiles, '', 'recent').map((tile) => tile.id)).toEqual(['ast_b', 'ast_a', 'ast_c']);
+    expect(filterAndSortTiles(tiles, '', 'name').map((tile) => tile.id)).toEqual(['ast_a', 'ast_b', 'ast_c']);
+    expect(filterAndSortTiles(tiles, '', 'faces').map((tile) => tile.id)).toEqual(['ast_c', 'ast_a', 'ast_b']);
   });
 });

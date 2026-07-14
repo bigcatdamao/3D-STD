@@ -11,7 +11,15 @@
 import { useState } from 'react';
 import { dispatch, doc, thumbRegistry, useUi } from '../state/store';
 import { dismissImport, placeFromLibrary, retryImport, startImport } from '../importer/ingest';
-import { AssetTile, buildTiles, cascadeInfo, needsDeleteConfirm, tileTooltip } from './asset-logic';
+import {
+  type AssetSort,
+  type AssetTile,
+  buildTiles,
+  cascadeInfo,
+  filterAndSortTiles,
+  needsDeleteConfirm,
+  tileTooltip,
+} from './asset-logic';
 import { fmtBytes, STORAGE_WARN_RATIO } from './persist';
 
 export const ASSET_DRAG_MIME = 'application/x-3dstd-asset';
@@ -51,6 +59,8 @@ export function AssetPanel() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [fileHover, setFileHover] = useState(false);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<AssetSort>('recent');
 
   const tiles = buildTiles(
     doc.assets.values(),
@@ -59,6 +69,8 @@ export function AssetPanel() {
     storage.unsavedIds,
   );
   const assetCount = tiles.filter((t) => t.kind === 'asset').length;
+  const visibleTiles = filterAndSortTiles(tiles, query, sort);
+  const visibleAssetCount = visibleTiles.filter((t) => t.kind === 'asset').length;
 
   // ---------- 删除(AST-03 级联确认 / 边界 5) ----------
   const requestDelete = (t: AssetTile) => {
@@ -136,20 +148,53 @@ export function AssetPanel() {
         }}
       >
         <LibraryImportButton />
-        <span style={{ fontSize: 11, color: '#8b8b93', marginLeft: 'auto' }}>{assetCount} 项</span>
+        <span style={{ fontSize: 11, color: '#8b8b93', marginLeft: 'auto' }}>
+          {query ? `${visibleAssetCount} / ${assetCount}` : `${assetCount} 项`}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, padding: '0 8px 8px', borderBottom: `1px solid ${BORDER}` }}>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索资产"
+          aria-label="搜索资产"
+          style={{
+            minWidth: 0,
+            flex: 1,
+            padding: '5px 7px',
+            border: '1px solid #34343e',
+            borderRadius: 6,
+            background: '#232329',
+            color: '#e8e8ea',
+            fontSize: 11,
+          }}
+        />
+        <select
+          value={sort}
+          onChange={(event) => setSort(event.target.value as AssetSort)}
+          aria-label="资产排序"
+          title="资产排序"
+          style={{ ...btn, minWidth: 74, padding: '3px 5px' }}
+        >
+          <option value="recent">最近</option>
+          <option value="name">名称</option>
+          <option value="faces">面数</option>
+        </select>
       </div>
 
       {/* 网格(AST-01) */}
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-        {tiles.length === 0 ? (
+        {visibleTiles.length === 0 ? (
           <div style={{ color: '#8b8b93', fontSize: 12, textAlign: 'center', marginTop: 32, lineHeight: 1.8 }}>
-            资产库为空
+            {tiles.length === 0 ? '资产库为空' : '没有匹配的资产'}
             <br />
-            拖文件到这里仅入库,拖进视口则直接放置
+            {tiles.length === 0 ? '拖文件到这里仅入库,拖进视口则直接放置' : '换个名称或清除搜索条件'}
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {tiles.map((t) => (
+            {visibleTiles.map((t) => (
               <Tile
                 key={t.id}
                 t={t}

@@ -96,16 +96,28 @@ export function DragHighlight() {
 }
 
 /** 工具栏「导入」(T11 起改绑「仅入库」,IMP-02):文件选择器入库不放置;拖入视口才直接落床 */
-export function ImportButton({ style }: { style?: React.CSSProperties }) {
+export function ImportButton({
+  style,
+  className,
+  target = 'library',
+  label = '导入',
+}: {
+  style?: React.CSSProperties;
+  className?: string;
+  target?: 'library' | 'viewport';
+  label?: string;
+}) {
   const ref = useRef<HTMLInputElement>(null);
+  const directPlace = target === 'viewport';
   return (
     <>
       <button
+        className={className}
         style={style}
-        title="导入文件到资产库(不放置);直接拖文件进视口 = 导入并放置"
+        title={directPlace ? '导入模型并直接放置到打印床' : '导入文件到资产库(不放置);直接拖文件进视口 = 导入并放置'}
         onClick={() => ref.current?.click()}
       >
-        导入
+        {label}
       </button>
       <input
         ref={ref}
@@ -114,7 +126,7 @@ export function ImportButton({ style }: { style?: React.CSSProperties }) {
         accept=".glb,.gltf,.stl,.obj"
         style={{ display: 'none' }}
         onChange={(e) => {
-          if (e.target.files?.length) startImport(e.target.files, 'library');
+          if (e.target.files?.length) startImport(e.target.files, target);
           e.target.value = ''; // 允许连续选择同一文件
         }}
       />
