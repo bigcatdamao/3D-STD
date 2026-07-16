@@ -31,11 +31,12 @@ import { startAiLanding } from './landing';
 // ---------- 样式 ----------
 
 const shell: React.CSSProperties = {
-  flex: '0 0 380px',
+  flex: '0 1 520px',
+  minWidth: 0,
   border: '1px solid #2b2b31',
   background: '#1b1b20',
   borderRadius: 8,
-  padding: '8px 10px',
+  padding: '10px 12px',
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
@@ -45,18 +46,18 @@ const shell: React.CSSProperties = {
   color: '#c9c9cf',
 };
 
-const inputRow: React.CSSProperties = { display: 'flex', gap: 6, alignItems: 'stretch', minHeight: 0, flex: 1 };
+const inputRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'stretch', minHeight: 52, flex: 1 };
 
 const ta: React.CSSProperties = {
   flex: 1,
   resize: 'none',
   background: '#232329',
   border: '1px solid #34343c',
-  borderRadius: 6,
+  borderRadius: 8,
   color: '#e8e8ea',
-  fontSize: 12,
+  fontSize: 13,
   lineHeight: 1.5,
-  padding: '5px 8px',
+  padding: '9px 10px',
   outline: 'none',
   fontFamily: 'inherit',
 };
@@ -501,7 +502,7 @@ export function GenPanel() {
   const inputLocked = inputLockedIn(gen.phase); // 失败/取消态不锁:直接编辑即回到输入态
 
   return (
-    <div style={shell} data-testid="gen-panel">
+    <div className="gen-panel" style={shell} data-testid="gen-panel">
       <div style={inputRow}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center' }}>
           <button
@@ -514,7 +515,7 @@ export function GenPanel() {
           <button
             style={{ ...btn, padding: '2px 8px', opacity: 0.45, cursor: 'not-allowed' }}
             disabled
-            title="图生引擎通道随 T13 接线(前端校验规则已入档)"
+            title="图片生成模型即将支持"
           >
             图生
           </button>
@@ -522,7 +523,7 @@ export function GenPanel() {
         <textarea
           ref={taRef}
           style={{ ...ta, ...(overLimit ? { borderColor: '#8f5a5a' } : {}) }}
-          placeholder="描述想生成的 3D 模型…(mock 引擎在线;@mock: 指令可注入演练场景)"
+          placeholder="例如：一个圆润的桌面耳机支架，底座稳固，适合 FDM 打印"
           value={p}
           disabled={inputLocked}
           onChange={(e) => commit(idleState({ ...gen.context, prompt: e.target.value }))}

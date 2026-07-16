@@ -234,10 +234,15 @@ function demoInstance(
   };
 }
 
-let booted = false;
-export function bootstrapDemoScene() {
-  if (booted) return;
-  booted = true;
+export function bootstrapDemoScene(): boolean {
+  const demoInstanceIds = [
+    'ins_demo_box',
+    'ins_demo_cyl',
+    'ins_demo_knot',
+    'ins_demo_plate',
+    'ins_demo_open',
+  ];
+  if (demoInstanceIds.some((id) => doc.nodes.has(id))) return false;
 
   const box = new THREE.BoxGeometry(30, 30, 30);
   const cyl = new THREE.CylinderGeometry(14, 14, 44, 48).rotateX(Math.PI / 2); // 圆柱轴对齐 Z(C3)
@@ -263,6 +268,8 @@ export function bootstrapDemoScene() {
   ];
 
   doc.hydrate(assets, nodes);
+  useUi.getState().bump();
+  return true;
 }
 
 /** 顶面缺失的开口盒(w×d×h,几何中心在原点):非水密(顶缘 4 条边界边)、面片朝外的手工三角网格。

@@ -2,19 +2,21 @@ import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
-import { runPrintCheck, useCheck } from './check/check-state';
+import { reportIsStale, runPrintCheck, useCheck } from './check/check-state';
 import { ExportDialog, HeaderExportButton } from './export/ExportDialog';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ServiceStatus } from './net/ServiceStatus';
 import { ParamPanel } from './panel/ParamPanel';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
+  defaultWorkspaceLayoutForWidth,
   parseWorkspaceLayout,
   serializeWorkspaceLayout,
   WORKSPACE_LAYOUT_KEY,
   type InspectorTab,
   type WorkspaceLayout,
 } from './product/workspace-layout';
+import { doc, useUi } from './state/store';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -37,15 +39,26 @@ function HeaderCheckButton({ onOpen }: { onOpen: () => void }) {
 }
 
 function WorkflowStrip() {
+  useUi((s) => s.rev);
+  const checkPhase = useCheck((s) => s.phase);
+  const hasInstance = [...doc.nodes.values()].some((node) => node.kind === 'instance');
+  const activeStep = !hasInstance ? 1 : checkPhase === 'done' && !reportIsStale() ? 3 : 2;
+  const steps = [
+    [1, '生成 / 导入'],
+    [2, '编辑摆盘'],
+    [3, '打印检查'],
+    [4, '导出'],
+  ] as const;
   return (
     <nav className="workflow-strip" aria-label="核心工作流">
-      <span className="workflow-step" data-step="1">生成 / 导入</span>
-      <span className="workflow-divider">›</span>
-      <span className="workflow-step is-active" data-step="2">编辑摆盘</span>
-      <span className="workflow-divider">›</span>
-      <span className="workflow-step" data-step="3">打印检查</span>
-      <span className="workflow-divider">›</span>
-      <span className="workflow-step" data-step="4">导出</span>
+      {steps.map(([step, label], index) => (
+        <span className="workflow-strip__item" key={step}>
+          {index > 0 && <span className="workflow-divider">›</span>}
+          <span className={`workflow-step${activeStep === step ? ' is-active' : ''}`} data-step={step}>
+            {label}
+          </span>
+        </span>
+      ))}
     </nav>
   );
 }
@@ -94,7 +107,8 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
 
 function initialLayout(): WorkspaceLayout {
   if (typeof window === 'undefined') return { ...DEFAULT_WORKSPACE_LAYOUT };
-  return parseWorkspaceLayout(window.localStorage.getItem(WORKSPACE_LAYOUT_KEY));
+  const saved = window.localStorage.getItem(WORKSPACE_LAYOUT_KEY);
+  return saved ? parseWorkspaceLayout(saved) : defaultWorkspaceLayoutForWidth(window.innerWidth);
 }
 
 export function App() {
@@ -175,7 +189,7 @@ export function App() {
         </div>
       </header>
 
-      <aside className="workspace-panel" aria-label="场景与资产">
+      <aside className="workspace-panel workspace-panel--left" aria-label="场景与资产">
         {layout.leftOpen ? (
           <>
             <div className="workspace-panel__body"><TreePanel /></div>
@@ -195,7 +209,7 @@ export function App() {
         <Viewport />
       </main>
 
-      <aside className="workspace-panel" aria-label="属性与打印检查">
+      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性与打印检查">
         {layout.inspectorOpen ? (
           <>
             <div className="workspace-panel__body">

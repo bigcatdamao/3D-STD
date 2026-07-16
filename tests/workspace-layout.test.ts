@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COMPACT_WORKSPACE_MAX_WIDTH,
   DEFAULT_WORKSPACE_LAYOUT,
+  defaultWorkspaceLayoutForWidth,
   parseWorkspaceLayout,
   serializeWorkspaceLayout,
 } from '../src/product/workspace-layout';
 
 describe('M1.5 工作台布局偏好', () => {
+  it('首次进入窄屏时收起检查器与底栏，优先保留中央视口', () => {
+    expect(defaultWorkspaceLayoutForWidth(COMPACT_WORKSPACE_MAX_WIDTH)).toEqual({
+      ...DEFAULT_WORKSPACE_LAYOUT,
+      inspectorOpen: false,
+      dockOpen: false,
+    });
+    expect(defaultWorkspaceLayoutForWidth(COMPACT_WORKSPACE_MAX_WIDTH + 1)).toEqual(DEFAULT_WORKSPACE_LAYOUT);
+  });
+
   it('无记录或损坏记录回退到产品默认值', () => {
     expect(parseWorkspaceLayout(null)).toEqual(DEFAULT_WORKSPACE_LAYOUT);
     expect(parseWorkspaceLayout('{bad json')).toEqual(DEFAULT_WORKSPACE_LAYOUT);

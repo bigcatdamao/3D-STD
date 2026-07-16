@@ -28,8 +28,6 @@ import { CheckHighlight } from '../check/CheckHighlight';
 import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
 
-bootstrapDemoScene();
-
 function InteractionBridge() {
   useViewportInteraction();
   return null;
@@ -57,33 +55,22 @@ function Toolbar() {
   );
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 10,
-        left: 10,
-        right: 10,
-        display: 'flex',
-        gap: 6,
-        alignItems: 'center',
-        pointerEvents: 'none',
-      }}
-    >
-      <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+    <div className="viewport-toolbar">
+      <div className="viewport-toolbar__views">
         {/* T10 临时入口:文件选择器与拖放同语义(入库+建实例);T11 资产面板就位后改绑「仅入库」(IMP-02) */}
-        <ImportButton style={{ ...btn, borderColor: '#ffb454', color: '#ffb454' }} />
+        <ImportButton className="viewport-tool" style={{ ...btn, borderColor: '#ffb454', color: '#ffb454' }} />
         <button style={btn} onClick={() => setOrtho(!ortho)} title="快捷键 5">
           {ortho ? '正交' : '透视'}
         </button>
-        <button style={btn} onClick={() => sendCam({ kind: 'preset', view: 'top' })} title="快捷键 1">顶</button>
-        <button style={btn} onClick={() => sendCam({ kind: 'preset', view: 'front' })} title="快捷键 2">前</button>
-        <button style={btn} onClick={() => sendCam({ kind: 'preset', view: 'side' })} title="快捷键 3">侧</button>
+        <button className="viewport-tool--secondary" style={btn} onClick={() => sendCam({ kind: 'preset', view: 'top' })} title="快捷键 1">顶</button>
+        <button className="viewport-tool--secondary" style={btn} onClick={() => sendCam({ kind: 'preset', view: 'front' })} title="快捷键 2">前</button>
+        <button className="viewport-tool--secondary" style={btn} onClick={() => sendCam({ kind: 'preset', view: 'side' })} title="快捷键 3">侧</button>
         <button style={btn} onClick={() => sendCam({ kind: 'preset', view: 'iso' })} title="快捷键 0">轴测</button>
         <button style={btn} onClick={() => sendCam({ kind: 'focus' })} title="快捷键 F">聚焦</button>
-        <button style={btn} onClick={() => sendCam({ kind: 'home' })} title="快捷键 Home">复位</button>
+        <button className="viewport-tool--secondary" style={btn} onClick={() => sendCam({ kind: 'home' })} title="快捷键 Home">复位</button>
       </div>
       <TransformTools />
-      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+      <div className="viewport-toolbar__bed">
         <select
           style={{ ...btn, appearance: 'auto' }}
           value={custom || presetIdx < 0 ? 'custom' : String(presetIdx)}
@@ -148,7 +135,7 @@ function TransformTools() {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 6, marginLeft: 10, pointerEvents: 'auto' }}>
+    <div className="viewport-toolbar__transform">
       <button style={modeBtn(mode === 'translate')} onClick={() => setMode('translate')} title="快捷键 W">移动</button>
       <button style={modeBtn(mode === 'rotate')} onClick={() => setMode('rotate')} title="快捷键 E">旋转</button>
       <button style={modeBtn(mode === 'scale')} onClick={() => setMode('scale')} title="快捷键 R">缩放</button>
@@ -224,20 +211,11 @@ function StatusBar() {
   const h = doc.history;
   return (
     <div
-      style={{
-        position: 'absolute',
-        left: 10,
-        bottom: 8,
-        fontSize: 11,
-        color: '#8b8b93',
-        background: 'rgba(20,20,23,0.72)',
-        padding: '3px 8px',
-        borderRadius: 6,
-        pointerEvents: 'none',
-      }}
+      className="viewport-status-bar"
+      title="左键选择或拖动 · 右键旋转 · 中键平移 · 滚轮缩放 · W/E/R 变换 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · Ctrl+A 全选 · Ctrl+Z 撤销 · Del 删除 · Esc 取消"
     >
-      选中 {sel} · 历史 {h.position}/{h.length}
-      {'  ·  '}左键选/框选/拖 · W/E/R 变换 · Ctrl 吸附 · 右键旋转 · 中键平移 · 滚轮缩放 · 1/2/3/0 视角 · F 聚焦 · Home 复位 · 5 投影 · Ctrl+A 全选 · Ctrl+Z 撤销 · Del 删除 · Esc 取消
+      <span>选中 {sel} · 历史 {h.position}/{h.length}</span>
+      <span className="viewport-status-bar__shortcuts">W/E/R 变换 · F 聚焦 · Ctrl+Z 撤销</span>
     </div>
   );
 }
@@ -251,21 +229,28 @@ function EmptySceneGuide() {
   useUi((s) => s.rev);
   const hasInstance = [...doc.nodes.values()].some((node) => node.kind === 'instance');
   if (hasInstance) return null;
+  const openExample = () => {
+    if (bootstrapDemoScene()) {
+      useUi.getState().setToast('示例场景已打开：可直接体验编辑、打印检查与导出');
+      window.setTimeout(() => sendCam({ kind: 'home' }), 0);
+    }
+  };
   return (
     <div className="empty-scene-guide">
-      <div className="empty-scene-guide__eyebrow">Start a printable idea</div>
-      <h2>从一个想法或模型开始</h2>
-      <p>用一句话生成 3D 模型，或导入现有文件直接放到打印床；之后可继续编辑、检查并导出 STL。</p>
+      <div className="empty-scene-guide__eyebrow">创建可打印的 3D 作品</div>
+      <h2>今天想从哪里开始？</h2>
+      <p>用一句话生成模型、导入现有文件，或先打开示例场景熟悉完整工作流。</p>
       <div className="empty-scene-guide__actions">
         <button
           className="empty-scene-guide__primary"
           onClick={() => window.dispatchEvent(new CustomEvent('3dstd:open-ai'))}
         >
-          使用 AI 生成
+          AI 生成模型
         </button>
-        <ImportButton target="viewport" label="导入并放置" className="empty-scene-guide__secondary" />
+        <ImportButton target="viewport" label="导入模型" className="empty-scene-guide__secondary" />
+        <button className="empty-scene-guide__tertiary" onClick={openExample}>打开示例</button>
       </div>
-      <div className="empty-scene-guide__formats">支持 GLB / glTF / STL / OBJ，也可直接拖入视口</div>
+      <div className="empty-scene-guide__formats">支持 GLB、glTF、STL、OBJ，也可直接拖入视口</div>
     </div>
   );
 }

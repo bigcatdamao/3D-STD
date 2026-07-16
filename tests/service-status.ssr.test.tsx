@@ -24,9 +24,9 @@ describe('visitor 工具(node 环境 = 无 localStorage,走回退)', () => {
 });
 
 describe('ServiceStatus SSR', () => {
-  it('初始渲染含服务层芯片,无运行时错误', () => {
+  it('初始渲染含产品化 AI 状态芯片,无运行时错误', () => {
     const html = renderToString(<ServiceStatus />);
-    expect(html).toContain('服务层');
-    expect(html).toContain('检测中');
+    expect(html).toContain('查看 AI 服务状态');
+    expect(html).toContain('AI 连接中');
   });
 });

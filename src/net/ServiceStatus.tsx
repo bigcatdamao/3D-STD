@@ -196,14 +196,26 @@ export function ServiceStatus() {
 
   const color = health === '在线' ? '#5dcaa5' : health === '离线' ? '#f09595' : '#8b8b93';
   const realEngine = Boolean(conf?.engine) && conf?.engineName !== 'mock'; // T13a:tripo 等真实引擎
+  const serviceLabel = health === '检测中'
+    ? 'AI 连接中'
+    : health === '离线'
+      ? 'AI 暂不可用'
+      : conf?.engineName === 'mock'
+        ? 'AI 演示模式'
+        : 'AI 已连接';
   const chip = (
-    <span style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => setOpen((v) => !v)} title="服务层诊断">
-      服务层: <b style={{ color }}>{health}</b>
+    <span
+      className="service-status-chip"
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+      onClick={() => setOpen((v) => !v)}
+      title="查看 AI 服务状态"
+    >
+      <b style={{ color }}>{serviceLabel}</b>
       {quota && (
         <span style={dim}>
-          {' '}· 配额 {quota.visitor.remaining}/{quota.visitor.limit}
+          {' '}· 今日 {quota.visitor.remaining}/{quota.visitor.limit}
           {quota.demo === 'active' && ' · 演示码'}
-          {quota.breaker.open && ' · 熔断'}
+          {quota.breaker.open && ' · 今日额度已满'}
         </span>
       )}
       <span style={dim}> ▾</span>
