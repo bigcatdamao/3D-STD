@@ -5,7 +5,15 @@
 // 资产→实例→选中→聚焦→沉底→首检；R2 转存随 T13b 裁出演示范围。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ApiError, CancelResponse, GenerateResponse, QuotaResponse, TaskResponse } from '../../worker/api-types';
+import type {
+  ApiError,
+  CancelResponse,
+  GenerateResponse,
+  GenerateType,
+  ImageView,
+  QuotaResponse,
+  TaskResponse,
+} from '../../worker/api-types';
 import { apiHeaders, getEngineKey, setEngineKey } from '../net/visitor';
 import {
   ACTIVE_TASK_KEY,
@@ -22,7 +30,10 @@ import {
   resumeState,
   serializeActive,
   validateText,
+  validateImageFile,
+  validateImageSelection,
   type GenContext,
+  type GenImageMeta,
   type GenState,
 } from './gen-logic';
 import { mountTurnstile, usingTestSiteKey, type TurnstileHandle } from './turnstile';
@@ -31,7 +42,7 @@ import { startAiLanding } from './landing';
 // ---------- 样式 ----------
 
 const shell: React.CSSProperties = {
-  flex: '0 1 520px',
+  flex: '0 1 680px',
   minWidth: 0,
   border: '1px solid #2b2b31',
   background: '#1b1b20',
@@ -46,7 +57,7 @@ const shell: React.CSSProperties = {
   color: '#c9c9cf',
 };
 
-const inputRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'stretch', minHeight: 52, flex: 1 };
+const inputRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'stretch', minHeight: 62, flex: 1 };
 
 const ta: React.CSSProperties = {
   flex: 1,
@@ -86,6 +97,27 @@ const barFill = (pct: number, color: string): React.CSSProperties => ({
   transition: 'width 0.4s ease',
 });
 
+interface SelectedImage {
+  view: ImageView;
+  file: File;
+  previewUrl: string;
+}
+
+const MULTIVIEW_SLOTS: Array<{ view: ImageView; label: string; hint: string }> = [
+  { view: 'front', label: '正面', hint: '必填' },
+  { view: 'left', label: '左侧', hint: '建议' },
+  { view: 'right', label: '右侧', hint: '建议' },
+];
+
+const imageMeta = (image: SelectedImage): GenImageMeta => ({
+  view: image.view,
+  name: image.file.name,
+  size: image.file.size,
+  mime: image.file.type,
+});
+
+const fileStem = (name: string): string => name.replace(/\.[^.]+$/, '').trim() || '图片生成模型';
+
 // ---------- 组件 ----------
 
 export function GenPanel() {
@@ -100,9 +132,13 @@ export function GenPanel() {
   const [ownKeyDraft, setOwnKeyDraft] = useState('');
   const [hasOwnKey, setHasOwnKey] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [textDraft, setTextDraft] = useState('');
+  const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
 
   const genRef = useRef(gen);
   genRef.current = gen;
+  const selectedImagesRef = useRef(selectedImages);
+  selectedImagesRef.current = selectedImages;
   const tsRef = useRef<TurnstileHandle | null>(null);
   const tsMount = useRef<HTMLDivElement | null>(null);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,6 +158,84 @@ export function GenPanel() {
       /* 无 storage:刷新恢复退化,不阻断主流程 */
     }
   }, []);
+
+  const syncSelectedImages = useCallback(
+    (next: SelectedImage[], notice?: string) => {
+      const keepUrls = new Set(next.map((image) => image.previewUrl));
+      for (const image of selectedImagesRef.current) {
+        if (!keepUrls.has(image.previewUrl)) URL.revokeObjectURL(image.previewUrl);
+      }
+      selectedImagesRef.current = next;
+      setSelectedImages(next);
+      const current = genRef.current.context;
+      const front = next.find((image) => image.view === 'front');
+      commit(
+        idleState(
+          {
+            ...current,
+            prompt: front ? fileStem(front.file.name) : '',
+            images: next.map(imageMeta),
+          },
+          notice,
+        ),
+      );
+    },
+    [commit],
+  );
+
+  const clearSelectedImages = useCallback(() => syncSelectedImages([]), [syncSelectedImages]);
+
+  const assignImages = useCallback(
+    (startView: ImageView, files: File[]) => {
+      const mode = genRef.current.context.type;
+      if (mode === 'text' || files.length === 0) return;
+      const allowed = mode === 'image' ? (['front'] as ImageView[]) : MULTIVIEW_SLOTS.map((slot) => slot.view);
+      const start = Math.max(0, allowed.indexOf(startView));
+      const incoming = files.slice(0, allowed.length - start);
+      for (const file of incoming) {
+        const validation = validateImageFile(file.name, file.size);
+        if (!validation.ok) {
+          commit(idleState(genRef.current.context, validation.message));
+          return;
+        }
+      }
+      const replacements = new Map<ImageView, SelectedImage>();
+      incoming.forEach((file, index) => {
+        replacements.set(allowed[start + index], {
+          view: allowed[start + index],
+          file,
+          previewUrl: URL.createObjectURL(file),
+        });
+      });
+      const next = selectedImagesRef.current.filter((image) => !replacements.has(image.view));
+      next.push(...replacements.values());
+      next.sort((a, b) => allowed.indexOf(a.view) - allowed.indexOf(b.view));
+      syncSelectedImages(next);
+    },
+    [commit, syncSelectedImages],
+  );
+
+  const switchMode = useCallback(
+    (type: GenerateType) => {
+      if (inputLockedIn(genRef.current.phase) || genRef.current.context.type === type) return;
+      if (type === 'text') {
+        clearSelectedImages();
+        commit(idleState({ type, prompt: textDraft, images: [] }));
+        return;
+      }
+      const front = selectedImagesRef.current.find((image) => image.view === 'front');
+      const next = front ? [front] : [];
+      if (type === 'multiview' && genRef.current.context.type === 'multiview') next.push(...selectedImagesRef.current.filter((image) => image.view !== 'front'));
+      const keepUrls = new Set(next.map((image) => image.previewUrl));
+      for (const image of selectedImagesRef.current) {
+        if (!keepUrls.has(image.previewUrl)) URL.revokeObjectURL(image.previewUrl);
+      }
+      selectedImagesRef.current = next;
+      setSelectedImages(next);
+      commit(idleState({ type, prompt: front ? fileStem(front.file.name) : '', images: next.map(imageMeta) }));
+    },
+    [clearSelectedImages, commit, textDraft],
+  );
 
   // ---- 配额 ----
   const refreshQuota = useCallback(async () => {
@@ -177,7 +291,11 @@ export function GenPanel() {
   // ---- 提交(AI-01 校验在前;token 单次使用)----
   const doSubmit = useCallback(
     async (context: GenContext) => {
-      const v = validateText(context.prompt, promptMaxRef.current);
+      const images = selectedImagesRef.current;
+      const v =
+        context.type === 'text'
+          ? validateText(context.prompt, promptMaxRef.current)
+          : validateImageSelection(context.type, images.map(imageMeta));
       if (!v.ok) {
         commit(idleState(context, v.message));
         return;
@@ -192,10 +310,23 @@ export function GenPanel() {
       setWaitingToken(false);
       commit({ ...idleState(context), phase: 'submitting' });
       try {
+        const headers = apiHeaders();
+        let body: BodyInit;
+        if (context.type === 'text') {
+          headers['content-type'] = 'application/json';
+          body = JSON.stringify({ type: context.type, prompt: context.prompt.trim(), turnstileToken: token });
+        } else {
+          const form = new FormData();
+          form.set('type', context.type);
+          form.set('prompt', context.prompt);
+          form.set('turnstileToken', token);
+          for (const image of images) form.set(`image_${image.view}`, image.file, image.file.name);
+          body = form;
+        }
         const r = await fetch('/api/generate', {
           method: 'POST',
-          headers: { 'content-type': 'application/json', ...apiHeaders() },
-          body: JSON.stringify({ type: context.type, prompt: context.prompt.trim(), turnstileToken: token }),
+          headers,
+          body,
         });
         const j = (await r.json()) as GenerateResponse | ApiError;
         if (!j.ok) {
@@ -266,6 +397,10 @@ export function GenPanel() {
       });
       acceptingRef.current = false;
       setAccepting(false);
+      for (const image of selectedImagesRef.current) URL.revokeObjectURL(image.previewUrl);
+      selectedImagesRef.current = [];
+      setSelectedImages([]);
+      setTextDraft('');
       commit(idleState());
     } catch {
       acceptingRef.current = false;
@@ -277,11 +412,19 @@ export function GenPanel() {
   const doAdjust = useCallback(() => {
     // AI-08:完整上下文回填,仅改差异。上下文从未离开输入区数据结构,回填即切回 idle。
     const cur = genRef.current;
+    if (cur.context.type !== 'text' && selectedImagesRef.current.length === 0) {
+      commit(idleState({ ...cur.context, images: [] }, '本地图片不会跨刷新保存，请重新添加图片后再生成。'));
+      return;
+    }
     commit(idleState(cur.context, '已回填原始输入,修改后重新提交(重新生成将计一次配额)。'));
-    setTimeout(() => taRef.current?.focus(), 0);
+    if (cur.context.type === 'text') setTimeout(() => taRef.current?.focus(), 0);
   }, [commit]);
 
   const doDiscard = useCallback(() => {
+    for (const image of selectedImagesRef.current) URL.revokeObjectURL(image.previewUrl);
+    selectedImagesRef.current = [];
+    setSelectedImages([]);
+    setTextDraft('');
     commit(idleState(emptyContext(), '已丢弃。成功任务的配额不返还(成本归因:丢弃是用户选择)。'));
   }, [commit]);
 
@@ -293,8 +436,9 @@ export function GenPanel() {
     if (action === 'retry') {
       void doSubmit(cur.context); // 超时→重试:原上下文原样重发(新 token 自动获取)
     } else if (action === 'edit') {
-      commit(idleState(cur.context, '请修改描述后重新提交(原输入已保留)。')); // 审核→修改输入
-      setTimeout(() => taRef.current?.focus(), 0);
+      const notice = cur.context.type === 'text' ? '请修改描述后重新提交(原输入已保留)。' : '请更换输入图片后重新提交。';
+      commit(idleState(cur.context, notice)); // 审核→修改输入/图片
+      if (cur.context.type === 'text') setTimeout(() => taRef.current?.focus(), 0);
     } else {
       commit(idleState(cur.context)); // 服务异常→稍后再试:退回输入区,上下文保留
     }
@@ -360,12 +504,21 @@ export function GenPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(
+    () => () => {
+      for (const image of selectedImagesRef.current) URL.revokeObjectURL(image.previewUrl);
+    },
+    [],
+  );
+
   // ---- 派生读数 ----
   const remaining = quota?.visitor.remaining ?? null;
   const breakerOpen = quota?.breaker.open ?? false;
   const blocked = !hasOwnKey && (breakerOpen || remaining === 0); // 提交前拦截(AI-07:不进入扣减)
   const p = gen.context.prompt;
-  const overLimit = p.trim().length > promptMax;
+  const overLimit = gen.context.type === 'text' && p.trim().length > promptMax;
+  const imageValidation = validateImageSelection(gen.context.type, selectedImages.map(imageMeta));
+  const imageReady = gen.context.type === 'text' || imageValidation.ok;
 
   const saveOwnKey = () => {
     setEngineKey(ownKeyDraft || null);
@@ -379,7 +532,7 @@ export function GenPanel() {
   const renderStatus = () => {
     switch (gen.phase) {
       case 'submitting':
-        return <span style={dim}>提交中…</span>;
+        return <span style={dim}>{gen.context.type === 'text' ? '提交中…' : '正在上传图片并创建任务…'}</span>;
       case 'queued':
         return (
           <>
@@ -500,50 +653,138 @@ export function GenPanel() {
   };
 
   const inputLocked = inputLockedIn(gen.phase); // 失败/取消态不锁:直接编辑即回到输入态
+  const submitDisabled = inputLocked || blocked || overLimit || !imageReady;
+
+  const removeImage = (view: ImageView) => {
+    syncSelectedImages(selectedImagesRef.current.filter((image) => image.view !== view));
+  };
+
+  const renderImageSlot = (view: ImageView, label: string, hint: string, single = false) => {
+    const selected = selectedImages.find((image) => image.view === view);
+    return (
+      <div className={`gen-image-slot${single ? ' gen-image-slot--single' : ''}${selected ? ' is-filled' : ''}`} key={view}>
+        <label
+          className="gen-image-slot__picker"
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            if (!inputLocked) assignImages(view, Array.from(event.dataTransfer.files));
+          }}
+        >
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+            multiple={gen.context.type === 'multiview' && view === 'front'}
+            disabled={inputLocked}
+            onChange={(event) => {
+              assignImages(view, Array.from(event.currentTarget.files ?? []));
+              event.currentTarget.value = '';
+            }}
+          />
+          {selected ? (
+            <>
+              <img src={selected.previewUrl} alt={`${label}预览`} />
+              <span className="gen-image-slot__scrim" />
+              <span className="gen-image-slot__replace">点击替换</span>
+            </>
+          ) : (
+            <span className="gen-image-slot__empty">
+              <span className="gen-image-slot__plus">＋</span>
+              <strong>{single ? '点击或拖入主体图片' : label}</strong>
+              <small>{single ? 'PNG / JPG / WebP · 单张不超过 10MB' : hint}</small>
+            </span>
+          )}
+        </label>
+        {selected && (
+          <>
+            <span className="gen-image-slot__view">{label}</span>
+            <button
+              type="button"
+              className="gen-image-slot__remove"
+              aria-label={`删除${label}图片`}
+              title={`删除${label}图片`}
+              disabled={inputLocked}
+              onClick={() => removeImage(view)}
+            >
+              ×
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <div className="gen-panel" style={shell} data-testid="gen-panel">
+    <div className="gen-panel" style={shell} data-testid="gen-panel" data-mode={gen.context.type}>
       <div style={inputRow}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center' }}>
-          <button
-            style={{ ...btn, padding: '2px 8px', ...(gen.context.type === 'text' ? { borderColor: '#5a8f5e', color: '#d9f0da' } : {}) }}
-            disabled={inputLocked}
-            onClick={() => commit(idleState({ ...gen.context, type: 'text' }))}
-          >
-            文生
-          </button>
-          <button
-            style={{ ...btn, padding: '2px 8px', opacity: 0.45, cursor: 'not-allowed' }}
-            disabled
-            title="图片生成模型即将支持"
-          >
-            图生
-          </button>
+        <div className="gen-mode-tabs" role="tablist" aria-label="AI 生成方式">
+          {([
+            ['text', '文字'],
+            ['image', '单图'],
+            ['multiview', '多图'],
+          ] as Array<[GenerateType, string]>).map(([type, label]) => (
+            <button
+              key={type}
+              type="button"
+              role="tab"
+              aria-selected={gen.context.type === type}
+              className={gen.context.type === type ? 'is-active' : ''}
+              disabled={inputLocked}
+              onClick={() => switchMode(type)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        <textarea
-          ref={taRef}
-          style={{ ...ta, ...(overLimit ? { borderColor: '#8f5a5a' } : {}) }}
-          placeholder="例如：一个圆润的桌面耳机支架，底座稳固，适合 FDM 打印"
-          value={p}
-          disabled={inputLocked}
-          onChange={(e) => commit(idleState({ ...gen.context, prompt: e.target.value }))}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !inputLocked && !blocked) {
-              e.preventDefault();
-              void doSubmit(gen.context);
-            }
-          }}
-        />
+        <div className="gen-input-surface">
+          {gen.context.type === 'text' ? (
+            <textarea
+              ref={taRef}
+              style={{ ...ta, ...(overLimit ? { borderColor: '#8f5a5a' } : {}) }}
+              placeholder="例如：一个圆润的桌面耳机支架，底座稳固，适合 FDM 打印"
+              value={p}
+              disabled={inputLocked}
+              onChange={(event) => {
+                setTextDraft(event.target.value);
+                commit(idleState({ type: 'text', prompt: event.target.value, images: [] }));
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !inputLocked && !blocked) {
+                  event.preventDefault();
+                  void doSubmit(gen.context);
+                }
+              }}
+            />
+          ) : gen.context.type === 'image' ? (
+            renderImageSlot('front', '主体图片', '必填', true)
+          ) : (
+            <div className="gen-multiview">
+              <div className="gen-multiview__grid">
+                {MULTIVIEW_SLOTS.map((slot) => renderImageSlot(slot.view, slot.label, slot.hint))}
+              </div>
+              <span className="gen-multiview__tip">至少 2 张同一物体 · 正面必填 · 角度尽量保持 90°</span>
+            </div>
+          )}
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', alignItems: 'flex-end' }}>
           <button
-            style={{ ...primaryBtn, ...(inputLocked || blocked || overLimit ? { opacity: 0.5, cursor: 'default' } : {}) }}
-            disabled={inputLocked || blocked || overLimit}
+            style={{ ...primaryBtn, ...(submitDisabled ? { opacity: 0.5, cursor: 'default' } : {}) }}
+            disabled={submitDisabled}
             onClick={() => void doSubmit(gen.context)}
           >
-            生成
+            {gen.context.type === 'text' ? '生成' : '生成模型'}
           </button>
           <span style={{ ...dim, fontSize: 10, ...(overLimit ? { color: '#e0a8a8' } : {}) }}>
-            {p.trim().length}/{promptMax}
+            {gen.context.type === 'text'
+              ? `${p.trim().length}/${promptMax}`
+              : gen.context.type === 'image'
+                ? selectedImages.length > 0
+                  ? '图片已就绪'
+                  : '添加 1 张'
+                : `${selectedImages.length}/3 张`}
           </span>
         </div>
       </div>

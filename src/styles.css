@@ -228,6 +228,84 @@ select:focus-visible {
 .app-shell[data-dock-open="false"] .bottom-dock__bar { border-bottom: 0; }
 .app-shell[data-dock-open="false"] .bottom-dock__body { display: none; }
 
+/* AI 生成入口：文字、单图和最多三张多视图共用一套任务状态机。 */
+.app-shell:has(.gen-panel[data-mode="image"], .gen-panel[data-mode="multiview"]) { --dock-height: 210px; }
+.gen-mode-tabs {
+  flex: 0 0 52px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+.gen-mode-tabs button {
+  min-height: 23px;
+  padding: 2px 7px;
+  border: 1px solid #3d3d46;
+  border-radius: 6px;
+  background: #25262d;
+  color: #9ea3ad;
+  cursor: pointer;
+  font-size: 11px;
+}
+.gen-mode-tabs button:hover:not(:disabled) { color: #fff; border-color: #596270; }
+.gen-mode-tabs button.is-active {
+  border-color: rgba(255, 174, 69, .62);
+  background: rgba(255, 174, 69, .12);
+  color: #ffd59e;
+}
+.gen-mode-tabs button:disabled { cursor: default; opacity: .55; }
+.gen-input-surface { min-width: 0; min-height: 0; flex: 1; display: flex; }
+.gen-image-slot {
+  position: relative;
+  min-width: 0;
+  min-height: 74px;
+  overflow: hidden;
+  border: 1px dashed #46505e;
+  border-radius: 9px;
+  background: linear-gradient(145deg, rgba(37, 43, 53, .88), rgba(25, 29, 36, .92));
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.gen-image-slot:hover { border-color: rgba(255, 174, 69, .64); background: rgba(255, 174, 69, .06); }
+.gen-image-slot--single { width: 100%; min-height: 90px; }
+.gen-image-slot__picker { position: absolute; inset: 0; display: grid; place-items: center; cursor: pointer; }
+.gen-image-slot__picker input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.gen-image-slot__picker img { width: 100%; height: 100%; object-fit: cover; }
+.gen-image-slot--single .gen-image-slot__picker img { object-fit: contain; background: #11151b; }
+.gen-image-slot__empty { display: grid; justify-items: center; gap: 2px; padding: 7px; color: #cbd1d9; text-align: center; }
+.gen-image-slot__empty strong { font-size: 11px; font-weight: 650; }
+.gen-image-slot__empty small { color: #788391; font-size: 9px; }
+.gen-image-slot__plus { color: var(--accent); font-size: 20px; line-height: 1; }
+.gen-image-slot__scrim { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, rgba(5, 7, 10, .78)); opacity: .65; }
+.gen-image-slot__replace { position: absolute; inset: auto 7px 6px; color: #fff; font-size: 9px; opacity: 0; transition: opacity 120ms ease; }
+.gen-image-slot:hover .gen-image-slot__replace { opacity: 1; }
+.gen-image-slot__view {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(12, 15, 20, .78);
+  color: #f3f5f7;
+  font-size: 9px;
+  pointer-events: none;
+}
+.gen-image-slot__remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 50%;
+  background: rgba(10, 12, 16, .82);
+  color: #fff;
+  cursor: pointer;
+  line-height: 16px;
+}
+.gen-multiview { width: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(74px, 1fr) auto; gap: 4px; }
+.gen-multiview__grid { min-width: 0; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(86px, 1fr)); gap: 6px; }
+.gen-multiview__tip { color: #788391; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .empty-scene-guide {
   position: absolute;
   inset: 50% auto auto 50%;
@@ -298,6 +376,10 @@ select:focus-visible {
     height: 176px;
     z-index: 44;
     box-shadow: 0 24px 68px rgba(0, 0, 0, .55);
+  }
+
+  .app-shell[data-dock-open="true"]:has(.gen-panel[data-mode="image"], .gen-panel[data-mode="multiview"]) .bottom-dock {
+    height: 210px;
   }
 
   .bottom-dock__bar { background: rgba(21, 25, 32, .98); }

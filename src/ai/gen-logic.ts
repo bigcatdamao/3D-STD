@@ -4,15 +4,22 @@
 //       AI-08 调整回填的完整上下文、AI 边界 1 刷新恢复(活动任务票据)。
 // 服务端协议见 worker/api-types.ts(D4 统一任务协议)——本文件只消费,不复制定义。
 
-import type { EngineFailReason, EngineTask, GenerateResponse } from '../../worker/api-types';
-import { FAIL_REASON_COPY } from '../../worker/api-types';
+import type { EngineFailReason, EngineTask, GenerateResponse, GenerateType, ImageView } from '../../worker/api-types';
+import { FAIL_REASON_COPY, IMAGE_MAX_BYTES } from '../../worker/api-types';
 
 // ---------- 上下文(AI-08:调整 = 完整回填,仅改差异) ----------
 
+export interface GenImageMeta {
+  view: ImageView;
+  name: string;
+  size: number;
+  mime: string;
+}
+
 export interface GenContext {
-  type: 'text' | 'image';
+  type: GenerateType;
   prompt: string;
-  // options 槽位:M1 文生无附加参数;图生参数随 T13 引擎通道一并落位(协议已留 options)。
+  images: GenImageMeta[];
 }
 
 // ---------- 状态机(AI-03) ----------
@@ -40,7 +47,7 @@ export interface GenState {
   startedAt?: number;
 }
 
-export const emptyContext = (): GenContext => ({ type: 'text', prompt: '' });
+export const emptyContext = (): GenContext => ({ type: 'text', prompt: '', images: [] });
 
 export const idleState = (context: GenContext = emptyContext(), notice?: string): GenState => ({
   phase: 'idle',
@@ -66,16 +73,41 @@ export function validateText(prompt: string, maxChars: number = PROMPT_MAX_CHARS
 
 // 图生入口的格式/大小校验(AI-01)。引擎通道随 T13 接线,校验规则先行入档并受测,
 // 届时 UI 只需解禁入口——规则与文案零改动。
-export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'webp'] as const;
+export { IMAGE_MAX_BYTES };
 
 export function validateImageFile(name: string, sizeBytes: number): Validation {
   const ext = name.toLowerCase().split('.').pop() ?? '';
   if (!(IMAGE_FORMATS as readonly string[]).includes(ext)) {
     return { ok: false, code: 'bad_image_format', message: `仅支持 ${IMAGE_FORMATS.join('/')} 图片。` };
   }
+  if (sizeBytes <= 0) return { ok: false, code: 'empty_image', message: '图片文件为空，请重新选择。' };
   if (sizeBytes > IMAGE_MAX_BYTES) {
     return { ok: false, code: 'image_too_large', message: '图片超过 10MB 上限。' };
+  }
+  return { ok: true };
+}
+
+/** 单图必须 1 张；多视图固定正面/左侧/右侧三槽，正面必填且总数 2–3 张。 */
+export function validateImageSelection(type: GenerateType, images: GenImageMeta[]): Validation {
+  if (type === 'text') return { ok: true };
+  for (const image of images) {
+    const file = validateImageFile(image.name, image.size);
+    if (!file.ok) return file;
+  }
+  const views = new Set(images.map((image) => image.view));
+  if (views.size !== images.length) return { ok: false, code: 'duplicate_view', message: '同一视角只能添加一张图片。' };
+  if (type === 'image') {
+    if (images.length !== 1 || !views.has('front')) {
+      return { ok: false, code: 'single_image_required', message: '请添加 1 张主体清晰的图片。' };
+    }
+    return { ok: true };
+  }
+  if (!views.has('front')) return { ok: false, code: 'front_required', message: '多图生成必须先添加正面图。' };
+  if (images.length < 2) return { ok: false, code: 'multiview_min', message: '多图生成至少需要 2 张不同角度图片。' };
+  if (images.length > 3) return { ok: false, code: 'multiview_max', message: '当前版本最多支持 3 张图片。' };
+  if (images.some((image) => image.view === 'back')) {
+    return { ok: false, code: 'unsupported_view', message: '当前版本使用正面、左侧和右侧三个视角。' };
   }
   return { ok: true };
 }
@@ -165,8 +197,22 @@ export function parseActiveTicket(raw: string | null): ActiveTicket | null {
     const j = JSON.parse(raw) as Partial<ActiveTicket>;
     if (typeof j.taskId !== 'string' || !j.taskId) return null;
     const c = j.context as Partial<GenContext> | undefined;
-    if (!c || (c.type !== 'text' && c.type !== 'image') || typeof c.prompt !== 'string') return null;
-    return { taskId: j.taskId, context: { type: c.type, prompt: c.prompt }, startedAt: Number(j.startedAt) || 0 };
+    if (!c || !['text', 'image', 'multiview'].includes(String(c.type)) || typeof c.prompt !== 'string') return null;
+    const images = Array.isArray(c.images)
+      ? c.images.filter(
+          (image): image is GenImageMeta =>
+            Boolean(image) &&
+            ['front', 'left', 'back', 'right'].includes(String(image.view)) &&
+            typeof image.name === 'string' &&
+            typeof image.size === 'number' &&
+            typeof image.mime === 'string',
+        )
+      : [];
+    return {
+      taskId: j.taskId,
+      context: { type: c.type as GenerateType, prompt: c.prompt, images },
+      startedAt: Number(j.startedAt) || 0,
+    };
   } catch {
     return null;
   }

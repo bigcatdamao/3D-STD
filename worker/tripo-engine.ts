@@ -31,10 +31,11 @@
 // 0.8s/1.6s),对用户不可见,不占用失败三分类;HTTP 5xx 同策略。其余错误码不重试即抛,
 // 路由层按 AI-07 返还。@mock: 演练指令在提交前剥离(与 resultFileName 同一约定)。
 
-import type { EngineTask, GenerateRequest } from './api-types';
+import type { EngineTask, GenerateImageInput, GenerateRequest, ImageView } from './api-types';
 import type { Engine, TaskMapStore } from './engine';
 
 export const TRIPO_BASE = 'https://api.tripo3d.ai/v2/openapi';
+export const TRIPO_UPLOAD = `${TRIPO_BASE}/upload/sts`;
 export const TRIPO_PROMPT_MAX = 1024; // 上游硬限(官方文档);路由层校验取引擎上报值
 const RETRYABLE_CODE = 2000; // 超并发(技术方案 D4)
 const RETRY_DELAYS_MS = [800, 1600];
@@ -129,6 +130,17 @@ interface TripoEnvelope<T> {
   message?: string;
 }
 
+interface TripoImageRef {
+  type: 'png' | 'jpg' | 'webp';
+  file_token: string;
+}
+
+export function tripoImageType(file: File): TripoImageRef['type'] {
+  if (file.type === 'image/png') return 'png';
+  if (file.type === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
 export class TripoEngine implements Engine {
   readonly name = 'tripo';
   readonly promptMaxLength = TRIPO_PROMPT_MAX;
@@ -141,8 +153,12 @@ export class TripoEngine implements Engine {
     return k;
   }
 
-  private headers(ownKey?: string): Record<string, string> {
-    return { 'content-type': 'application/json', authorization: `Bearer ${this.key(ownKey)}` };
+  private authHeaders(ownKey?: string): Record<string, string> {
+    return { authorization: `Bearer ${this.key(ownKey)}` };
+  }
+
+  private jsonHeaders(ownKey?: string): Record<string, string> {
+    return { 'content-type': 'application/json', ...this.authHeaders(ownKey) };
   }
 
   private get fetchImpl(): typeof fetch {
@@ -152,12 +168,11 @@ export class TripoEngine implements Engine {
   }
 
   async submit(req: GenerateRequest, serviceTaskId: string, ownKey?: string): Promise<EngineTask> {
-    const prompt = stripDrillDirectives(req.prompt ?? '');
-    const body = JSON.stringify({ type: 'text_to_model', prompt, model_version: this.o.modelVersion });
+    const body = JSON.stringify(await this.submitPayload(req, ownKey));
     const sleep = this.o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
     for (let attempt = 0; ; attempt++) {
-      const res = await this.fetchImpl(`${TRIPO_BASE}/task`, { method: 'POST', headers: this.headers(ownKey), body });
+      const res = await this.fetchImpl(`${TRIPO_BASE}/task`, { method: 'POST', headers: this.jsonHeaders(ownKey), body });
       let j: TripoEnvelope<{ task_id: string }> | null = null;
       try {
         j = (await res.json()) as TripoEnvelope<{ task_id: string }>;
@@ -221,7 +236,7 @@ export class TripoEngine implements Engine {
   /** GET /task/:id。返回 null = 上游判定「非可查任务」;网络异常/5xx/鉴权失败则抛(交路由层 502)。 */
   private async fetchTask(taskId: string, ownKey?: string): Promise<TripoTaskData | null> {
     const res = await this.fetchImpl(`${TRIPO_BASE}/task/${encodeURIComponent(taskId)}`, {
-      headers: this.headers(ownKey),
+      headers: this.jsonHeaders(ownKey),
     });
     if (res.status === 401 || res.status === 403) throw new Error(`tripo_auth_failed http=${res.status}`);
     if (res.status >= 500) throw new Error(`tripo_upstream_5xx http=${res.status}`); // 瞬时故障:不合成失败,客户端续轮询
@@ -233,5 +248,64 @@ export class TripoEngine implements Engine {
     }
     if (!res.ok || !j || j.code !== 0 || !j.data) return null;
     return j.data;
+  }
+
+  private async submitPayload(req: GenerateRequest, ownKey?: string): Promise<Record<string, unknown>> {
+    if (req.type === 'text') {
+      return {
+        type: 'text_to_model',
+        prompt: stripDrillDirectives(req.prompt ?? ''),
+        model_version: this.o.modelVersion,
+      };
+    }
+
+    const inputs = req.images ?? [];
+    if (req.type === 'image') {
+      const front = inputs.find((input) => input.view === 'front');
+      if (!front) throw new Error('tripo_image_missing');
+      return {
+        type: 'image_to_model',
+        file: await this.uploadImage(front, ownKey),
+        model_version: this.o.modelVersion,
+      };
+    }
+
+    if (inputs.length < 2 || !inputs.some((input) => input.view === 'front')) {
+      throw new Error('tripo_multiview_missing');
+    }
+    const uploaded = await Promise.all(
+      inputs.map(async (input) => [input.view, await this.uploadImage(input, ownKey)] as const),
+    );
+    const byView = new Map<ImageView, TripoImageRef>(uploaded);
+    return {
+      type: 'multiview_to_model',
+      files: ['front', 'left', 'back', 'right'].map((view) => byView.get(view as ImageView) ?? {}),
+      model_version: this.o.modelVersion,
+    };
+  }
+
+  /** 本地图片只在 Worker 内转发到 Tripo；multipart 边界由运行时生成，绝不手写 content-type。 */
+  private async uploadImage(input: GenerateImageInput, ownKey?: string): Promise<TripoImageRef> {
+    const sleep = this.o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    for (let attempt = 0; ; attempt++) {
+      const form = new FormData();
+      form.append('file', input.file, input.file.name);
+      const res = await this.fetchImpl(TRIPO_UPLOAD, { method: 'POST', headers: this.authHeaders(ownKey), body: form });
+      let j: TripoEnvelope<{ image_token: string }> | null = null;
+      try {
+        j = (await res.json()) as TripoEnvelope<{ image_token: string }>;
+      } catch {
+        j = null;
+      }
+      if (res.ok && j?.code === 0 && j.data?.image_token) {
+        return { type: tripoImageType(input.file), file_token: j.data.image_token };
+      }
+      const retryable = isSubmitRetryable(res.status, j?.code);
+      if (retryable && attempt < RETRY_DELAYS_MS.length) {
+        await sleep(RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw new Error(`tripo_upload_failed http=${res.status} code=${j?.code ?? 'n/a'}`);
+    }
   }
 }

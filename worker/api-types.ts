@@ -39,11 +39,27 @@ export interface QuotaResponse {
   demo: 'none' | 'active' | 'invalid'; // 演示码状态(invalid = 未配置或已撤销)
 }
 
+export type GenerateType = 'text' | 'image' | 'multiview';
+export type ImageView = 'front' | 'left' | 'back' | 'right';
+
+/**
+ * 路由完成 multipart 解析后交给引擎的图片输入。浏览器不会把此结构直接 JSON 序列化；
+ * 本地文件始终通过 /api/generate 的 multipart 请求进入 Worker，API key 不下发到前端。
+ */
+export interface GenerateImageInput {
+  view: ImageView;
+  file: File;
+}
+
 export interface GenerateRequest {
-  type: 'text' | 'image';
+  type: GenerateType;
   prompt?: string;
   turnstileToken?: string;
+  images?: GenerateImageInput[];
 }
+
+export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 
 // 引擎抽象层的统一任务协议(技术方案 D4;T4 起由 mock 引擎实现,T13 换 Tripo 时前端零改动)。
 export type EngineTaskStatus = 'queued' | 'running' | 'success' | 'failed';
@@ -89,4 +105,4 @@ export interface CancelResponse {
 }
 
 // Tripo credit 价(技术方案 D2,核实于 2026-07):文生 $0.20 = 20 credits,图生带纹理 $0.30 = 30 credits。
-export const CREDITS_BY_TYPE: Record<GenerateRequest['type'], number> = { text: 20, image: 30 };
+export const CREDITS_BY_TYPE: Record<GenerateType, number> = { text: 20, image: 30, multiview: 30 };

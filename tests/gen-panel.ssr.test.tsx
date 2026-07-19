@@ -9,11 +9,12 @@ import { turnstileSiteKey, usingTestSiteKey } from '../src/ai/turnstile';
 import { apiHeaders, getEngineKey, setEngineKey } from '../src/net/visitor';
 
 describe('GenPanel SSR', () => {
-  it('初始渲染:输入区 + 提交键 + 图生占位,无运行时错误', () => {
+  it('初始渲染:文字/单图/多图三入口 + 提交键,无运行时错误', () => {
     const html = renderToString(<GenPanel />);
     expect(html).toContain('gen-panel');
-    expect(html).toContain('文生');
-    expect(html).toContain('图生');
+    expect(html).toContain('文字');
+    expect(html).toContain('单图');
+    expect(html).toContain('多图');
     expect(html).toContain('生成');
     expect(html.replace(/<!-- -->/g, '')).toContain('0/2000'); // 字数读数(AI-01 上限可见;SSR 文本节点间有注释分隔)
   });

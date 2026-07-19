@@ -2,10 +2,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.8(T16 落地修订) |
-| 日期 | 2026-07-12 |
-| 上游文档 | 《PRD v0.94》 |
-| 外部数据核实日 | 2026-07-08(Tripo 官方 Python SDK v0.4.2 与 OpenAPI schema;此前 Tripo/Meshy/Cloudflare 官方文档) |
+| 版本 | v1.9(图生模型与多视图落地修订) |
+| 日期 | 2026-07-20 |
+| 上游文档 | 《PRD v0.95》 |
+| 外部数据核实日 | 2026-07-20(Tripo 官方 Upload / Generation 文档) |
+
+**v1.9 变更记录(M1.5.3 图生模型)**:① **图片随 `/api/generate` multipart 一次上行**——浏览器不直连 Tripo、不持有服务 key，也不新增公开上传代理；Worker 在格式、大小、数量、正面必填、Turnstile 与配额检查全部通过后，才把图片转发至 Tripo `/upload/sts` 获取 `image_token`，上传或任务提交失败统一走 AI-07 返还。② **协议扩为 `text | image | multiview`，状态机不分叉**——单图映射 `image_to_model`；多图 UI 暂定正面/左侧/右侧三槽，服务端按 Tripo 要求组装四项 `[front,left,back,right]`，back 以空对象占位，至少两张且 front 不可缺。任务提交后的排队、轮询、失败、取消、结果代理、接受与 T16 落入完全复用。③ **双层校验**——前端即时校验提升反馈速度，Worker 以 PNG/JPEG/WebP、单张 10MB、单图 1 张、多图 2–3 张为安全边界；校验位于 Turnstile 和扣减之前。④ **本地文件不持久化**——活动票据只保存图片名称/大小/MIME/视角元数据，刷新可恢复已提交任务轮询，但调整或重试需要用户重新选择本地文件，避免把图片二进制塞进 localStorage。⑤ **Tripo 上传 multipart 不手写 `content-type`**，由运行时生成 boundary；图片上传与任务提交均复用服务 key/自带 key，并对 2000/5xx 做既有退避重试。
 
 **v1.8 变更记录(T16 落地修订,AI 落入汇聚)**:① **接受结果不另造 AI 解析管线,以 `ImportOptions` 扩展 T10/T11 同源入口**——`startAiLanding` 仍把 GLB 交给 `startImport → parse.worker → finalize`,单位烘焙、拓扑预检、缩略图、几何注册表与 IndexedDB 对账全部复用;只显式携带 `source=ai`、生成上下文与落场完成回调。选择复用而非复制的原因:一旦 AI 与本地导入各有一套 finalize,单位/水密/持久化修复会出现双点维护,最容易让「站内检查的资产」和「实际落场资产」口径漂移。② **整段只有一次文档写入(HIST-05/C1)**——`finalize` 先入资产(库操作不入场景历史),再以既有 `placeInstance` 一次提交根层级实例,位置直接取 `[0,0,-bbox.minZ]` 完成床中心+沉底,该命令本身自动选中,历史类型使用预留的 `aiPlace`/「AI 生成落入」;聚焦、首检和 toast 均为只读/UI 效果,不拆出第二条历史。撤销闭包只捕获实例、不含资产,因此撤销后 AI 资产与生成参数继续保留,无需特殊栈手术。③ **聚焦与首检按各自生命周期接线**——聚焦延后一帧发送,因为 dispatch 后 React/R3F 尚需一次 commit 才把新 mesh 注册进 `meshRegistry`,同帧 focus 会退化为对床聚焦;首检直接复用 T14 的 `runPrintCheck`,若 Worker 正忙则订阅检查 store,旧轮收尾后再发全量新轮(旧轮开始时尚无 AI 实例且会被 editVersion 判过期,不能把「搭上旧轮」等同首检)。④ **资产 provenance 完整落库**——AI 资产记录 prompt、生成类型、taskId 与运行时引擎名,沿 T11 对账同步器持久化;接受按钮加同步 ref 锁与「落入中」态,防双击并发下载造成重复资产/实例。⑤ **范围裁剪保持显式**——AST-05/R2 转存与「未备份」后台重试随 T13b 一并外移,本次不以假状态占位;现阶段同源结果代理负责下载,本地 IndexedDB 负责已接受资产保留,恢复 T13b 时在资产 provenance/完成回调上增量接线,不改落场原子性。
 
@@ -55,8 +57,8 @@
 **D3 两条被外部约束证实的 PRD 设计。** Meshy API 生成结果非企业档仅保留 3 天即自动删除 → AST-05 云端转存为硬需求;Meshy API 禁止第三方站点 CORS → AI-02 服务层代理为硬需求。技术方案与 PRD 在此互为证据。
 
 **D4 引擎抽象层(PRD AI-10 的实现)。** Worker 内定义统一任务协议:
-`{ type: text|image, prompt/imageKey, options } → { taskId } → { status: queued|running|success|failed, progress, resultUrl, failReason: timeout|moderation|service }`
-Tripo 映射:`text_to_model` / `image_to_model`(H3 版本,带纹理);`consumed_credit` 字段用于成本对账;错误码 2000(超并发)映射为对用户不可见的服务层排队重试(指数退避 + Retry-After),不占用用户失败分类。Meshy 映射同构,M2 实现。
+`{ type: text|image|multiview, prompt/images, options } → { taskId } → { status: queued|running|success|failed, progress, resultUrl, failReason: timeout|moderation|service }`
+Tripo 映射:`text_to_model` / `image_to_model` / `multiview_to_model`;图片先经 `/upload/sts` 换取 `image_token`;`consumed_credit` 字段用于成本对账;错误码 2000(超并发)映射为对用户不可见的服务层排队重试(指数退避 + Retry-After),不占用用户失败分类。Meshy 映射同构,M2 实现。
 
 **D5 STL 导出走客户端。** 复用检查器的 composeTRS 逐顶点直写二进制 STL(Z-up + mm 已是世界设定,零转换;v1.7 自 STLExporter 方案收进——检查与导出同口径、镜像绕序修正、头部嗅探兼容)。不用 Tripo 的付费 Conversion 任务(5–10 credits/次)——但记录其 `flatten_bottom` 能力于注释层,作为「服务端也有沉底概念」的佐证。
 

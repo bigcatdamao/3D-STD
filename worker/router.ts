@@ -11,10 +11,11 @@ import type {
   GenerateRequest,
   GenerateResponse,
   HealthResponse,
+  ImageView,
   QuotaResponse,
   TaskResponse,
 } from './api-types';
-import { CREDITS_BY_TYPE } from './api-types';
+import { CREDITS_BY_TYPE, IMAGE_MAX_BYTES, IMAGE_MIME_TYPES } from './api-types';
 import { getEngine, type Engine, type TaskMapStore } from './engine';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
@@ -147,24 +148,55 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   // 1. 校验(validation 类,不进入扣减——PRD AI-07「配额不足属提交前拦截」同理,校验失败更在其前)
   let body: GenerateRequest;
   try {
-    body = (await req.json()) as GenerateRequest;
+    if ((req.headers.get('content-type') ?? '').includes('multipart/form-data')) {
+      const form = await req.formData();
+      const rawType = form.get('type');
+      const rawPrompt = form.get('prompt');
+      const rawToken = form.get('turnstileToken');
+      const images: NonNullable<GenerateRequest['images']> = [];
+      for (const view of ['front', 'left', 'right'] as ImageView[]) {
+        const entry = form.get(`image_${view}`);
+        if (entry && typeof entry !== 'string') images.push({ view, file: entry });
+      }
+      body = {
+        type: String(rawType ?? '') as GenerateRequest['type'],
+        prompt: typeof rawPrompt === 'string' ? rawPrompt : '',
+        turnstileToken: typeof rawToken === 'string' ? rawToken : '',
+        images,
+      };
+    } else {
+      body = (await req.json()) as GenerateRequest;
+    }
   } catch {
-    return err(400, 'bad_json', 'validation', '请求体不是合法 JSON。');
+    return err(400, 'bad_json', 'validation', '请求体无法解析。');
   }
-  if (body.type !== 'text' && body.type !== 'image') {
-    return err(400, 'bad_type', 'validation', 'type 须为 text 或 image。');
-  }
-  if (body.type === 'image') {
-    // 图生的上传通道随 T12(前端)/T13(引擎)接线;此前直接拦截,零配额消耗。
-    return err(501, 'image_not_wired', 'not_implemented', '图生通道随 T12/T13 接线,当前仅路由占位。');
+  if (body.type !== 'text' && body.type !== 'image' && body.type !== 'multiview') {
+    return err(400, 'bad_type', 'validation', 'type 须为 text、image 或 multiview。');
   }
   const prompt = body.prompt?.trim() ?? '';
-  if (!prompt) return err(400, 'empty_prompt', 'validation', 'prompt 不能为空。');
+  const images = body.images ?? [];
+  if (body.type === 'text' && !prompt) return err(400, 'empty_prompt', 'validation', 'prompt 不能为空。');
+  if (body.type !== 'text') {
+    const views = new Set(images.map((image) => image.view));
+    if (body.type === 'image' && (images.length !== 1 || !views.has('front'))) {
+      return err(400, 'single_image_required', 'validation', '单图生成需要 1 张图片。');
+    }
+    if (body.type === 'multiview' && (!views.has('front') || images.length < 2 || images.length > 3)) {
+      return err(400, 'multiview_images_invalid', 'validation', '多图生成需要正面图，并添加 1–2 张侧面图。');
+    }
+    for (const image of images) {
+      if (!(IMAGE_MIME_TYPES as readonly string[]).includes(image.file.type)) {
+        return err(400, 'bad_image_format', 'validation', '仅支持 PNG、JPG/JPEG 和 WebP 图片。');
+      }
+      if (image.file.size <= 0) return err(400, 'empty_image', 'validation', '图片文件为空。');
+      if (image.file.size > IMAGE_MAX_BYTES) return err(400, 'image_too_large', 'validation', '单张图片不能超过 10MB。');
+    }
+  }
   // T13a:上限取引擎上报值(Tripo 上游硬限 1024 < 服务层默认 2000)——在校验层如实拦截,
   // 而非提交后由上游打回(那会走「扣减 → 返还」白绕一圈,且报错含糊)
   const engine = engineOf(env, deps);
   const promptMax = engine?.promptMaxLength ?? 2000;
-  if (prompt.length > promptMax) {
+  if (body.type === 'text' && prompt.length > promptMax) {
     return err(400, 'prompt_too_long', 'validation', `prompt 超长(上限 ${promptMax} 字符)。`);
   }
 

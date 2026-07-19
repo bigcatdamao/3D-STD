@@ -7,11 +7,13 @@ import type { TaskMapStore } from '../worker/engine';
 import { getEngine } from '../worker/engine';
 import {
   TRIPO_BASE,
+  TRIPO_UPLOAD,
   TripoEngine,
   isSubmitRetryable,
   mapTripoTask,
   pickModelUrl,
   stripDrillDirectives,
+  tripoImageType,
   type TripoTaskData,
 } from '../worker/tripo-engine';
 
@@ -167,6 +169,63 @@ describe('TripoEngine.submit', () => {
     expect(auth).toBe('Bearer sk-user');
     expect(map.store.size).toBe(0);
     expect(await eng.billingIdOf('tp_own')).toBeNull();
+  });
+
+  it('单图:先 multipart 上传取得 image_token，再提交 image_to_model', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchImpl = (async (url: any, init?: any) => {
+      calls.push({ url: String(url), init });
+      if (String(url) === TRIPO_UPLOAD) return jsonRes({ code: 0, data: { image_token: 'img_front' } });
+      return jsonRes({ code: 0, data: { task_id: 'tp_image' } });
+    }) as typeof fetch;
+    const eng = new TripoEngine(baseOpts({ fetchImpl }));
+    const front = new File(['front'], 'front.PNG', { type: 'image/png' });
+    expect(tripoImageType(front)).toBe('png');
+    const task = await eng.submit({ type: 'image', images: [{ view: 'front', file: front }] }, 'bill-image');
+    expect(task.taskId).toBe('tp_image');
+    expect(calls.map((call) => call.url)).toEqual([TRIPO_UPLOAD, `${TRIPO_BASE}/task`]);
+    expect((calls[0].init?.headers as Record<string, string>)['content-type']).toBeUndefined();
+    expect(calls[0].init?.body).toBeInstanceOf(FormData);
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      type: 'image_to_model',
+      file: { type: 'png', file_token: 'img_front' },
+      model_version: 'v2.5-20250123',
+    });
+  });
+
+  it('多图:上传正面/左侧/右侧，并按 Tripo 四槽顺序留空 back', async () => {
+    const taskBodies: unknown[] = [];
+    const fetchImpl = (async (url: any, init?: any) => {
+      if (String(url) === TRIPO_UPLOAD) {
+        const file = (init?.body as FormData).get('file') as File;
+        return jsonRes({ code: 0, data: { image_token: `tok_${file.name}` } });
+      }
+      taskBodies.push(JSON.parse(String(init?.body)));
+      return jsonRes({ code: 0, data: { task_id: 'tp_multi' } });
+    }) as typeof fetch;
+    const eng = new TripoEngine(baseOpts({ fetchImpl }));
+    const image = (view: 'front' | 'left' | 'right', name: string) => ({
+      view,
+      file: new File([view], name, { type: 'image/jpeg' }),
+    });
+    const task = await eng.submit(
+      {
+        type: 'multiview',
+        images: [image('front', 'front.jpg'), image('left', 'left.jpg'), image('right', 'right.jpg')],
+      },
+      'bill-multi',
+    );
+    expect(task.taskId).toBe('tp_multi');
+    expect(taskBodies[0]).toEqual({
+      type: 'multiview_to_model',
+      files: [
+        { type: 'jpg', file_token: 'tok_front.jpg' },
+        { type: 'jpg', file_token: 'tok_left.jpg' },
+        {},
+        { type: 'jpg', file_token: 'tok_right.jpg' },
+      ],
+      model_version: 'v2.5-20250123',
+    });
   });
 
   it('2000 超并发:退避重试后成功,重试对调用方不可见(D4)', async () => {

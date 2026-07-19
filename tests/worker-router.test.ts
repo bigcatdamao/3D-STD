@@ -56,6 +56,17 @@ const gen = (
     { fetchImpl, now },
   );
 
+const genForm = (env: WorkerEnv, form: FormData, fetchImpl: typeof fetch = okTurnstile, now?: () => number) =>
+  handleRequest(
+    new Request('https://x.dev/api/generate', {
+      method: 'POST',
+      headers: { 'x-client-id': 'cid-1', 'cf-connecting-ip': '1.2.3.4' },
+      body: form,
+    }),
+    env,
+    { fetchImpl, now },
+  );
+
 const taskGet = async (env: WorkerEnv, id: string, now?: () => number, headers: Record<string, string> = {}) => {
   const res = await handleRequest(
     new Request(`https://x.dev/api/task/${encodeURIComponent(id)}`, { headers }),
@@ -136,12 +147,53 @@ describe('router · /api/generate 校验层(不消耗配额)', () => {
     expect(((await res.json()) as ApiError).error).toBe('bad_json');
   });
 
-  it('空 prompt → 400;image → 501(通道随 T12/T13)', async () => {
+  it('空 prompt → 400；图片模式缺文件 → 400，且都不消耗配额', async () => {
     const env = makeEnv();
     expect((await gen(env, { ...validBody, prompt: '  ' })).status).toBe(400);
-    const res = await gen(env, { type: 'image', turnstileToken: 'tok' });
-    expect(res.status).toBe(501);
+    const form = new FormData();
+    form.set('type', 'image');
+    form.set('turnstileToken', 'tok');
+    const res = await genForm(env, form);
+    expect(res.status).toBe(400);
     // 全程未触达配额
+    expect((await quotaOf(env)).visitor.used).toBe(0);
+  });
+
+  it('单图与 2–3 张多图 multipart 通过校验并进入统一任务链', async () => {
+    const env = makeEnv({ ENGINE_MODE: 'mock' });
+    const single = new FormData();
+    single.set('type', 'image');
+    single.set('turnstileToken', 'tok');
+    single.set('image_front', new File(['front'], 'front.png', { type: 'image/png' }));
+    const singleRes = await genForm(env, single);
+    expect(singleRes.status).toBe(200);
+    expect(((await singleRes.json()) as GenerateResponse).task.taskId).toMatch(/^mk1_/);
+
+    const multi = new FormData();
+    multi.set('type', 'multiview');
+    multi.set('turnstileToken', 'tok');
+    multi.set('image_front', new File(['front'], 'front.jpg', { type: 'image/jpeg' }));
+    multi.set('image_left', new File(['left'], 'left.webp', { type: 'image/webp' }));
+    multi.set('image_right', new File(['right'], 'right.png', { type: 'image/png' }));
+    const multiRes = await genForm(env, multi);
+    expect(multiRes.status).toBe(200);
+    expect(((await multiRes.json()) as GenerateResponse).task.taskId).toMatch(/^mk1_/);
+  });
+
+  it('多图缺正面或图片格式不支持时在 Turnstile/扣减前拦截', async () => {
+    const env = makeEnv({ ENGINE_MODE: 'mock' });
+    const noFront = new FormData();
+    noFront.set('type', 'multiview');
+    noFront.set('turnstileToken', 'tok');
+    noFront.set('image_left', new File(['left'], 'left.png', { type: 'image/png' }));
+    noFront.set('image_right', new File(['right'], 'right.png', { type: 'image/png' }));
+    expect((await genForm(env, noFront)).status).toBe(400);
+
+    const gif = new FormData();
+    gif.set('type', 'image');
+    gif.set('turnstileToken', 'tok');
+    gif.set('image_front', new File(['gif'], 'x.gif', { type: 'image/gif' }));
+    expect((await genForm(env, gif)).status).toBe(400);
     expect((await quotaOf(env)).visitor.used).toBe(0);
   });
 

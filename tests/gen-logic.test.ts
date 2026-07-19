@@ -18,11 +18,12 @@ import {
   resumeState,
   serializeActive,
   validateImageFile,
+  validateImageSelection,
   validateText,
   type GenState,
 } from '../src/ai/gen-logic';
 
-const ctx = (prompt = '一只章鱼形状的花盆') => ({ type: 'text' as const, prompt });
+const ctx = (prompt = '一只章鱼形状的花盆') => ({ type: 'text' as const, prompt, images: [] });
 
 const task = (t: Partial<EngineTask>): EngineTask => ({
   taskId: 't_1',
@@ -54,6 +55,18 @@ describe('AI-01 前端即时校验(失败不发请求 = 零配额消耗)', () =>
     expect(validateImageFile('cat.webp', 1024).ok).toBe(true);
     expect(validateImageFile('cat.gif', 1024).ok).toBe(false);
     expect(validateImageFile('cat.png', 10 * 1024 * 1024 + 1).ok).toBe(false);
+  });
+
+  it('单图必须 1 张；多图正面必填且允许 2–3 张', () => {
+    const front = { view: 'front' as const, name: 'front.png', size: 1024, mime: 'image/png' };
+    const left = { view: 'left' as const, name: 'left.jpg', size: 1024, mime: 'image/jpeg' };
+    const right = { view: 'right' as const, name: 'right.webp', size: 1024, mime: 'image/webp' };
+    expect(validateImageSelection('image', [front]).ok).toBe(true);
+    expect(validateImageSelection('image', []).ok).toBe(false);
+    expect(validateImageSelection('multiview', [front]).ok).toBe(false);
+    expect(validateImageSelection('multiview', [front, left]).ok).toBe(true);
+    expect(validateImageSelection('multiview', [front, left, right]).ok).toBe(true);
+    expect(validateImageSelection('multiview', [left, right]).ok).toBe(false);
   });
 });
 

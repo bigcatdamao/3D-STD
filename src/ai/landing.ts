@@ -10,7 +10,7 @@ import { sendCam, useUi } from '../state/store';
 
 export interface AiLandingContext {
   prompt: string;
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'multiview';
   taskId: string | null;
   engine: string | null;
 }
