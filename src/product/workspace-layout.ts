@@ -1,33 +1,32 @@
-export type InspectorTab = 'properties' | 'check';
+export type InspectorTab = 'properties' | 'check' | 'history';
 
 export interface WorkspaceLayout {
   leftOpen: boolean;
   inspectorOpen: boolean;
-  dockOpen: boolean;
+  creationOpen: boolean;
   inspectorTab: InspectorTab;
 }
 
-export const WORKSPACE_LAYOUT_KEY = '3dstd:m15-workspace-layout';
+export const WORKSPACE_LAYOUT_KEY = '3dstd:m15-workspace-layout-v2';
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
   leftOpen: true,
   inspectorOpen: true,
-  dockOpen: true,
+  creationOpen: false,
   inspectorTab: 'properties',
 };
 
 export const COMPACT_WORKSPACE_MAX_WIDTH = 1366;
 
 /**
- * 首次进入时按可用宽度给出产品默认布局。窄屏优先保住视口，检查器与 AI 底栏
- * 仍可从顶栏打开，但以抽屉覆盖而不是继续挤压中央编辑区。
+ * 首次进入时按可用宽度给出产品默认布局。AI 创作入口已经进入视口覆盖层，
+ * 不再占用固定底栏；窄屏只需默认收起检查器来优先保住画布宽度。
  */
 export function defaultWorkspaceLayoutForWidth(width: number): WorkspaceLayout {
   if (width <= COMPACT_WORKSPACE_MAX_WIDTH) {
     return {
       ...DEFAULT_WORKSPACE_LAYOUT,
       inspectorOpen: false,
-      dockOpen: false,
     };
   }
   return { ...DEFAULT_WORKSPACE_LAYOUT };
@@ -45,8 +44,8 @@ export function parseWorkspaceLayout(raw: string | null): WorkspaceLayout {
     return {
       leftOpen: typeof value.leftOpen === 'boolean' ? value.leftOpen : true,
       inspectorOpen: typeof value.inspectorOpen === 'boolean' ? value.inspectorOpen : true,
-      dockOpen: typeof value.dockOpen === 'boolean' ? value.dockOpen : true,
-      inspectorTab: value.inspectorTab === 'check' || value.inspectorTab === 'properties'
+      creationOpen: typeof value.creationOpen === 'boolean' ? value.creationOpen : false,
+      inspectorTab: value.inspectorTab === 'check' || value.inspectorTab === 'history' || value.inspectorTab === 'properties'
         ? value.inspectorTab
         : 'properties',
     };

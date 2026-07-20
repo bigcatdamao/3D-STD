@@ -1,6 +1,6 @@
 // 历史面板(T9,HIST-04/07/08 + 边界 1/5)。
-// 形态:底栏横向时间轴 —— 左旧右新,与撤销/重做的空间隐喻一致(向左退,向右进);
-//   96px 底栏放不下纵向列表,横向条同时把「当前位置」变成一眼可读的分界线。
+// 形态:右侧检查器纵向时间线 —— 上旧下新,与属性/打印检查按任务切换，
+//   释放原固定底栏高度，同时保留当前位置、跳转、hover 高亮和冻结语义。
 // 语义:点击条目 = 跳到「应用完该条」的状态(含点击项);点「起点」= 全部撤销(jumpTo 0)。
 //   跳转经 dispatch 走内核 jumpTo(批量撤销/重做),选中态随 HIST-06 逐条恢复。
 // 冻结(预览态,边界 1):灰态可见、条目禁点、示角标;解冻自动恢复 —— T18 接 Tab 切换即生效。
@@ -55,11 +55,12 @@ function Chip({
         font: 'inherit',
         fontSize: 12,
         lineHeight: 1.2,
-        maxWidth: 180,
+        width: '100%',
+        maxWidth: 'none',
         textAlign: 'left',
       }}
     >
-      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 158 }}>
+      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
         {row.icon} {row.label}
       </span>
       <span
@@ -69,7 +70,7 @@ function Chip({
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          maxWidth: 158,
+          maxWidth: '100%',
         }}
       >
         {row.names || '—'}
@@ -99,7 +100,9 @@ export function HistoryPanel() {
     <div
       style={{
         flex: 1,
+        height: '100%',
         minWidth: 0,
+        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
         border: `1px solid ${C.border}`,
@@ -109,24 +112,26 @@ export function HistoryPanel() {
         opacity: frozen ? 0.55 : 1, // 边界 1:冻结 = 灰态可见
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: C.dim, padding: '0 2px 3px' }}>
-        <span style={{ color: C.text, fontWeight: 600 }}>历史</span>
-        <span>
-          {h.position}/{h.length}
-        </span>
-        <button style={btn(!frozen && h.canUndo)} disabled={!h.canUndo} title="撤销(Ctrl+Z)"
-          onClick={() => dispatch((d) => d.history.undo())}>
-          ↶ 撤销
-        </button>
-        <button style={btn(!frozen && h.canRedo)} disabled={!h.canRedo} title="重做(Ctrl+Shift+Z / Ctrl+Y)"
-          onClick={() => dispatch((d) => d.history.redo())}>
-          ↷ 重做
-        </button>
-        {frozen && <span style={{ color: C.amber }}>预览态 · 历史冻结</span>}
-        <span style={{ marginLeft: 'auto', fontSize: 11 }}>点击任意步跳转 · hover 高亮受影响对象</span>
+      <div style={{ display: 'grid', gap: 7, fontSize: 12, color: C.dim, padding: '4px 3px 9px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: C.text, fontWeight: 650 }}>操作时间线</span>
+          <span>{h.position}/{h.length}</span>
+          {frozen && <span style={{ marginLeft: 'auto', color: C.amber }}>预览态 · 历史冻结</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button style={btn(!frozen && h.canUndo)} disabled={!h.canUndo} title="撤销(Ctrl+Z)"
+            onClick={() => dispatch((d) => d.history.undo())}>
+            ↶ 撤销
+          </button>
+          <button style={btn(!frozen && h.canRedo)} disabled={!h.canRedo} title="重做(Ctrl+Shift+Z / Ctrl+Y)"
+            onClick={() => dispatch((d) => d.history.redo())}>
+            ↷ 重做
+          </button>
+          <span style={{ marginLeft: 'auto', fontSize: 10 }}>点击跳转 · 悬停定位</span>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, alignItems: 'stretch', overflowX: 'auto', minHeight: 0, paddingBottom: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', overflowX: 'hidden', minHeight: 0, padding: '0 2px 3px' }}>
         {h.hasOverflowed && (
           // HIST 边界 5:栈满不提示,面板顶部(时间轴最左)示合并占位,不可点击
           <span style={{ ...placeholderChip, alignSelf: 'center' }}>更早的记录已合并</span>
@@ -138,6 +143,7 @@ export function HistoryPanel() {
           disabled={frozen}
           style={{
             flex: '0 0 auto',
+            width: '100%',
             padding: '5px 10px',
             borderRadius: 6,
             border: `1px solid ${h.position === 0 ? C.accent : C.border}`,
@@ -147,6 +153,7 @@ export function HistoryPanel() {
             cursor: frozen ? 'default' : 'pointer',
             font: 'inherit',
             fontSize: 12,
+            textAlign: 'left',
           }}
         >
           ◦ 初始
@@ -164,6 +171,7 @@ export function HistoryPanel() {
 
 const placeholderChip: React.CSSProperties = {
   flex: '0 0 auto',
+  width: '100%',
   padding: '5px 10px',
   borderRadius: 6,
   border: `1px dashed ${C.border}`,

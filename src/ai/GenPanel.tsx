@@ -1,5 +1,5 @@
 // T12 · AI 指令条(PRD AI-01/03/04/05/06/08 + AI-07/11 的前端侧 + AI 边界 1)。
-// 布局:底部横条,左"输入区"右"状态区",全生命周期不弹窗、不遮视口——AI 嵌于工作流(AI-01)。
+// 布局:视口中央创作面板,生成期间维持原位并呈现状态,避免固定底栏持续挤占 3D 空间。
 // 与服务层的全部往来走 worker/api-types 协议;不感知具体引擎(AI-10),T13 换 Tripo 零改动。
 // 「接受」将结果 GLB 送入 T10/T11 同源管线，并由 T16 汇聚点完成
 // 资产→实例→选中→聚焦→沉底→首检；R2 转存随 T13b 裁出演示范围。
@@ -719,7 +719,7 @@ export function GenPanel() {
 
   return (
     <div className="gen-panel" style={shell} data-testid="gen-panel" data-mode={gen.context.type}>
-      <div style={inputRow}>
+      <div className="gen-input-row" style={inputRow}>
         <div className="gen-mode-tabs" role="tablist" aria-label="AI 生成方式">
           {([
             ['text', '文字'],
@@ -769,7 +769,7 @@ export function GenPanel() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', alignItems: 'flex-end' }}>
+        <div className="gen-submit" style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', alignItems: 'flex-end' }}>
           <button
             style={{ ...primaryBtn, ...(submitDisabled ? { opacity: 0.5, cursor: 'default' } : {}) }}
             disabled={submitDisabled}

@@ -5,6 +5,7 @@ import { CheckPanel } from './check/CheckPanel';
 import { reportIsStale, runPrintCheck, useCheck } from './check/check-state';
 import { ExportDialog, HeaderExportButton } from './export/ExportDialog';
 import { HistoryPanel } from './history/HistoryPanel';
+import { ImportButton } from './importer/ImportUI';
 import { ServiceStatus } from './net/ServiceStatus';
 import { ParamPanel } from './panel/ParamPanel';
 import {
@@ -16,7 +17,7 @@ import {
   type InspectorTab,
   type WorkspaceLayout,
 } from './product/workspace-layout';
-import { doc, useUi } from './state/store';
+import { bootstrapDemoScene, doc, sendCam, useUi } from './state/store';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -75,8 +76,10 @@ function CollapsedRail({ label, onOpen }: { label: string; onOpen: () => void })
 }
 
 function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTab) => void }) {
+  useUi((s) => s.rev);
   const issues = useCheck((s) => s.issues);
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
+  const history = doc.history;
   return (
     <div className="inspector-shell">
       <div className="inspector-tabs" role="tablist" aria-label="右侧检查器">
@@ -97,10 +100,62 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
           打印检查
           {issueCount > 0 && <span className="inspector-tab__count">{issueCount}</span>}
         </button>
+        <button
+          className={`inspector-tab${tab === 'history' ? ' is-active' : ''}`}
+          role="tab"
+          aria-selected={tab === 'history'}
+          onClick={() => onTab('history')}
+        >
+          历史
+          <span className="inspector-tab__meta">{history.position}/{history.length}</span>
+        </button>
       </div>
       <div className="inspector-content">
-        {tab === 'properties' ? <ParamPanel /> : <CheckPanel embedded />}
+        {tab === 'properties' ? <ParamPanel /> : tab === 'check' ? <CheckPanel embedded /> : <HistoryPanel />}
       </div>
+    </div>
+  );
+}
+
+function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose: () => void }) {
+  const openExample = () => {
+    if (bootstrapDemoScene()) {
+      onClose();
+      useUi.getState().setToast('示例场景已打开：可直接体验编辑、打印检查与导出');
+      window.setTimeout(() => sendCam({ kind: 'home' }), 0);
+    }
+  };
+
+  return (
+    <div
+      className={`creation-overlay${dismissible ? ' is-dismissible' : ''}`}
+      onMouseDown={(event) => {
+        if (dismissible && event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="creation-panel" aria-label="AI 生成模型">
+        <header className="creation-panel__header">
+          <div>
+            <div className="creation-panel__eyebrow">AI 3D 创作</div>
+            <h2>{dismissible ? '继续生成一个新模型' : '从想法或图片开始'}</h2>
+            <p>输入描述，或添加一至三张本地图片生成可继续编辑的 3D 模型。</p>
+          </div>
+          {dismissible && (
+            <button className="creation-panel__close" onClick={onClose} aria-label="关闭 AI 创作面板" title="关闭">
+              ×
+            </button>
+          )}
+        </header>
+        <GenPanel />
+        {!dismissible && (
+          <footer className="creation-panel__footer">
+            <span>或者</span>
+            <ImportButton target="viewport" label="导入本地模型" className="creation-panel__secondary" />
+            <button className="creation-panel__tertiary" onClick={openExample}>打开示例场景</button>
+            <small>支持 GLB、glTF、STL、OBJ，也可直接拖入视口</small>
+          </footer>
+        )}
+      </section>
     </div>
   );
 }
@@ -113,6 +168,8 @@ function initialLayout(): WorkspaceLayout {
 
 export function App() {
   const [layout, setLayout] = useState<WorkspaceLayout>(initialLayout);
+  useUi((s) => s.rev);
+  const hasInstance = [...doc.nodes.values()].some((node) => node.kind === 'instance');
 
   useEffect(() => {
     void initPersistence();
@@ -128,24 +185,32 @@ export function App() {
 
   useEffect(() => {
     const openAi = () => {
-      setLayout((current) => ({ ...current, dockOpen: true }));
+      if (hasInstance) setLayout((current) => ({ ...current, creationOpen: true }));
       window.setTimeout(() => {
         document.querySelector<HTMLTextAreaElement>('[data-testid="gen-panel"] textarea')?.focus();
       }, 220);
     };
     window.addEventListener('3dstd:open-ai', openAi);
     return () => window.removeEventListener('3dstd:open-ai', openAi);
-  }, []);
+  }, [hasInstance]);
 
   const patchLayout = (patch: Partial<WorkspaceLayout>) => setLayout((current) => ({ ...current, ...patch }));
   const openCheck = () => patchLayout({ inspectorOpen: true, inspectorTab: 'check' });
+  const toggleCreation = () => {
+    if (!hasInstance) {
+      document.querySelector<HTMLTextAreaElement>('[data-testid="gen-panel"] textarea')?.focus();
+      return;
+    }
+    patchLayout({ creationOpen: !layout.creationOpen });
+  };
+  const creationVisible = !hasInstance || layout.creationOpen;
 
   return (
     <div
       className="app-shell"
       data-left-open={layout.leftOpen}
       data-inspector-open={layout.inspectorOpen}
-      data-dock-open={layout.dockOpen}
+      data-creation-open={creationVisible}
     >
       <header className="app-header">
         <div className="brand-lockup">
@@ -168,12 +233,12 @@ export function App() {
             ◧
           </button>
           <button
-            className={`app-icon-button${layout.dockOpen ? ' is-active' : ''}`}
-            onClick={() => patchLayout({ dockOpen: !layout.dockOpen })}
-            title={layout.dockOpen ? '收起 AI 与历史' : '展开 AI 与历史'}
-            aria-label={layout.dockOpen ? '收起 AI 与历史' : '展开 AI 与历史'}
+            className={`app-icon-button${creationVisible ? ' is-active' : ''}`}
+            onClick={toggleCreation}
+            title={hasInstance && layout.creationOpen ? '关闭 AI 创作' : '打开 AI 创作'}
+            aria-label={hasInstance && layout.creationOpen ? '关闭 AI 创作' : '打开 AI 创作'}
           >
-            ▤
+            ✦
           </button>
           <button
             className={`app-icon-button${layout.inspectorOpen ? ' is-active' : ''}`}
@@ -207,9 +272,15 @@ export function App() {
 
       <main className="viewport-frame" aria-label="3D 视口">
         <Viewport />
+        {creationVisible && (
+          <CreationPanel
+            dismissible={hasInstance}
+            onClose={() => patchLayout({ creationOpen: false })}
+          />
+        )}
       </main>
 
-      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性与打印检查">
+      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性、打印检查与历史">
         {layout.inspectorOpen ? (
           <>
             <div className="workspace-panel__body">
@@ -224,28 +295,8 @@ export function App() {
               ›
             </button>
           </>
-        ) : <CollapsedRail label="属性与检查" onOpen={() => patchLayout({ inspectorOpen: true })} />}
+        ) : <CollapsedRail label="属性、检查与历史" onOpen={() => patchLayout({ inspectorOpen: true })} />}
       </aside>
-
-      <footer className="bottom-dock">
-        <div className="bottom-dock__bar">
-          <span className="bottom-dock__title">AI 创作与操作历史</span>
-          <span>生成结果进入资产库，场景编辑可逐步撤销</span>
-          <span className="bottom-dock__hint">Enter 生成 · Ctrl+Z 撤销</span>
-          <button
-            className="app-icon-button"
-            onClick={() => patchLayout({ dockOpen: !layout.dockOpen })}
-            title={layout.dockOpen ? '收起底部面板' : '展开底部面板'}
-            aria-label={layout.dockOpen ? '收起底部面板' : '展开底部面板'}
-          >
-            {layout.dockOpen ? '⌄' : '⌃'}
-          </button>
-        </div>
-        <div className="bottom-dock__body">
-          <GenPanel />
-          <HistoryPanel />
-        </div>
-      </footer>
 
       <ToastLayer />
       <ExportDialog />

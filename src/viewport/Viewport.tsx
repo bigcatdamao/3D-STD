@@ -5,7 +5,6 @@ import { Canvas } from '@react-three/fiber';
 import { useEffect, useState } from 'react';
 import {
   BED_PRESETS,
-  bootstrapDemoScene,
   dispatch,
   doc,
   expandToInstances,
@@ -225,36 +224,6 @@ function isTyping(e: KeyboardEvent): boolean {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
-function EmptySceneGuide() {
-  useUi((s) => s.rev);
-  const hasInstance = [...doc.nodes.values()].some((node) => node.kind === 'instance');
-  if (hasInstance) return null;
-  const openExample = () => {
-    if (bootstrapDemoScene()) {
-      useUi.getState().setToast('示例场景已打开：可直接体验编辑、打印检查与导出');
-      window.setTimeout(() => sendCam({ kind: 'home' }), 0);
-    }
-  };
-  return (
-    <div className="empty-scene-guide">
-      <div className="empty-scene-guide__eyebrow">创建可打印的 3D 作品</div>
-      <h2>今天想从哪里开始？</h2>
-      <p>用一句话生成模型、导入现有文件，或先打开示例场景熟悉完整工作流。</p>
-      <div className="empty-scene-guide__actions">
-        <button
-          className="empty-scene-guide__primary"
-          onClick={() => window.dispatchEvent(new CustomEvent('3dstd:open-ai'))}
-        >
-          AI 生成模型
-        </button>
-        <ImportButton target="viewport" label="导入模型" className="empty-scene-guide__secondary" />
-        <button className="empty-scene-guide__tertiary" onClick={openExample}>打开示例</button>
-      </div>
-      <div className="empty-scene-guide__formats">支持 GLB、glTF、STL、OBJ，也可直接拖入视口</div>
-    </div>
-  );
-}
-
 export function Viewport() {
   const setOrtho = useUi((s) => s.setOrtho);
 
@@ -332,7 +301,6 @@ export function Viewport() {
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />
-      <EmptySceneGuide />
       <DragHighlight />
       <ImportStatusStrip />
       <UnitDialog />

@@ -8,11 +8,10 @@ import {
 } from '../src/product/workspace-layout';
 
 describe('M1.5 工作台布局偏好', () => {
-  it('首次进入窄屏时收起检查器与底栏，优先保留中央视口', () => {
+  it('首次进入窄屏时收起检查器，AI 面板不再占用固定底栏', () => {
     expect(defaultWorkspaceLayoutForWidth(COMPACT_WORKSPACE_MAX_WIDTH)).toEqual({
       ...DEFAULT_WORKSPACE_LAYOUT,
       inspectorOpen: false,
-      dockOpen: false,
     });
     expect(defaultWorkspaceLayoutForWidth(COMPACT_WORKSPACE_MAX_WIDTH + 1)).toEqual(DEFAULT_WORKSPACE_LAYOUT);
   });
@@ -23,16 +22,16 @@ describe('M1.5 工作台布局偏好', () => {
   });
 
   it('逐项接收合法偏好并忽略非法字段', () => {
-    expect(parseWorkspaceLayout(JSON.stringify({ leftOpen: false, inspectorTab: 'check', dockOpen: 'no' }))).toEqual({
+    expect(parseWorkspaceLayout(JSON.stringify({ leftOpen: false, inspectorTab: 'history', creationOpen: 'no' }))).toEqual({
       leftOpen: false,
       inspectorOpen: true,
-      dockOpen: true,
-      inspectorTab: 'check',
+      creationOpen: false,
+      inspectorTab: 'history',
     });
   });
 
   it('序列化后可无损恢复', () => {
-    const value = { leftOpen: false, inspectorOpen: true, dockOpen: false, inspectorTab: 'properties' as const };
+    const value = { leftOpen: false, inspectorOpen: true, creationOpen: true, inspectorTab: 'properties' as const };
     expect(parseWorkspaceLayout(serializeWorkspaceLayout(value))).toEqual(value);
   });
 });

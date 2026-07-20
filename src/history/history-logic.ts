@@ -26,7 +26,7 @@ export function nameSummary(names: string[]): string {
   return `${names[0]} 等 ${names.length} 项`;
 }
 
-/** 把内核历史清单派生为面板行模型;条目顺序 = 时间顺序(左旧右新) */
+/** 把内核历史清单派生为面板行模型;条目顺序 = 时间顺序(上旧下新) */
 export function buildRows(
   entries: ReturnType<HistoryManager['list']>,
   position: number,

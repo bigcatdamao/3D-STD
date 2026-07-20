@@ -299,7 +299,7 @@ function TreeTab() {
           <div style={{ padding: '28px 14px', color: '#8b8b93', fontSize: 12, textAlign: 'center', lineHeight: 1.8 }}>
             场景为空
             <br />
-            拖入文件导入,或在底部指令条 AI 生成
+            拖入文件导入,或在画布中央使用 AI 生成
           </div>
         )}
         {rows.map((row) => (
