@@ -34,4 +34,8 @@ describe('M1.5 工作台布局偏好', () => {
     const value = { leftOpen: false, inspectorOpen: true, creationOpen: true, inspectorTab: 'properties' as const };
     expect(parseWorkspaceLayout(serializeWorkspaceLayout(value))).toEqual(value);
   });
+
+  it('接受 AI 拆件分析右栏页签', () => {
+    expect(parseWorkspaceLayout(JSON.stringify({ inspectorTab: 'split' })).inspectorTab).toBe('split');
+  });
 });

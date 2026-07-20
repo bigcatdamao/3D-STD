@@ -111,7 +111,7 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
   );
 }
 
-export function CheckPanel({ embedded = false }: { embedded?: boolean }) {
+export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boolean; onOpenSplit?: () => void }) {
   useUi((s) => s.rev); // 文档任何变化 → 重算过期/存活过滤
   useUi((s) => s.bed); // 床配置变化 → 过期
   const s = useCheckSnapshot();
@@ -242,6 +242,16 @@ export function CheckPanel({ embedded = false }: { embedded?: boolean }) {
           {s.phase === 'idle' && (
             <div style={{ padding: '12px 10px', color: GREY, fontSize: 11 }}>
               尚未检查。点「检查」对全部可见对象执行打印前检查:水密性、退化几何、床内位置、悬空、微小件。
+            </div>
+          )}
+
+          {onOpenSplit && s.phase === 'done' && (
+            <div className="check-agent-cta">
+              <div>
+                <strong>让 AI 帮你判断是否需要拆件</strong>
+                <span>基于本次检查整理 2–3 套候选方案，不会修改模型。</span>
+              </div>
+              <button type="button" onClick={onOpenSplit}>AI 拆件分析</button>
             </div>
           )}
         </div>

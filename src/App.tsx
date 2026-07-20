@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
+import { SplitAnalysisPanel } from './agent/SplitAnalysisPanel';
+import { useSplitAnalysis } from './agent/split-analysis-state';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -78,6 +80,7 @@ function CollapsedRail({ label, onOpen }: { label: string; onOpen: () => void })
 function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTab) => void }) {
   useUi((s) => s.rev);
   const issues = useCheck((s) => s.issues);
+  const splitPhase = useSplitAnalysis((state) => state.phase);
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
   const history = doc.history;
   return (
@@ -101,6 +104,16 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
           {issueCount > 0 && <span className="inspector-tab__count">{issueCount}</span>}
         </button>
         <button
+          className={`inspector-tab${tab === 'split' ? ' is-active' : ''}`}
+          role="tab"
+          aria-selected={tab === 'split'}
+          onClick={() => onTab('split')}
+        >
+          AI 拆件
+          {splitPhase === 'running' && <span className="inspector-tab__meta">…</span>}
+          {splitPhase === 'done' && <span className="inspector-tab__ready">●</span>}
+        </button>
+        <button
           className={`inspector-tab${tab === 'history' ? ' is-active' : ''}`}
           role="tab"
           aria-selected={tab === 'history'}
@@ -111,7 +124,13 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
         </button>
       </div>
       <div className="inspector-content">
-        {tab === 'properties' ? <ParamPanel /> : tab === 'check' ? <CheckPanel embedded /> : <HistoryPanel />}
+        {tab === 'properties'
+          ? <ParamPanel />
+          : tab === 'check'
+            ? <CheckPanel embedded onOpenSplit={() => onTab('split')} />
+            : tab === 'split'
+              ? <SplitAnalysisPanel />
+              : <HistoryPanel />}
       </div>
     </div>
   );
@@ -280,7 +299,7 @@ export function App() {
         )}
       </main>
 
-      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性、打印检查与历史">
+      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性、打印检查、AI 拆件与历史">
         {layout.inspectorOpen ? (
           <>
             <div className="workspace-panel__body">
@@ -295,7 +314,7 @@ export function App() {
               ›
             </button>
           </>
-        ) : <CollapsedRail label="属性、检查与历史" onOpen={() => patchLayout({ inspectorOpen: true })} />}
+        ) : <CollapsedRail label="属性、检查、AI 拆件与历史" onOpen={() => patchLayout({ inspectorOpen: true })} />}
       </aside>
 
       <ToastLayer />

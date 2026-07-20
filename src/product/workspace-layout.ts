@@ -1,4 +1,4 @@
-export type InspectorTab = 'properties' | 'check' | 'history';
+export type InspectorTab = 'properties' | 'check' | 'split' | 'history';
 
 export interface WorkspaceLayout {
   leftOpen: boolean;
@@ -45,7 +45,7 @@ export function parseWorkspaceLayout(raw: string | null): WorkspaceLayout {
       leftOpen: typeof value.leftOpen === 'boolean' ? value.leftOpen : true,
       inspectorOpen: typeof value.inspectorOpen === 'boolean' ? value.inspectorOpen : true,
       creationOpen: typeof value.creationOpen === 'boolean' ? value.creationOpen : false,
-      inspectorTab: value.inspectorTab === 'check' || value.inspectorTab === 'history' || value.inspectorTab === 'properties'
+      inspectorTab: value.inspectorTab === 'check' || value.inspectorTab === 'split' || value.inspectorTab === 'history' || value.inspectorTab === 'properties'
         ? value.inspectorTab
         : 'properties',
     };
