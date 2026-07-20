@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3d-std.local/schemas/split-analysis-input.v1.json",
+  "title": "3D-STD Split Analysis Input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "locale",
+    "goal",
+    "printing",
+    "scene",
+    "objects",
+    "diagnostics",
+    "currentParts",
+    "views",
+    "capabilities"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "enum": ["split-analysis-input.v1"] },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "locale": { "type": "string", "enum": ["zh-CN", "en-US"] },
+    "goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "priorities"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "priorities": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "enum": [
+              "fit_build_volume",
+              "reduce_support",
+              "preserve_strength",
+              "preserve_surface",
+              "easy_assembly",
+              "easy_printing"
+            ]
+          }
+        }
+      }
+    },
+    "printing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process",
+        "bedMm",
+        "material",
+        "nozzleMm",
+        "layerHeightMm",
+        "assemblyClearanceMm"
+      ],
+      "properties": {
+        "process": { "type": "string", "enum": ["fdm", "sla", "sls", "other", "unknown"] },
+        "bedMm": { "$ref": "#/$defs/positiveVec3Object" },
+        "material": { "type": ["string", "null"], "maxLength": 100 },
+        "nozzleMm": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "layerHeightMm": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "assemblyClearanceMm": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editVersion",
+        "selectionScope",
+        "objectCount",
+        "selectedObjectIds",
+        "currentPartCount",
+        "splitState"
+      ],
+      "properties": {
+        "editVersion": { "type": "integer", "minimum": 0 },
+        "selectionScope": { "type": "string", "enum": ["selected", "visible", "all"] },
+        "objectCount": { "type": "integer", "minimum": 0 },
+        "selectedObjectIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "currentPartCount": { "type": "integer", "minimum": 0 },
+        "splitState": {
+          "type": "string",
+          "enum": ["untouched", "grouped_only", "preview_exists", "derived_parts_exist"]
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/objectSnapshot" }
+    },
+    "diagnostics": { "$ref": "#/$defs/diagnostics" },
+    "currentParts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/partSnapshot" }
+    },
+    "views": {
+      "type": "array",
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/viewDescriptor" }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topology",
+        "thinWall",
+        "surfaceOverhang",
+        "cutCandidates",
+        "multiviewCapture",
+        "assemblyValidation"
+      ],
+      "properties": {
+        "topology": { "$ref": "#/$defs/capabilityState" },
+        "thinWall": { "$ref": "#/$defs/capabilityState" },
+        "surfaceOverhang": { "$ref": "#/$defs/capabilityState" },
+        "cutCandidates": { "$ref": "#/$defs/capabilityState" },
+        "multiviewCapture": { "$ref": "#/$defs/capabilityState" },
+        "assemblyValidation": { "$ref": "#/$defs/capabilityState" }
+      }
+    }
+  },
+  "$defs": {
+    "capabilityState": {
+      "type": "string",
+      "enum": ["available", "unavailable", "not_run", "stale", "partial"]
+    },
+    "vec3": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number" },
+        { "type": "number" },
+        { "type": "number" }
+      ],
+      "items": false
+    },
+    "positiveVec3Object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number", "exclusiveMinimum": 0 },
+        "y": { "type": "number", "exclusiveMinimum": 0 },
+        "z": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/vec3" },
+        "max": { "$ref": "#/$defs/vec3" }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["positionMm", "rotationDeg", "scale"],
+      "properties": {
+        "positionMm": { "$ref": "#/$defs/vec3" },
+        "rotationDeg": { "$ref": "#/$defs/vec3" },
+        "scale": { "$ref": "#/$defs/vec3" }
+      }
+    },
+    "objectSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objectId",
+        "assetId",
+        "name",
+        "source",
+        "visible",
+        "locked",
+        "transform",
+        "localBoundsMm",
+        "worldBoundsMm",
+        "dimensionsMm",
+        "faces",
+        "vertices"
+      ],
+      "properties": {
+        "objectId": { "type": "string" },
+        "assetId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 200 },
+        "source": { "type": "string", "enum": ["import", "ai"] },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "transform": { "$ref": "#/$defs/transform" },
+        "localBoundsMm": { "$ref": "#/$defs/bounds" },
+        "worldBoundsMm": { "$ref": "#/$defs/bounds" },
+        "dimensionsMm": { "$ref": "#/$defs/vec3" },
+        "faces": { "type": "integer", "minimum": 0 },
+        "vertices": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reportEditVersion", "summary", "topology", "issues", "thinWall", "surfaceOverhang"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["unavailable", "not_run", "running", "fresh", "stale", "partial", "timeout"]
+        },
+        "reportEditVersion": { "type": ["integer", "null"], "minimum": 0 },
+        "summary": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["instances", "errors", "warnings", "totalFaces", "timedOut"],
+          "properties": {
+            "instances": { "type": "integer", "minimum": 0 },
+            "errors": { "type": "integer", "minimum": 0 },
+            "warnings": { "type": "integer", "minimum": 0 },
+            "totalFaces": { "type": "integer", "minimum": 0 },
+            "timedOut": { "type": "boolean" }
+          }
+        },
+        "topology": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assetId", "watertight", "degenerateFaces", "boundaryEdges", "nonManifoldEdges"],
+            "properties": {
+              "assetId": { "type": "string" },
+              "watertight": { "type": "boolean" },
+              "degenerateFaces": { "type": "integer", "minimum": 0 },
+              "boundaryEdges": { "type": "integer", "minimum": 0 },
+              "nonManifoldEdges": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["issueId", "objectId", "code", "level", "message", "worldBoundsMm"],
+            "properties": {
+              "issueId": { "type": "string" },
+              "objectId": { "type": "string" },
+              "code": {
+                "type": "string",
+                "enum": ["non_watertight", "degenerate", "out_of_bed", "floating", "tiny", "dims"]
+              },
+              "level": { "type": "string", "enum": ["error", "warning", "info"] },
+              "message": { "type": "string" },
+              "worldBoundsMm": {
+                "anyOf": [
+                  { "$ref": "#/$defs/bounds" },
+                  { "type": "null" }
+                ]
+              }
+            }
+          }
+        },
+        "thinWall": { "$ref": "#/$defs/surfaceDiagnostic" },
+        "surfaceOverhang": { "$ref": "#/$defs/surfaceDiagnostic" }
+      }
+    },
+    "surfaceDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "threshold", "regions"],
+      "properties": {
+        "status": { "$ref": "#/$defs/capabilityState" },
+        "threshold": { "type": ["number", "null"], "minimum": 0 },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["regionId", "objectId", "description", "severity"],
+            "properties": {
+              "regionId": { "type": "string" },
+              "objectId": { "type": "string" },
+              "description": { "type": "string" },
+              "severity": { "type": "string", "enum": ["low", "medium", "high"] }
+            }
+          }
+        }
+      }
+    },
+    "partSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partId", "name", "kind", "sourceObjectIds", "parentPartId", "operationId", "state"],
+      "properties": {
+        "partId": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["original", "group", "split_preview", "derived"] },
+        "sourceObjectIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "parentPartId": { "type": ["string", "null"] },
+        "operationId": { "type": ["string", "null"] },
+        "state": { "type": "string", "enum": ["current", "preview", "archived"] }
+      }
+    },
+    "viewDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["viewId", "fieldName", "label", "scope", "width", "height", "mime", "detailHint"],
+      "properties": {
+        "viewId": { "type": "string" },
+        "fieldName": { "type": "string", "pattern": "^view_[a-z0-9_]+$" },
+        "label": { "type": "string", "enum": ["front", "back", "left", "right", "top", "iso"] },
+        "scope": { "type": "string", "enum": ["selected", "visible", "all"] },
+        "width": { "type": "integer", "minimum": 1, "maximum": 2048 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 2048 },
+        "mime": { "type": "string", "enum": ["image/png", "image/jpeg", "image/webp"] },
+        "detailHint": { "type": "string", "enum": ["low", "high"] }
+      }
+    }
+  }
+}

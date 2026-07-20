@@ -3,6 +3,8 @@
 AI 生成 → 编辑摆盘 → 打印检查 → 导出 STL 的网页版 3D 打印创作工作台。
 规格见 `docs/`(PRD v0.95 · 技术方案 v1.9 · Backlog v1.1)。当前进度:T1–T16 功能闭环 + M1.5.3 图生模型(文字 / 单图 / 最多三图入口、Tripo 图片上传与多视图任务、统一落入链路)。当前优先继续提升核心任务体验与 UI 竞争力，录屏后置。
 
+渐进式拆件 Agent 的架构与产品方案见 [`docs/agent-split-architecture.md`](docs/agent-split-architecture.md)；当前仅完成方案与数据契约，尚未实现 Agent 或自动拆件。
+
 ## 首次上线(全程网页操作,无需命令行)
 
 **A. 仓库准备**

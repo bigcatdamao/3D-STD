@@ -1,0 +1,245 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "needsSplit",
+    "confidence",
+    "summary",
+    "reasons",
+    "recommendedPartCount",
+    "recommendedRegions",
+    "schemes",
+    "risks",
+    "nextSteps",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "enum": ["split-analysis-output.v1"] },
+    "needsSplit": { "type": "string", "enum": ["yes", "no", "uncertain"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "summary": { "type": "string" },
+    "reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reason" }
+    },
+    "recommendedPartCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "preferred", "maximum", "rationale"],
+      "properties": {
+        "minimum": { "type": "integer", "minimum": 1 },
+        "preferred": { "type": "integer", "minimum": 1 },
+        "maximum": { "type": "integer", "minimum": 1 },
+        "rationale": { "type": "string" }
+      }
+    },
+    "recommendedRegions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/region" }
+    },
+    "schemes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/scheme" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/risk" }
+    },
+    "nextSteps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nextStep" }
+    },
+    "limitations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missingInputs", "unavailableCapabilities", "assumptions", "visualUncertainty"],
+      "properties": {
+        "missingInputs": { "type": "array", "items": { "type": "string" } },
+        "unavailableCapabilities": { "type": "array", "items": { "type": "string" } },
+        "assumptions": { "type": "array", "items": { "type": "string" } },
+        "visualUncertainty": { "type": "string", "enum": ["low", "medium", "high"] }
+      }
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "blocking"]
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasonId", "code", "severity", "description", "evidenceRefs"],
+      "properties": {
+        "reasonId": { "type": "string" },
+        "code": {
+          "type": "string",
+          "enum": [
+            "exceeds_build_volume",
+            "support_reduction",
+            "strength_direction",
+            "surface_protection",
+            "assembly_requirement",
+            "existing_components",
+            "mesh_quality",
+            "user_goal",
+            "insufficient_evidence"
+          ]
+        },
+        "severity": { "$ref": "#/$defs/severity" },
+        "description": { "type": "string" },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "regionId",
+        "objectIds",
+        "label",
+        "description",
+        "candidateType",
+        "location",
+        "rationale",
+        "confidence",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "regionId": { "type": "string" },
+        "objectIds": { "type": "array", "items": { "type": "string" } },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "candidateType": {
+          "type": "string",
+          "enum": ["plane", "multi_plane", "component_separation", "natural_seam", "unknown"]
+        },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "axis", "normalizedPosition", "landmarks"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["natural_seam", "axis_band", "between_components", "flat_zone", "visual_only"]
+            },
+            "axis": { "type": "string", "enum": ["x", "y", "z", "unknown"] },
+            "normalizedPosition": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "landmarks": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "rationale": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bedFit", "support", "strength", "surface", "assembly"],
+      "properties": {
+        "bedFit": { "$ref": "#/$defs/impactValue" },
+        "support": { "$ref": "#/$defs/impactValue" },
+        "strength": { "$ref": "#/$defs/impactValue" },
+        "surface": { "$ref": "#/$defs/impactValue" },
+        "assembly": { "$ref": "#/$defs/impactValue" }
+      }
+    },
+    "impactValue": {
+      "type": "string",
+      "enum": ["improved", "neutral", "worse", "unknown"]
+    },
+    "cutStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "regionId", "instruction", "previewRequired"],
+      "properties": {
+        "order": { "type": "integer", "minimum": 1 },
+        "regionId": { "type": ["string", "null"] },
+        "instruction": { "type": "string" },
+        "previewRequired": { "type": "boolean", "enum": [true] }
+      }
+    },
+    "scheme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemeId",
+        "title",
+        "summary",
+        "partCount",
+        "regionIds",
+        "cutSequence",
+        "pros",
+        "cons",
+        "impact",
+        "assemblyApproach",
+        "riskIds",
+        "confidence"
+      ],
+      "properties": {
+        "schemeId": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "partCount": { "type": "integer", "minimum": 1 },
+        "regionIds": { "type": "array", "items": { "type": "string" } },
+        "cutSequence": { "type": "array", "items": { "$ref": "#/$defs/cutStep" } },
+        "pros": { "type": "array", "items": { "type": "string" } },
+        "cons": { "type": "array", "items": { "type": "string" } },
+        "impact": { "$ref": "#/$defs/impact" },
+        "assemblyApproach": {
+          "type": "string",
+          "enum": ["none", "flat_joint", "alignment_pin", "socket", "adhesive", "screw", "unknown"]
+        },
+        "riskIds": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["riskId", "severity", "title", "description", "mitigation", "evidenceRefs"],
+      "properties": {
+        "riskId": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "mitigation": { "type": "string" },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+      }
+    },
+    "nextStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "action", "description", "requiresUserConfirmation", "suggestedTool"],
+      "properties": {
+        "order": { "type": "integer", "minimum": 1 },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add_missing_data",
+            "repair_mesh",
+            "review_scheme",
+            "request_preview",
+            "change_orientation",
+            "no_split_needed",
+            "expert_review"
+          ]
+        },
+        "description": { "type": "string" },
+        "requiresUserConfirmation": { "type": "boolean" },
+        "suggestedTool": {
+          "type": ["string", "null"],
+          "enum": ["inspect_model", "find_cut_candidates", "preview_plane_cut", "compare_split_schemes", "analyze_print_orientation", null]
+        }
+      }
+    }
+  }
+}
