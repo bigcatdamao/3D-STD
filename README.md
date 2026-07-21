@@ -1,7 +1,7 @@
 # 3D STD · Web 工作台
 
 AI 生成 → 编辑摆盘 → 打印检查 → 导出 STL 的网页版 3D 打印创作工作台。
-规格见 `docs/`(PRD v0.95 · 技术方案 v1.9 · Backlog v1.1)。当前进度:T1–T16 功能闭环 + M1.5.3 图生模型 + M1.6.2 AI 拆件分析真实 API 闭环。当前优先完成阶段一真实样本评测，录屏与高度自主拆件后置。
+规格见 `docs/`(PRD v0.95 · 技术方案 v1.9 · Backlog v1.1)。当前进度:T1–T16 功能闭环 + M1.5.3 图生模型 + M1.6.2 AI 拆件分析 API 工程闭环（生产 `OPENAI_API_KEY` 待配置）。当前优先完成生产真链验收与阶段一真实样本评测，录屏与高度自主拆件后置。
 
 渐进式拆件 Agent 的架构与产品方案见 [`docs/agent-split-architecture.md`](docs/agent-split-architecture.md)，产品路线见 [`docs/m1.6-productization.md`](docs/m1.6-productization.md)。M1.6.2 已实现服务端 Responses API、严格结构化输出、4 视角证据和明确降级；仍然只读，没有自动拆件能力。
 
