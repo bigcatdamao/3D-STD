@@ -31,6 +31,14 @@
     "TRIPO_MODEL_VERSION": "v2.5-20250123",
     // T13a:排队+生成超时合成阈值(超过即按 AI-05 timeout 类失败并返还)
     "TRIPO_TIMEOUT_MS": "600000",
+    // M1.6.2:只读拆件分析。OPENAI_API_KEY 必须作为 Worker Secret 配置，禁止写入本文件。
+    "OPENAI_SPLIT_MODEL": "gpt-5.6-sol",
+    "OPENAI_SPLIT_REASONING_EFFORT": "low",
+    "OPENAI_SPLIT_TIMEOUT_MS": "45000",
+    "OPENAI_SPLIT_MAX_OUTPUT_TOKENS": "3200",
+    "SPLIT_ANALYSIS_DAILY_LIMIT": "3",
+    "SPLIT_ANALYSIS_BREAKER_UNITS": "100",
+    "SPLIT_ANALYSIS_COST_UNITS": "1",
     // mock 参数保留:ENGINE_MODE 切回 "mock" 时生效
     "MOCK_QUEUE_MS": "4000",
     "MOCK_RUN_MS": "10000",

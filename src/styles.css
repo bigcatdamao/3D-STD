@@ -316,6 +316,9 @@ select:focus-visible {
 .split-analysis__loading p { grid-column: 1 / 4; margin: 2px 0 0; color: var(--muted); font-size: 10px; text-align: center; }
 @keyframes split-pulse { to { background-position-x: -200%; } }
 .split-result { display: grid; gap: 10px; margin-top: 10px; }
+.split-result__source { width: fit-content; padding: 4px 7px; border: 1px solid rgba(99, 211, 172, .3); border-radius: 999px; background: rgba(99, 211, 172, .08); color: #9bdbc4; font-size: 9px; font-weight: 650; }
+.split-result__source.is-fallback { border-color: rgba(255, 174, 69, .28); background: rgba(255, 174, 69, .07); color: #d5ad79; }
+.split-result__warning { padding: 7px 8px; border: 1px solid rgba(255, 174, 69, .22); border-radius: 7px; background: rgba(255, 174, 69, .055); color: #c4a47d; font-size: 9px; line-height: 1.45; }
 .split-result.is-stale > :not(.split-result__stale) { opacity: .48; }
 .split-result__stale { padding: 8px; border: 1px solid rgba(245, 139, 147, .3); border-radius: 7px; background: rgba(245, 139, 147, .08); color: var(--danger); line-height: 1.45; }
 .split-result__summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 11px; border: 1px solid rgba(99, 211, 172, .22); border-radius: 10px; background: linear-gradient(145deg, rgba(44, 76, 66, .2), rgba(25, 29, 36, .82)); }

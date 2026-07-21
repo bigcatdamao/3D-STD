@@ -20,6 +20,14 @@ import { getEngine, type Engine, type TaskMapStore } from './engine';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
+import type { SplitAnalysisApiSuccess } from '../src/agent/split-analysis-api-types';
+import {
+  callSplitAnalysisResponses,
+  parseSplitAnalysisRequest,
+  SplitAnalysisInputError,
+  SplitAnalysisUpstreamError,
+  type ResponsesConfig,
+} from './split-analysis';
 
 // —— 环境与依赖(最小手声类型,避免引入 workers-types 与 DOM lib 冲突)——
 
@@ -40,6 +48,11 @@ export interface WorkerEnv {
   TRIPO_API_KEY?: string; // T13a(Workers Secret)
   TRIPO_MODEL_VERSION?: string; // T13a,默认 v2.5-20250123
   TRIPO_TIMEOUT_MS?: string; // T13a,默认 600000
+  OPENAI_API_KEY?: string; // M1.6.2 Responses API，只允许 Workers Secret
+  OPENAI_SPLIT_MODEL?: string; // 默认 gpt-5.6-sol
+  OPENAI_SPLIT_REASONING_EFFORT?: string; // 默认 low
+  OPENAI_SPLIT_TIMEOUT_MS?: string; // 默认 45000
+  OPENAI_SPLIT_MAX_OUTPUT_TOKENS?: string; // 默认 3200
   // Vars(wrangler.jsonc,可覆盖):
   VISITOR_DAILY_LIMIT?: string; // 默认 3(PRD AI-11 / §9)
   DEMO_DEFAULT_LIMIT?: string; // 默认 20
@@ -48,6 +61,9 @@ export interface WorkerEnv {
   MOCK_QUEUE_MS?: string; // mock 排队时长,默认 4000
   MOCK_RUN_MS?: string; // mock 生成时长,默认 10000
   MOCK_FAIL_RATE?: string; // mock 随机失败率 0–1,默认 0
+  SPLIT_ANALYSIS_DAILY_LIMIT?: string; // 单访客只读分析次数，默认 3
+  SPLIT_ANALYSIS_BREAKER_UNITS?: string; // 独立 DO 的全站日熔断单位，默认 100
+  SPLIT_ANALYSIS_COST_UNITS?: string; // 单次预扣单位，默认 1
 }
 
 export interface RouterDeps {
@@ -65,10 +81,11 @@ const num = (raw: string | undefined, fallback: number): number => {
 const err = (status: number, error: string, cls: ApiErrorClass, message: string, extra?: Partial<ApiError>): Response =>
   Response.json({ ok: false, error, class: cls, message, ...extra } satisfies ApiError, { status });
 
-const quotaStub = (env: WorkerEnv): DurableObjectStub => env.QUOTA_DO.get(env.QUOTA_DO.idFromName('global'));
+const quotaStub = (env: WorkerEnv, scope = 'global'): DurableObjectStub =>
+  env.QUOTA_DO.get(env.QUOTA_DO.idFromName(scope));
 
-async function quotaCall<T>(env: WorkerEnv, op: QuotaOp): Promise<T> {
-  const res = await quotaStub(env).fetch('https://quota.do/', { method: 'POST', body: JSON.stringify(op) });
+async function quotaCall<T>(env: WorkerEnv, op: QuotaOp, scope = 'global'): Promise<T> {
+  const res = await quotaStub(env, scope).fetch('https://quota.do/', { method: 'POST', body: JSON.stringify(op) });
   return (await res.json()) as T;
 }
 
@@ -142,6 +159,80 @@ async function quota(req: Request, env: WorkerEnv): Promise<Response> {
     demo: ctx.demo,
   };
   return Response.json(body);
+}
+
+function splitReasoningEffort(raw: string | undefined): ResponsesConfig['reasoningEffort'] {
+  return raw === 'none' || raw === 'medium' || raw === 'high' || raw === 'xhigh' ? raw : 'low';
+}
+
+/** M1.6.2:单 Agent、只读分析。独立配额实例，不占用 Tripo 生成配额，也不接受浏览器自带 key。 */
+async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let request;
+  try {
+    request = await parseSplitAnalysisRequest(req);
+  } catch (error) {
+    if (error instanceof SplitAnalysisInputError) {
+      return err(400, error.code, 'validation', error.message);
+    }
+    return err(400, 'bad_request', 'validation', '拆件分析请求无法解析。');
+  }
+
+  if (!env.OPENAI_API_KEY?.trim()) {
+    return err(503, 'split_analysis_unconfigured', 'service', 'AI 拆件分析尚未配置服务端密钥，已可使用本地降级建议。');
+  }
+
+  const ctx = await visitorCtxOf(req, env);
+  const taskId = `sa_${crypto.randomUUID()}`;
+  const dailyLimit = Math.min(20, num(env.SPLIT_ANALYSIS_DAILY_LIMIT, 3));
+  const breakerLimit = Math.min(10_000, num(env.SPLIT_ANALYSIS_BREAKER_UNITS, 100));
+  const costUnits = Math.max(1, Math.min(10, num(env.SPLIT_ANALYSIS_COST_UNITS, 1)));
+  const scope = 'split-analysis';
+  const d = await quotaCall<DeductResult>(env, {
+    op: 'deduct',
+    visitorKey: ctx.visitorKey,
+    taskId,
+    credits: costUnits,
+    limitTimes: dailyLimit,
+    breakerLimitCredits: breakerLimit,
+    demoCode: ctx.demoCode,
+  }, scope);
+  if (!d.ok) {
+    return d.error === 'budget_exhausted'
+      ? err(429, 'split_analysis_budget_exhausted', 'quota', '今日 AI 拆件分析总额度已用完，已可使用本地降级建议。')
+      : err(429, 'split_analysis_quota_exhausted', 'quota', '今日 AI 拆件分析次数已用完，已可使用本地降级建议。');
+  }
+
+  const model = env.OPENAI_SPLIT_MODEL?.trim() || 'gpt-5.6-sol';
+  try {
+    const result = await callSplitAnalysisResponses(request, {
+      apiKey: env.OPENAI_API_KEY.trim(),
+      model,
+      reasoningEffort: splitReasoningEffort(env.OPENAI_SPLIT_REASONING_EFFORT),
+      timeoutMs: Math.max(5_000, Math.min(90_000, num(env.OPENAI_SPLIT_TIMEOUT_MS, 45_000))),
+      maxOutputTokens: Math.max(1_500, Math.min(8_000, num(env.OPENAI_SPLIT_MAX_OUTPUT_TOKENS, 3_200))),
+    }, deps.fetchImpl ?? fetch);
+    const body: SplitAnalysisApiSuccess = {
+      ok: true,
+      result,
+      meta: {
+        model,
+        requestId: request.input.requestId,
+        evidenceViews: request.images.length,
+      },
+    };
+    return Response.json(body, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
+    const code = error instanceof SplitAnalysisUpstreamError ? error.code : 'upstream';
+    console.error(`[split-analysis-fail] task=${taskId} code=${code}`);
+    if (code === 'timeout') {
+      return err(504, 'split_analysis_timeout', 'service', 'AI 分析超时，已可切换到本地降级建议。', { refunded: refund.refunded, taskId });
+    }
+    if (code === 'refusal') {
+      return err(422, 'split_analysis_refused', 'service', 'AI 无法完成本次分析，已可切换到本地降级建议。', { refunded: refund.refunded, taskId });
+    }
+    return err(502, 'split_analysis_failed', 'service', 'AI 分析暂时不可用，已可切换到本地降级建议。', { refunded: refund.refunded, taskId });
+  }
 }
 
 async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
@@ -364,6 +455,7 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/health' && req.method === 'GET') return health(env, deps);
   if (path === '/api/quota' && req.method === 'GET') return quota(req, env);
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
+  if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
 
   const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
   const taskResultM = /^\/api\/task\/([^/]+)\/result$/.exec(path);

@@ -1,7 +1,7 @@
 import { reportIsStale, runPrintCheck, useCheckSnapshot } from '../check/check-state';
 import { doc, useUi } from '../state/store';
 import {
-  runMockSplitAnalysis,
+  runSplitAnalysis,
   splitAnalysisIsStale,
   useSplitAnalysisSnapshot,
 } from './split-analysis-state';
@@ -91,7 +91,7 @@ export function SplitAnalysisPanel() {
 
       <div className="split-analysis__notice">
         <strong>不会修改模型</strong>
-        <span>本批使用本地 Mock 生成产品体验，正式版将接入 Responses API。</span>
+        <span>Responses API 仅分析场景与多视角证据；服务不可用时会明确显示本地降级结果。</span>
       </div>
 
       <div className="split-evidence" aria-label="当前分析证据">
@@ -102,6 +102,9 @@ export function SplitAnalysisPanel() {
         </span>
         <span className="is-missing">薄壁：未检测</span>
         <span className="is-missing">局部过悬：未检测</span>
+        <span className={analysis.evidenceViews > 0 ? 'is-ready' : 'is-missing'}>
+          多视角：{analysis.evidenceViews > 0 ? `${analysis.evidenceViews} 张` : '待采集'}
+        </span>
       </div>
 
       <div className="split-analysis__form">
@@ -165,7 +168,7 @@ export function SplitAnalysisPanel() {
           type="button"
           className="split-analysis__run"
           disabled={!canAnalyze}
-          onClick={() => runMockSplitAnalysis()}
+          onClick={() => void runSplitAnalysis()}
         >
           {analysis.phase === 'running' ? '正在整理证据与候选方案…' : analysis.result ? '重新生成拆件建议' : '生成拆件建议'}
         </button>
@@ -184,6 +187,12 @@ export function SplitAnalysisPanel() {
 
       {analysis.phase === 'done' && analysis.result && (
         <div className={`split-result${resultStale ? ' is-stale' : ''}`}>
+          <div className={`split-result__source is-${analysis.resultSource ?? 'fallback'}`}>
+            {analysis.resultSource === 'api'
+              ? `AI 分析 · ${analysis.model ?? 'Responses API'} · ${analysis.evidenceViews} 视角`
+              : '本地降级建议 · 未使用大模型'}
+          </div>
+          {analysis.warning && <div className="split-result__warning">{analysis.warning}</div>}
           {resultStale && (
             <div className="split-result__stale">场景已经改变，以下结果已过期。请重新分析后再做决策。</div>
           )}
@@ -191,7 +200,7 @@ export function SplitAnalysisPanel() {
             <span className={`split-result__verdict is-${analysis.result.needsSplit}`}>
               {statusLabel(analysis.result.needsSplit)}
             </span>
-            <span>演示置信度 {Math.round(analysis.result.confidence * 100)}%</span>
+            <span>分析置信度 {Math.round(analysis.result.confidence * 100)}%</span>
             <strong>建议 {analysis.result.recommendedPartCount.preferred} 件</strong>
             <p>{analysis.result.summary}</p>
           </div>

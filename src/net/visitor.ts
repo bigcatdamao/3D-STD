@@ -70,11 +70,11 @@ export function setEngineKey(key: string | null): void {
 }
 
 /** 服务层请求头(/api/quota、/api/generate 等统一使用)。 */
-export function apiHeaders(): Record<string, string> {
+export function apiHeaders(options: { includeEngineKey?: boolean } = {}): Record<string, string> {
   const h: Record<string, string> = { 'x-client-id': getClientId() };
   const demo = getDemoCode();
   if (demo) h['x-demo-code'] = demo;
-  const engineKey = getEngineKey();
+  const engineKey = options.includeEngineKey === false ? null : getEngineKey();
   if (engineKey) h['x-engine-key'] = engineKey; // 服务层见此头即跳过配额(成本归用户)
   return h;
 }

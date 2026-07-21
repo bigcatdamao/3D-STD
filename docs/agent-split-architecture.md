@@ -4,7 +4,7 @@
 |---|---|
 | 文档版本 | v0.2 |
 | 日期 | 2026-07-21 |
-| 状态 | M1.6.1 已完成只读 UI 与本地 Mock 原型；真实 Responses API 尚未接入 |
+| 状态 | M1.6.2 已完成只读 UI、4 视角证据、Responses API 与明确降级；待线上 Secret 和 Gold Set 验收 |
 | 第一阶段 | 单 Agent、Responses API、只分析不改模 |
 | 后续评估 | 阶段二继续优先评估 Responses API 工具调用；阶段三评估 Agents SDK 的审批、状态与追踪能力 |
 
@@ -232,7 +232,7 @@ await openai.responses.create({
 - 输入：[split-analysis-input.schema.json](contracts/split-analysis-input.schema.json)
 - 输出：[split-analysis-output.schema.json](contracts/split-analysis-output.schema.json)
 
-输入 Schema 是前端 → Worker 的完整数据契约；图片二进制通过 multipart 单独传输，`views[].fieldName` 负责绑定。输出 Schema 可直接作为 Responses API `text.format.schema` 的主体，所有对象都关闭额外字段，所有字段均为 required，真正可选的值用 `null` 或空数组表达。
+输入 Schema 是前端 → Worker 的完整数据契约；M1.6.2 使用有总量上限的 JSON data URL 传输最多 4 张压缩证据图，`views[].viewId` 负责绑定。输出 Schema 直接作为 Responses API `text.format.schema` 的主体，所有对象都关闭额外字段，所有字段均为 required，真正可选的值用 `null` 或空数组表达。若后续图片体积增加，再切换为 multipart，不改变快照与输出契约。
 
 ### 5.2 输入关键设计
 
@@ -365,8 +365,8 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 ## 8. API 费用控制方案
 
 1. **不发送原始网格。** 百万级顶点先在本地转成几十 KB 的摘要。
-2. **图片默认 4 张、512–768px、`detail: low`。** 只有用户明确点击“精细复核”或低置信度时才使用 `high`；不默认 `auto/original`。
-3. **限制输出。** `max_output_tokens` 初始 1800；Schema 限制方案为 2–3 套，提示限制每段长度和风险数量。
+2. **图片默认 4 张、384px JPEG、`detail: low`。** 只有评测证明必要时才提高分辨率或使用 `high`；不默认 `auto/original`。
+3. **限制输出。** `max_output_tokens` 初始 3200；Schema 限制方案为 2–3 套，后续按真实输出截断率继续下调。
 4. **快照缓存。** 缓存键：`snapshotHash + goalHash + printConfigHash + promptVersion + schemaVersion + modelConfig`。同一快照重复打开直接复用。
 5. **请求幂等。** `requestId` 在服务端记录短期状态，前端重复点击不创建第二次调用。
 6. **独立配额。** 不复用 Tripo credits 常量；新增“AI 分析次数 / 输入 token / 输出 token / 图片数”的独立账本和全局费用熔断。
@@ -401,6 +401,15 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 - 已完成 A8 的 stale 与零副作用验证：场景或打印床变化后结果过期；分析不写场景和历史。
 - 当前结果来自明确标识的本地 Mock，仅用于验证产品流程；A3 多视角截图、A5 Worker 端点、A6 Responses Provider、A9 配额缓存仍未实现。
 - 阶段二“生成切割预览”保持禁用，阶段三写工具没有进入前端。
+
+### 10.0.1 M1.6.2 实现快照
+
+- A3 已完成：前、右、顶、轴测 4 张 384px 离屏 JPEG，固定低细节输入，不截图 UI/Gizmo。
+- A5/A6 已完成：`/api/agent/split-analysis`、Worker Secret、45 秒超时、`store:false`、Structured Output、refusal/incomplete/坏输出分类。
+- A7/A8 已完成：真实/降级来源标识、4 视角数量、stale 和本地规则降级；仍然不写场景与历史。
+- A9 部分完成：独立单访客日限额、全站熔断和失败退款已实现；快照缓存、usage token 账本和持久幂等尚未实现。
+- A10 工程安全测试已覆盖密钥不进入响应、非法证据前置拒绝、严格请求字段、失败退款和 UI 适配；prompt injection Gold Set 随 M1.6.3 完成。
+- 阶段二按钮继续禁用；阶段三没有写工具、审批票据或几何修改入口。
 
 | 任务 | 交付物 | 依赖 | 验收重点 |
 |---|---|---|---|
