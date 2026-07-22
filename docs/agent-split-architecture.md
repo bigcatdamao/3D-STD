@@ -4,7 +4,7 @@
 |---|---|
 | 文档版本 | v0.3 |
 | 日期 | 2026-07-22 |
-| 状态 | M1.6.2.1 已加入 AIHubMix/OpenAI 固定白名单双 Provider；待线上真链和 Gold Set 验收 |
+| 状态 | M1.6.2.1 双 Provider 已部署并通过 AIHubMix 真链；待 Gold Set 关闭阶段一质量门槛 |
 | 第一阶段 | 单 Agent、Responses API、只分析不改模 |
 | 后续评估 | 阶段二继续优先评估 Responses API 工具调用；阶段三评估 Agents SDK 的审批、状态与追踪能力 |
 
