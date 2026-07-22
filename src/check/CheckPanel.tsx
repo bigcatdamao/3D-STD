@@ -29,6 +29,7 @@ import {
   closePlaneCutPreview,
   planeCutPreviewIsStale,
   selectPlaneCutCandidate,
+  setPlaneCutPosition,
   startPlaneCutPreview,
   usePlaneCutPreviewSnapshot,
 } from '../split/plane-cut-state';
@@ -288,6 +289,41 @@ function IssueRow({
                   </button>
                   <button type="button" className="close" onClick={closePlaneCutPreview}>关闭</button>
                 </div>
+                <div className="plane-cut-card__position">
+                  <div>
+                    <span>{cutCandidate.axis.toUpperCase()} 轴切面位置</span>
+                    <strong>{Math.round(cutCandidate.normalizedPosition * 100)}%</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={90}
+                    step={1}
+                    aria-label="切面位置"
+                    value={Math.round(cutCandidate.normalizedPosition * 100)}
+                    onChange={(event) => setPlaneCutPosition(Number(event.target.value) / 100)}
+                  />
+                  <div className="plane-cut-card__presets">
+                    {[25, 50, 75].map((percent) => (
+                      <button
+                        type="button"
+                        key={percent}
+                        className={Math.round(cutCandidate.normalizedPosition * 100) === percent ? 'is-active' : ''}
+                        onClick={() => setPlaneCutPosition(percent / 100)}
+                      >
+                        {percent}%
+                      </button>
+                    ))}
+                    <span>
+                      距 A 端 {(cutCandidate.parts[0].dimensionsMm[cutCandidate.axisIndex]).toFixed(1)}mm
+                    </span>
+                  </div>
+                  <small className={cutCandidate.feasiblePositionRange ? 'feasible' : 'unavailable'}>
+                    {cutCandidate.feasiblePositionRange
+                      ? `可放入区间 ${Math.ceil(cutCandidate.feasiblePositionRange[0] * 100)}%–${Math.floor(cutCandidate.feasiblePositionRange[1] * 100)}%`
+                      : '当前轴不存在一次切割可使两侧都入床的区间'}
+                  </small>
+                </div>
                 <div className="plane-cut-card__reason">{cutCandidate.rationale}</div>
                 <div className="plane-cut-card__parts">
                   {cutCandidate.parts.map((part) => (
@@ -371,7 +407,7 @@ function IssueRow({
           title={components.length > 1
             ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
             : canPreviewPlaneCut
-              ? 'M1.7.4 只读平面切割预览：只估算候选，不生成新零件'
+              ? 'M1.7.5 可调平面切割预览：只估算候选，不生成新零件'
               : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
           {components.length > 1 || canPreviewPlaneCut ? '只读预览' : '只读诊断'}

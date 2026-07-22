@@ -9,7 +9,7 @@ import { closePlaneCutPreview, usePlaneCutPreview } from '../src/split/plane-cut
 
 const strip = (html: string) => html.replace(/<!-- -->/g, '');
 
-describe('M1.7.4 平面切割卡片 SSR', () => {
+describe('M1.7.5 可调平面切割卡片 SSR', () => {
   const asset = dispatch((scene) => scene.addAsset({
     name: '300mm 单壳',
     source: 'import',
@@ -76,8 +76,13 @@ describe('M1.7.4 平面切割卡片 SSR', () => {
       activeIndex: 0,
       sourceEditVersion: doc.editVersion,
       sourceBed: { ...useUi.getState().bed },
+      sourceBounds: world,
     });
     const html = strip(renderToString(<CheckPanel embedded />));
+    expect(html).toContain('type="range"');
+    expect(html).toContain('value="50"');
+    expect(html).toContain('15%');
+    expect(html).toContain('85%');
     expect(html).toContain('X 中线');
     expect(html).toContain('150.0 × 80.0 × 80.0 mm');
     expect(html.match(/class="fits">可放入/g)?.length).toBe(2);

@@ -9,6 +9,7 @@ import {
   closePlaneCutPreview,
   planeCutPreviewIsStale,
   selectPlaneCutCandidate,
+  setPlaneCutPosition,
   startPlaneCutPreview,
   usePlaneCutPreview,
 } from '../src/split/plane-cut-state';
@@ -24,7 +25,7 @@ const issue: CheckIssue = {
   world: { min: [-150, -40, 0], max: [150, 40, 80] },
 };
 
-describe('M1.7.4 平面切割只读状态', () => {
+describe('M1.7.5 可调平面切割只读状态', () => {
   bootstrapPlaneCutPreviewQaScene();
 
   it('开启和切换候选不改变编辑版本或历史', () => {
@@ -38,6 +39,14 @@ describe('M1.7.4 平面切割只读状态', () => {
     expect(usePlaneCutPreview.getState().activeIndex).toBe(0);
     expect(selectPlaneCutCandidate(1)).toBe(true);
     expect(usePlaneCutPreview.getState().activeIndex).toBe(1);
+    expect(selectPlaneCutCandidate(0)).toBe(true);
+    expect(setPlaneCutPosition(0.25)).toBe(true);
+    expect(usePlaneCutPreview.getState().candidates[0].normalizedPosition).toBe(0.25);
+    expect(usePlaneCutPreview.getState().candidates[0].parts.map((part) => part.dimensionsMm[0])).toEqual([75, 225]);
+    expect(selectPlaneCutCandidate(1)).toBe(true);
+    expect(setPlaneCutPosition(0.75)).toBe(true);
+    expect(selectPlaneCutCandidate(0)).toBe(true);
+    expect(usePlaneCutPreview.getState().candidates[0].normalizedPosition).toBe(0.25);
     expect(doc.editVersion).toBe(before.editVersion);
     expect(doc.history.position).toBe(before.historyPosition);
     expect(doc.history.length).toBe(before.historyLength);
@@ -52,4 +61,3 @@ describe('M1.7.4 平面切割只读状态', () => {
 });
 
 afterAll(() => closePlaneCutPreview());
-

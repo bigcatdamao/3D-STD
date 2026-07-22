@@ -3,7 +3,12 @@ import { useEffect, useState } from 'react';
 import type { CheckIssue } from '../check/check-core';
 import { useCheck } from '../check/check-state';
 import { dispatch, doc, geometryRegistry, sendCam, useUi, type BedConfig } from '../state/store';
-import { findPlaneCutCandidates, type PlaneCutCandidate } from './plane-cut-core';
+import {
+  evaluatePlaneCutCandidate,
+  findPlaneCutCandidates,
+  type PlaneCutCandidate,
+  type WorldBounds,
+} from './plane-cut-core';
 
 interface PlaneCutPreviewState {
   phase: 'idle' | 'ready';
@@ -13,6 +18,7 @@ interface PlaneCutPreviewState {
   activeIndex: number;
   sourceEditVersion: number;
   sourceBed: BedConfig | null;
+  sourceBounds: WorldBounds | null;
 }
 
 const initialState: PlaneCutPreviewState = {
@@ -23,6 +29,7 @@ const initialState: PlaneCutPreviewState = {
   activeIndex: 0,
   sourceEditVersion: -1,
   sourceBed: null,
+  sourceBounds: null,
 };
 
 export const usePlaneCutPreview = create<PlaneCutPreviewState>()(() => initialState);
@@ -66,10 +73,32 @@ export function startPlaneCutPreview(issue: CheckIssue): boolean {
     activeIndex: 0,
     sourceEditVersion: doc.editVersion,
     sourceBed: bed,
+    sourceBounds: {
+      min: [...issue.world.min] as [number, number, number],
+      max: [...issue.world.max] as [number, number, number],
+    },
   });
   useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: 0 });
   if (!doc.effectiveLocked(issue.instanceId)) dispatch((d) => d.select([issue.instanceId]));
   sendCam({ kind: 'focusBounds', min: issue.world.min, max: issue.world.max });
+  return true;
+}
+
+/** 调整当前轴切面位置；只替换临时候选，不改场景、不写历史。 */
+export function setPlaneCutPosition(requestedPosition: number): boolean {
+  const state = usePlaneCutPreview.getState();
+  if (
+    state.phase !== 'ready'
+    || !state.sourceBounds
+    || !state.sourceBed
+    || planeCutPreviewIsStale()
+  ) return false;
+  const active = state.candidates[state.activeIndex];
+  if (!active) return false;
+  const next = evaluatePlaneCutCandidate(state.sourceBounds, state.sourceBed, active.axis, requestedPosition);
+  const candidates = [...state.candidates];
+  candidates[state.activeIndex] = next;
+  usePlaneCutPreview.setState({ candidates });
   return true;
 }
 
