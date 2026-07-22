@@ -36,6 +36,13 @@ export function buildSplitAnalysisApiInput(
       degenerateCount: number;
       boundaryEdges: number;
       nonManifoldEdges: number;
+      health: {
+        connectedComponents: number;
+        isolatedFragments: number;
+        internalShells: number;
+        selfIntersectionPairs: number;
+        selfIntersectionComplete: boolean;
+      };
     }>;
   },
   views: SplitAnalysisViewDescriptor[],
@@ -108,6 +115,11 @@ export function buildSplitAnalysisApiInput(
         degenerateFaces: meta.degenerateCount,
         boundaryEdges: meta.boundaryEdges,
         nonManifoldEdges: meta.nonManifoldEdges,
+        connectedComponents: meta.health.connectedComponents,
+        isolatedFragments: meta.health.isolatedFragments,
+        internalShells: meta.health.internalShells,
+        selfIntersectionPairs: meta.health.selfIntersectionPairs,
+        selfIntersectionComplete: meta.health.selfIntersectionComplete,
       })),
       issues: check.issues.filter((issue) => visibleIds.has(issue.instanceId)).map((issue) => ({
         issueId: issue.key,

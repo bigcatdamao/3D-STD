@@ -225,13 +225,18 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["assetId", "watertight", "degenerateFaces", "boundaryEdges", "nonManifoldEdges"],
+            "required": ["assetId", "watertight", "degenerateFaces", "boundaryEdges", "nonManifoldEdges", "connectedComponents", "isolatedFragments", "internalShells", "selfIntersectionPairs", "selfIntersectionComplete"],
             "properties": {
               "assetId": { "type": "string" },
               "watertight": { "type": "boolean" },
               "degenerateFaces": { "type": "integer", "minimum": 0 },
               "boundaryEdges": { "type": "integer", "minimum": 0 },
-              "nonManifoldEdges": { "type": "integer", "minimum": 0 }
+              "nonManifoldEdges": { "type": "integer", "minimum": 0 },
+              "connectedComponents": { "type": "integer", "minimum": 0 },
+              "isolatedFragments": { "type": "integer", "minimum": 0 },
+              "internalShells": { "type": "integer", "minimum": 0 },
+              "selfIntersectionPairs": { "type": "integer", "minimum": 0 },
+              "selfIntersectionComplete": { "type": "boolean" }
             }
           }
         },
@@ -246,7 +251,7 @@
               "objectId": { "type": "string" },
               "code": {
                 "type": "string",
-                "enum": ["non_watertight", "degenerate", "out_of_bed", "floating", "tiny", "dims"]
+                "enum": ["non_watertight", "degenerate", "self_intersection", "internal_shell", "isolated_fragment", "deep_check_partial", "out_of_bed", "floating", "tiny", "dims"]
               },
               "level": { "type": "string", "enum": ["error", "warning", "info"] },
               "message": { "type": "string" },

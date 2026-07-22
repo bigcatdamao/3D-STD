@@ -71,6 +71,10 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
   const fixReason = issue.fix ? fixDisabledReason(issue) : null;
   const fixLabel = issue.fix?.kind === 'drop' ? '⬇ 沉底' : issue.fix?.kind === 'clamp' ? '↩ 移回床内' : null;
   const canPreviewRepair = issue.code === 'non_watertight' || issue.code === 'degenerate';
+  const readOnlyDiagnosis = issue.code === 'self_intersection'
+    || issue.code === 'internal_shell'
+    || issue.code === 'isolated_fragment'
+    || issue.code === 'deep_check_partial';
   const repairReason = canPreviewRepair ? meshRepairDisabledReason(issue) : null;
   const repairBusy = repairPhase === 'preparing';
 
@@ -138,6 +142,22 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
         >
           {repairBusy && repairIssueKey === issue.key ? '分析中…' : '修复预览'}
         </button>
+      )}
+      {readOnlyDiagnosis && (
+        <span
+          style={{
+            flex: 'none',
+            padding: '2px 6px',
+            border: '1px solid #3b4148',
+            borderRadius: 999,
+            color: '#8fa7b7',
+            fontSize: 9,
+            whiteSpace: 'nowrap',
+          }}
+          title="M1.7.1 只读深度诊断：提供证据，不自动修改复杂拓扑"
+        >
+          只读诊断
+        </span>
       )}
     </div>
   );
@@ -275,7 +295,7 @@ export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boole
 
           {s.phase === 'idle' && (
             <div style={{ padding: '12px 10px', color: GREY, fontSize: 11 }}>
-              尚未检查。点「检查」对全部可见对象执行打印前检查:水密性、退化几何、床内位置、悬空、微小件。
+              尚未检查。点「检查」对全部可见对象执行打印前检查：水密性、退化几何、自交、内部壳、孤立碎片、床内位置、悬空与微小件。
             </div>
           )}
 

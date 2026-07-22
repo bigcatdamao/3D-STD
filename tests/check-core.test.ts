@@ -178,6 +178,28 @@ describe('三级判定(CHK-01)与修复参数(CHK-06)', () => {
     expect(issues.find((i) => i.code === 'degenerate')?.message).toContain('2 个退化面片');
   });
 
+  it('深度诊断：自交为错误，内部壳/孤立碎片/部分扫描为只读警告', () => {
+    const health = {
+      connectedComponents: 4,
+      closedComponents: 2,
+      componentAnalysisComplete: false,
+      isolatedFragments: 2,
+      isolatedFragmentFaces: 7,
+      internalShells: 1,
+      selfIntersectionPairs: 3,
+      selfIntersectionComplete: false,
+      selfIntersectionTrianglesScanned: 60_000,
+      selfIntersectionPairTests: 500_000,
+    };
+    const w = worldStats(cube(20), T([0, 0, 10]));
+    const issues = checkInstance(inst('deep'), { ...topoOK, faces: 120_000, health }, w, BED);
+    expect(issues.find((issue) => issue.code === 'self_intersection')).toMatchObject({ level: 'error' });
+    expect(issues.find((issue) => issue.code === 'internal_shell')?.message).toContain('1 个内部封闭壳体');
+    expect(issues.find((issue) => issue.code === 'isolated_fragment')?.message).toContain('2 个小型孤立碎片');
+    expect(issues.find((issue) => issue.code === 'deep_check_partial')?.message).toContain('60,000 / 120,000 面');
+    expect(issues.find((issue) => issue.code === 'dims')?.message).toContain('4 个连通壳');
+  });
+
   it('贴边容差:恰好压线(±BED_EPS_MM 内)不误报超床', () => {
     const w = worldStats(cube(20), T([118, 0, 10])); // max.x = 128 恰好贴边
     expect(checkInstance(inst('i1'), topoOK, w, BED).find((i) => i.code === 'out_of_bed')).toBeUndefined();

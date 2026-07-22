@@ -72,11 +72,17 @@ export interface SplitAnalysisApiInput {
       degenerateFaces: number;
       boundaryEdges: number;
       nonManifoldEdges: number;
+      connectedComponents: number;
+      isolatedFragments: number;
+      internalShells: number;
+      selfIntersectionPairs: number;
+      selfIntersectionComplete: boolean;
     }>;
     issues: Array<{
       issueId: string;
       objectId: string;
-      code: 'non_watertight' | 'degenerate' | 'out_of_bed' | 'floating' | 'tiny' | 'dims';
+      code: 'non_watertight' | 'degenerate' | 'self_intersection' | 'internal_shell'
+        | 'isolated_fragment' | 'deep_check_partial' | 'out_of_bed' | 'floating' | 'tiny' | 'dims';
       level: 'error' | 'warning' | 'info';
       message: string;
       worldBoundsMm: { min: [number, number, number]; max: [number, number, number] } | null;

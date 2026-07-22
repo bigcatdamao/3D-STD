@@ -269,6 +269,14 @@ select:focus-visible {
 .mesh-repair-card__metrics b { color: #d7d9dc; font-size: 10px; font-variant-numeric: tabular-nums; }
 .mesh-repair-card__metrics b:last-child { color: #77d9b7; }
 .mesh-repair-card__metrics i { color: #617169; font-size: 8px; font-style: normal; }
+.mesh-repair-card__view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border: 1px solid rgba(255, 255, 255, .055); border-radius: 7px; background: rgba(8, 11, 14, .25); }
+.mesh-repair-card__view-switch button { padding: 4px 6px; border: 0; border-radius: 5px; background: transparent; color: #7f8c88; cursor: pointer; font-size: 9px; }
+.mesh-repair-card__view-switch button[aria-pressed="true"] { background: rgba(93, 202, 165, .14); color: #9be0c8; box-shadow: inset 0 0 0 1px rgba(93, 202, 165, .28); }
+.mesh-repair-card__legend { display: flex; gap: 12px; color: #8d9895; font-size: 9px; }
+.mesh-repair-card__legend span { display: inline-flex; align-items: center; gap: 4px; }
+.mesh-repair-card__legend i { width: 7px; height: 7px; border-radius: 2px; box-shadow: 0 0 6px currentColor; }
+.mesh-repair-card__legend i.added { background: #6fffc8; color: #6fffc8; }
+.mesh-repair-card__legend i.removed { background: #ff7f7f; color: #ff7f7f; }
 .mesh-repair-card ul { display: grid; gap: 3px; margin: 0; padding: 0; color: #9fd8c4; font-size: 10px; list-style: none; }
 .mesh-repair-card p { margin: 0; font-size: 9px; line-height: 1.5; }
 .mesh-repair-card__warning { color: #e4b66e; }

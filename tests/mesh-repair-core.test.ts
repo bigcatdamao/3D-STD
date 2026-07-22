@@ -53,6 +53,7 @@ describe('M1.7 确定性网格修复', () => {
     expect(plan.stats.filledHoles).toBe(0);
     expect(plan.stats.after?.watertight).toBe(true);
     expect(plan.stats.after?.faces).toBe(12);
+    expect(plan.removedPositions).toHaveLength(9);
   });
 
   it('非流形边直接拒绝，不尝试猜测拓扑', () => {
@@ -66,6 +67,7 @@ describe('M1.7 确定性网格修复', () => {
     expect(plan.status).toBe('unsupported');
     expect(plan.reason).toContain('非流形边');
     expect(plan.repairedPositions).toBeNull();
+    expect(plan.removedPositions).toHaveLength(0);
   });
 
   it('非平面开口直接拒绝，避免自动封口扭曲表面', () => {

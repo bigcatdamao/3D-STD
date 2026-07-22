@@ -25,6 +25,7 @@ export interface MeshRepairPlan {
   stats: MeshRepairStats;
   repairedPositions: Float32Array | null;
   addedPositions: Float32Array;
+  removedPositions: Float32Array;
 }
 
 const emptyAdded = () => new Float32Array(0);
@@ -47,6 +48,7 @@ function unsupported(before: Topology, sourceVertices: number, reason: string): 
     },
     repairedPositions: null,
     addedPositions: emptyAdded(),
+    removedPositions: emptyAdded(),
   };
 }
 
@@ -146,6 +148,7 @@ export function planMeshRepair(positions: Float32Array, index: Uint32Array | nul
   const inputTriCount = Math.floor((index ? index.length : sourceVertices) / 3);
   const triangles: Tri[] = [];
   const triangleKeys = new Set<string>();
+  const removed: number[] = [];
   let removedDegenerateFaces = 0;
   let removedDuplicateFaces = 0;
   for (let t = 0; t < inputTriCount; t++) {
@@ -159,11 +162,13 @@ export function planMeshRepair(positions: Float32Array, index: Uint32Array | nul
     if (tri[0] === tri[1] || tri[1] === tri[2] || tri[0] === tri[2]
       || triArea2(vertices[tri[0]], vertices[tri[1]], vertices[tri[2]]) < area2Eps) {
       removedDegenerateFaces++;
+      for (const id of raw) removed.push(positions[id * 3], positions[id * 3 + 1], positions[id * 3 + 2]);
       continue;
     }
     const key = [...tri].sort((a, b) => a - b).join('_');
     if (triangleKeys.has(key)) {
       removedDuplicateFaces++;
+      for (const id of raw) removed.push(positions[id * 3], positions[id * 3 + 1], positions[id * 3 + 2]);
       continue;
     }
     triangleKeys.add(key);
@@ -289,6 +294,7 @@ export function planMeshRepair(positions: Float32Array, index: Uint32Array | nul
       },
       repairedPositions: null,
       addedPositions: emptyAdded(),
+      removedPositions: emptyAdded(),
     };
   }
 
@@ -309,5 +315,6 @@ export function planMeshRepair(positions: Float32Array, index: Uint32Array | nul
     },
     repairedPositions,
     addedPositions: positionsOf(addedTriangles, vertices),
+    removedPositions: new Float32Array(removed),
   };
 }

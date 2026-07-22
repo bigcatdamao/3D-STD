@@ -9,6 +9,7 @@ import { planMeshRepair, type MeshRepairPlan, type MeshRepairStats } from './mes
 import type { MeshRepairWorkerReply, MeshRepairWorkerRequest } from './mesh-repair.worker';
 
 export type MeshRepairPhase = 'idle' | 'preparing' | 'ready' | 'unsupported' | 'not_needed' | 'failed';
+export type MeshRepairPreviewMode = 'overlay' | 'changes';
 
 interface MeshRepairState {
   phase: MeshRepairPhase;
@@ -23,6 +24,7 @@ interface MeshRepairState {
   warnings: string[];
   actions: string[];
   stats: MeshRepairStats | null;
+  previewMode: MeshRepairPreviewMode;
 }
 
 const initialState: MeshRepairState = {
@@ -38,6 +40,7 @@ const initialState: MeshRepairState = {
   warnings: [],
   actions: [],
   stats: null,
+  previewMode: 'overlay',
 };
 
 export const useMeshRepair = create<MeshRepairState>()(() => initialState);
@@ -56,12 +59,15 @@ let activeWorker: Worker | null = null;
 let activeTimer: ReturnType<typeof setTimeout> | null = null;
 let repairedGeometry: THREE.BufferGeometry | null = null;
 let addedGeometry: THREE.BufferGeometry | null = null;
+let removedGeometry: THREE.BufferGeometry | null = null;
 
 function disposePreviewGeometry(keepRepaired = false) {
   if (!keepRepaired) repairedGeometry?.dispose();
   addedGeometry?.dispose();
+  removedGeometry?.dispose();
   repairedGeometry = null;
   addedGeometry = null;
+  removedGeometry = null;
 }
 
 function stopWorker() {
@@ -125,6 +131,7 @@ function finishPlan(requestId: string, plan: MeshRepairPlan, durationMs: number)
   if (plan.status === 'ready' && plan.repairedPositions) {
     repairedGeometry = makeGeometry(plan.repairedPositions);
     if (plan.addedPositions.length) addedGeometry = makeGeometry(plan.addedPositions);
+    if (plan.removedPositions.length) removedGeometry = makeGeometry(plan.removedPositions);
   }
   useMeshRepair.setState({
     phase: plan.status,
@@ -168,6 +175,8 @@ export function prepareMeshRepair(issue: CheckIssue): boolean {
   });
   useCheck.setState({ panelOpen: true });
   focusIssue(issue);
+  // 修复预览接管视口证据层：清除旧问题红壳，避免与“红色=删除面”的差异语义冲突。
+  useCheck.getState().setActiveKey(null);
 
   if (typeof Worker === 'undefined') {
     const startedAt = performance.now();
@@ -213,6 +222,15 @@ export function getRepairPreviewGeometry(): THREE.BufferGeometry | null {
 
 export function getRepairAddedGeometry(): THREE.BufferGeometry | null {
   return addedGeometry;
+}
+
+export function getRepairRemovedGeometry(): THREE.BufferGeometry | null {
+  return removedGeometry;
+}
+
+export function setMeshRepairPreviewMode(previewMode: MeshRepairPreviewMode) {
+  if (useMeshRepair.getState().phase !== 'ready') return;
+  useMeshRepair.setState({ previewMode });
 }
 
 /** 用户确认后才执行：创建派生资产、切换实例引用、入历史栈，并立即重新打印检查。 */
@@ -264,7 +282,9 @@ export function applyMeshRepair(): boolean {
   if (thumbnail) thumbRegistry.set(derived.id, thumbnail);
   repairedGeometry = null; // 所有权已转移给 geometryRegistry，取消预览时不可 dispose。
   addedGeometry?.dispose();
+  removedGeometry?.dispose();
   addedGeometry = null;
+  removedGeometry = null;
   useMeshRepair.setState(initialState, true);
   useUi.getState().bump();
   useUi.getState().setToast('已生成修复副本并保留原资产', {

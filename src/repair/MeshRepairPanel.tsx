@@ -3,6 +3,7 @@ import {
   applyMeshRepair,
   cancelMeshRepairPreview,
   meshRepairPreviewIsStale,
+  setMeshRepairPreviewMode,
   useMeshRepairSnapshot,
 } from './mesh-repair-state';
 
@@ -42,6 +43,26 @@ export function MeshRepairPanel() {
 
       {state.phase === 'ready' && (
         <>
+          <div className="mesh-repair-card__view-switch" aria-label="修复差异显示方式">
+            <button
+              type="button"
+              aria-pressed={state.previewMode === 'overlay'}
+              onClick={() => setMeshRepairPreviewMode('overlay')}
+            >
+              修复后叠加
+            </button>
+            <button
+              type="button"
+              aria-pressed={state.previewMode === 'changes'}
+              onClick={() => setMeshRepairPreviewMode('changes')}
+            >
+              仅看变化
+            </button>
+          </div>
+          <div className="mesh-repair-card__legend">
+            <span><i className="added" />绿色：新增面</span>
+            <span><i className="removed" />红色：删除面</span>
+          </div>
           <ul>{state.actions.map((action) => <li key={action}>✓ {action}</li>)}</ul>
           {state.warnings.map((warning) => <p className="mesh-repair-card__warning" key={warning}>⚠ {warning}</p>)}
           <p className="mesh-repair-card__scope">仅执行可验证的焊点、退化/重复面清理与简单平面封口；不自动重写非流形拓扑。</p>

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { weldAndAnalyze, type Topology } from '../importer/parse-core';
 import type { Transform, Vec3 } from '../kernel/types';
 import type { BedConfig } from '../state/store';
+import { analyzeMeshHealth, type MeshHealthAnalysis } from './mesh-health-core';
 
 // ---------- 阈值(PRD §9 待校准表:上线后对照切片软件默认值调整) ----------
 /** 悬空判定:对象世界 zMin > 0.5mm 即报警告(PRD CHK 边界 1,M1 定义;待校准) */
@@ -27,6 +28,10 @@ export type IssueLevel = 'error' | 'warning' | 'info';
 export type IssueCode =
   | 'non_watertight' // 错误:非水密(CHK-01)
   | 'degenerate' // 错误:退化几何
+  | 'self_intersection' // 错误:不相邻面片相交(M1.7.1 只读)
+  | 'internal_shell' // 警告:封闭壳体位于另一封闭壳体内部(M1.7.1 只读)
+  | 'isolated_fragment' // 警告:小型断开碎片(M1.7.1 只读)
+  | 'deep_check_partial' // 警告:深度自交扫描未覆盖完整网格
   | 'out_of_bed' // 错误:超出打印体积
   | 'floating' // 警告:悬空
   | 'tiny' // 警告:微小件
@@ -56,6 +61,7 @@ export interface AssetAnalysisMeta {
   boundaryEdges: number;
   nonManifoldEdges: number;
   watertight: boolean;
+  health: MeshHealthAnalysis;
   analysisMs: number; // 耗时日志(验收样例:1 资产 × 6 实例,分析仅 1 次)
   cached: boolean; // 本轮为缓存命中(未执行分析)
 }
@@ -124,11 +130,12 @@ export function worldStats(
 export function analyzeAssetGeometry(
   positions: Float32Array,
   index: Uint32Array | null,
-): Topology & { boundarySegments: Float32Array } {
+): Topology & { boundarySegments: Float32Array; health: MeshHealthAnalysis } {
   const topo = weldAndAnalyze(positions, index, {
     collectBoundarySegments: MAX_HIGHLIGHT_SEGMENTS,
   });
-  return { ...topo, boundarySegments: topo.boundarySegments ?? new Float32Array(0) };
+  const health = analyzeMeshHealth(positions, index);
+  return { ...topo, boundarySegments: topo.boundarySegments ?? new Float32Array(0), health };
 }
 
 // ---------- 实例级检查(CHK-01 三级 + CHK-06 修复参数) ----------
@@ -169,7 +176,9 @@ export interface InstanceInput {
  *  纯函数 —— Worker 与单测共用同一实现。 */
 export function checkInstance(
   inst: Pick<InstanceInput, 'id' | 'name' | 'assetId'>,
-  topo: Pick<Topology, 'faces' | 'watertight' | 'boundaryEdges' | 'nonManifoldEdges' | 'degenerateCount'>,
+  topo: Pick<Topology, 'faces' | 'watertight' | 'boundaryEdges' | 'nonManifoldEdges' | 'degenerateCount'> & {
+    health?: MeshHealthAnalysis;
+  },
   world: { min: Vec3; max: Vec3 },
   bed: BedConfig,
 ): CheckIssue[] {
@@ -191,6 +200,36 @@ export function checkInstance(
   }
   if (topo.degenerateCount > 0) {
     push('degenerate', 'error', `含 ${topo.degenerateCount} 个退化面片(零面积/顶点塌缩)`);
+  }
+  const health = topo.health;
+  if (health?.selfIntersectionPairs) {
+    push(
+      'self_intersection',
+      'error',
+      `检测到${health.selfIntersectionComplete ? '' : '至少 '}${health.selfIntersectionPairs} 组不相邻面片相交。当前仅定位风险，不自动改写复杂拓扑`,
+    );
+  }
+  if (health?.internalShells) {
+    push(
+      'internal_shell',
+      'warning',
+      `疑似包含 ${health.internalShells} 个内部封闭壳体（共 ${health.connectedComponents} 个连通壳）。可能形成内部空腔或重复壁，请回源确认`,
+    );
+  }
+  if (health?.isolatedFragments) {
+    push(
+      'isolated_fragment',
+      'warning',
+      `检测到 ${health.isolatedFragments} 个小型孤立碎片（共 ${health.isolatedFragmentFaces} 面）。可能是布尔残片，也可能是有意分离的小零件`,
+    );
+  }
+  if (health && !health.selfIntersectionComplete) {
+    push(
+      'deep_check_partial',
+      'warning',
+      `深度自交检查达到计算预算（面片覆盖 ${health.selfIntersectionTrianglesScanned.toLocaleString()} / ${topo.faces.toLocaleString()} 面，候选对验证 ${health.selfIntersectionPairTests.toLocaleString()} 次）`
+        + `${health.componentAnalysisComplete ? '' : '；连通壳、内部壳和碎片未做完整分析'}；未发现不等于不存在`,
+    );
   }
 
   const overX = world.min[0] < -bed.x / 2 - BED_EPS_MM || world.max[0] > bed.x / 2 + BED_EPS_MM;
@@ -235,7 +274,8 @@ export function checkInstance(
   }
 
   // —— 信息级(CHK-01:逐对象尺寸与面数,构成清单)——
-  push('dims', 'info', `${fmt(size[0])} × ${fmt(size[1])} × ${fmt(size[2])} mm · ${topo.faces.toLocaleString()} 面`);
+  const shells = health && health.connectedComponents > 1 ? ` · ${health.connectedComponents} 个连通壳` : '';
+  push('dims', 'info', `${fmt(size[0])} × ${fmt(size[1])} × ${fmt(size[2])} mm · ${topo.faces.toLocaleString()} 面${shells}`);
 
   return issues;
 }

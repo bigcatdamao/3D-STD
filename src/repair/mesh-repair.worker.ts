@@ -25,6 +25,7 @@ self.onmessage = (event: MessageEvent<MeshRepairWorkerRequest>) => {
     const transfer: Transferable[] = [];
     if (plan.repairedPositions) transfer.push(plan.repairedPositions.buffer as ArrayBuffer);
     if (plan.addedPositions.byteLength) transfer.push(plan.addedPositions.buffer as ArrayBuffer);
+    if (plan.removedPositions.byteLength) transfer.push(plan.removedPositions.buffer as ArrayBuffer);
     post({ t: 'done', requestId, plan, durationMs: performance.now() - startedAt }, transfer);
   } catch (error) {
     post({

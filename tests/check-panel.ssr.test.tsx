@@ -130,7 +130,37 @@ describe('CheckPanel SSR 冒烟', () => {
     expect(html).toContain('原模型不变');
     expect(html).toContain('开放边');
     expect(html).toContain('生成修复副本');
+    expect(html).toContain('修复后叠加');
+    expect(html).toContain('仅看变化');
+    expect(html).toContain('绿色：新增面');
+    expect(html).toContain('红色：删除面');
     useMeshRepair.setState({ phase: 'idle' });
+  });
+
+  it('复杂拓扑问题显示只读诊断标识，不提供自动修复按钮', () => {
+    const instance = [...doc.nodes.values()].find((node) => node.kind === 'instance')!;
+    useCheck.setState({
+      panelOpen: true,
+      phase: 'done',
+      issues: [{
+        key: `internal_shell:${instance.id}`,
+        level: 'warning',
+        code: 'internal_shell',
+        instanceId: instance.id,
+        instanceName: instance.name,
+        assetId: instance.kind === 'instance' ? instance.assetId : '',
+        message: '疑似包含 1 个内部封闭壳体',
+      }],
+      summary: { ...summary, errors: 0, warnings: 1, instances: 1 },
+      unfinished: [],
+      timedOut: false,
+      fixedKeys: [],
+      runMeta: { editVersion: doc.editVersion, bed: { ...useUi.getState().bed } },
+    });
+    const html = strip(renderToString(<CheckPanel />));
+    expect(html).toContain('只读诊断');
+    expect(html).toContain('内部封闭壳体');
+    expect(html).not.toContain('修复预览');
   });
 
   it('过期(CHK-03):灰显条 + 重新检查;修复按钮禁用理由', () => {
