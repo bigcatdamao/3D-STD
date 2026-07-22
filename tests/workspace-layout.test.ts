@@ -35,7 +35,7 @@ describe('M1.5 工作台布局偏好', () => {
     expect(parseWorkspaceLayout(serializeWorkspaceLayout(value))).toEqual(value);
   });
 
-  it('接受 AI 拆件分析右栏页签', () => {
-    expect(parseWorkspaceLayout(JSON.stringify({ inspectorTab: 'split' })).inspectorTab).toBe('split');
+  it('旧 AI 拆件页签偏好迁移到真正可操作的检查/拆件工作台', () => {
+    expect(parseWorkspaceLayout(JSON.stringify({ inspectorTab: 'split' })).inspectorTab).toBe('check');
   });
 });

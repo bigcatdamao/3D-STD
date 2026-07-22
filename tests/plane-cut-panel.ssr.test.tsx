@@ -72,9 +72,9 @@ describe('M1.7.7 真实截面与几何接缝推荐卡片 SSR', () => {
   it('单壳超床对象显示 3 个本地候选入口与只读边界', () => {
     closePlaneCutPreview();
     const html = strip(renderToString(<CheckPanel embedded />));
-    expect(html).toContain('平面切割候选');
-    expect(html).toContain('本地确定性 · 3 个');
-    expect(html).toContain('查看 3 个候选');
+    expect(html).toContain('拆件工作台');
+    expect(html).toContain('本地几何 · 主动操作');
+    expect(html).toContain('打开拆件工作台');
     expect(html).toContain('只读预览');
   });
 

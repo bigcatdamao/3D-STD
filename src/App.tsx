@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
-import { SplitAnalysisPanel } from './agent/SplitAnalysisPanel';
-import { useSplitAnalysis } from './agent/split-analysis-state';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -26,6 +24,7 @@ import {
   bootstrapSurfaceCutPreviewQaScene,
   bootstrapSelfIntersectionQaScene,
   doc,
+  expandToInstances,
   sendCam,
   useUi,
 } from './state/store';
@@ -90,7 +89,6 @@ function CollapsedRail({ label, onOpen }: { label: string; onOpen: () => void })
 function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTab) => void }) {
   useUi((s) => s.rev);
   const issues = useCheck((s) => s.issues);
-  const splitPhase = useSplitAnalysis((state) => state.phase);
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
   const history = doc.history;
   return (
@@ -114,16 +112,6 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
           {issueCount > 0 && <span className="inspector-tab__count">{issueCount}</span>}
         </button>
         <button
-          className={`inspector-tab${tab === 'split' ? ' is-active' : ''}`}
-          role="tab"
-          aria-selected={tab === 'split'}
-          onClick={() => onTab('split')}
-        >
-          AI 拆件
-          {splitPhase === 'running' && <span className="inspector-tab__meta">…</span>}
-          {splitPhase === 'done' && <span className="inspector-tab__ready">●</span>}
-        </button>
-        <button
           className={`inspector-tab${tab === 'history' ? ' is-active' : ''}`}
           role="tab"
           aria-selected={tab === 'history'}
@@ -137,10 +125,8 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
         {tab === 'properties'
           ? <ParamPanel />
           : tab === 'check'
-            ? <CheckPanel embedded onOpenSplit={() => onTab('split')} />
-            : tab === 'split'
-              ? <SplitAnalysisPanel onOpenCheck={() => onTab('check')} />
-              : <HistoryPanel />}
+            ? <CheckPanel embedded />
+            : <HistoryPanel />}
       </div>
     </div>
   );
@@ -212,7 +198,9 @@ export function App() {
         ? bootstrapComponentPreviewQaScene()
         : qa === 'plane-cut-preview'
           ? bootstrapPlaneCutPreviewQaScene()
-          : qa === 'surface-cut-preview' ? bootstrapSurfaceCutPreviewQaScene() : false;
+          : qa === 'surface-cut-preview' || qa === 'manual-split-entry'
+            ? bootstrapSurfaceCutPreviewQaScene()
+            : false;
     if (!bootstrapped) return;
     setLayout((current) => ({
       ...current,
@@ -268,6 +256,56 @@ export function App() {
 
   const patchLayout = (patch: Partial<WorkspaceLayout>) => setLayout((current) => ({ ...current, ...patch }));
   const openCheck = () => patchLayout({ inspectorOpen: true, inspectorTab: 'check' });
+  const revealSplitWorkbench = () => window.setTimeout(() => {
+    document.querySelector<HTMLElement>('[data-split-workbench="true"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, 80);
+  const openSplitWorkbench = () => {
+    patchLayout({ inspectorOpen: true, inspectorTab: 'check', creationOpen: false });
+    const targets = expandToInstances(doc.selection);
+    if (targets.length === 0) {
+      useUi.getState().setToast('先在画布或场景树选中 1 个对象，再点击「拆件」');
+      return;
+    }
+    if (targets.length > 1) {
+      useUi.getState().setToast(`当前选中了 ${targets.length} 个对象；拆件工作台一次只处理 1 个对象`);
+      return;
+    }
+    const instanceId = targets[0].id;
+    const tryOpen = (): boolean => {
+      const check = useCheck.getState();
+      if (check.phase !== 'done' || reportIsStale()) return false;
+      const issue = check.issues.find((candidate) => candidate.code === 'dims' && candidate.instanceId === instanceId);
+      if (!issue?.world) {
+        useUi.getState().setToast('没有取得这个对象的尺寸数据，请确认对象可见且资产已就绪');
+        return true;
+      }
+      if (!startPlaneCutPreview(issue)) {
+        useUi.getState().setToast('该对象暂时无法建立拆件预览，请检查几何是否仍可读取');
+        return true;
+      }
+      useUi.getState().setToast('拆件工作台已打开：先调整引导位置，再生成表面切割预览');
+      revealSplitWorkbench();
+      return true;
+    };
+    if (tryOpen()) return;
+
+    let unsubscribe = () => {};
+    unsubscribe = useCheck.subscribe((state) => {
+      if (state.phase !== 'done') return;
+      unsubscribe();
+      if (!tryOpen()) useUi.getState().setToast('检查结果已经过期，请保持对象不变后重试拆件');
+    });
+    if (useCheck.getState().phase === 'running') {
+      useUi.getState().setToast('正在等待当前打印检查，完成后自动打开拆件工作台');
+      return;
+    }
+    if (!runPrintCheck()) {
+      unsubscribe();
+      useUi.getState().setToast('暂时无法启动模型检查，请稍后再试');
+      return;
+    }
+    useUi.getState().setToast('正在准备拆件数据，检查完成后会自动打开工作台');
+  };
   const toggleCreation = () => {
     if (!hasInstance) {
       document.querySelector<HTMLTextAreaElement>('[data-testid="gen-panel"] textarea')?.focus();
@@ -343,7 +381,7 @@ export function App() {
       </aside>
 
       <main className="viewport-frame" aria-label="3D 视口">
-        <Viewport />
+        <Viewport onOpenSplit={openSplitWorkbench} />
         {creationVisible && (
           <CreationPanel
             dismissible={hasInstance}
@@ -352,7 +390,7 @@ export function App() {
         )}
       </main>
 
-      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性、打印检查、AI 拆件与历史">
+      <aside className="workspace-panel workspace-panel--inspector" aria-label="属性、打印检查与历史">
         {layout.inspectorOpen ? (
           <>
             <div className="workspace-panel__body">
@@ -367,7 +405,7 @@ export function App() {
               ›
             </button>
           </>
-        ) : <CollapsedRail label="属性、检查、AI 拆件与历史" onOpen={() => patchLayout({ inspectorOpen: true })} />}
+        ) : <CollapsedRail label="属性、检查与历史" onOpen={() => patchLayout({ inspectorOpen: true })} />}
       </aside>
 
       <ToastLayer />

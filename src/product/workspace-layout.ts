@@ -1,4 +1,4 @@
-export type InspectorTab = 'properties' | 'check' | 'split' | 'history';
+export type InspectorTab = 'properties' | 'check' | 'history';
 
 export interface WorkspaceLayout {
   leftOpen: boolean;
@@ -41,13 +41,15 @@ export function parseWorkspaceLayout(raw: string | null): WorkspaceLayout {
   try {
     const value = JSON.parse(raw) as Partial<WorkspaceLayout> | null;
     if (!value || typeof value !== 'object') return { ...DEFAULT_WORKSPACE_LAYOUT };
+    const rawTab = (value as { inspectorTab?: unknown }).inspectorTab;
     return {
       leftOpen: typeof value.leftOpen === 'boolean' ? value.leftOpen : true,
       inspectorOpen: typeof value.inspectorOpen === 'boolean' ? value.inspectorOpen : true,
       creationOpen: typeof value.creationOpen === 'boolean' ? value.creationOpen : false,
-      inspectorTab: value.inspectorTab === 'check' || value.inspectorTab === 'split' || value.inspectorTab === 'history' || value.inspectorTab === 'properties'
-        ? value.inspectorTab
-        : 'properties',
+      // M1.7.9 移除只给文字建议的 AI 拆件页；旧偏好自动落到真正可操作的打印检查/拆件工作台。
+      inspectorTab: rawTab === 'split'
+        ? 'check'
+        : rawTab === 'check' || rawTab === 'history' || rawTab === 'properties' ? rawTab : 'properties',
     };
   } catch {
     return { ...DEFAULT_WORKSPACE_LAYOUT };

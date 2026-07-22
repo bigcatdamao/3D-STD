@@ -113,11 +113,14 @@ function IssueRow({
   const hasOutOfBedIssue = issue.code === 'dims' && liveIssues().some(
     (candidate) => candidate.instanceId === issue.instanceId && candidate.code === 'out_of_bed',
   );
-  const canPreviewPlaneCut = issue.code === 'dims' && !!issue.world && components.length <= 1 && hasOutOfBedIssue;
-  const cutActive = canPreviewPlaneCut
+  const previewMatchesIssue = issue.code === 'dims'
     && cutPhase === 'ready'
     && cutIssueKey === issue.key
     && !planeCutPreviewIsStale();
+  const canPreviewPlaneCut = issue.code === 'dims'
+    && !!issue.world
+    && (previewMatchesIssue || (components.length <= 1 && hasOutOfBedIssue));
+  const cutActive = canPreviewPlaneCut && previewMatchesIssue;
   const cutCandidate = cutActive ? cutCandidates[cutCandidateIndex] : null;
   const cutSection = cutActive ? cutSections[cutCandidateIndex] : null;
   const cutSectionBusy = cutActive && !!cutSectionPending[cutCandidateIndex];
@@ -293,31 +296,36 @@ function IssueRow({
         {canPreviewPlaneCut && (
           <div
             className={`plane-cut-card${cutActive ? ' is-active' : ''}`}
+            data-split-workbench={cutActive ? 'true' : undefined}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="plane-cut-card__heading">
-              <strong>平面切割候选</strong>
-              <span>本地确定性 · 3 个</span>
+              <strong>拆件工作台</strong>
+              <span>本地几何 · 主动操作</span>
             </div>
             {cutCandidate ? (
               <>
                 <div className="plane-cut-card__nav">
-                  <button
-                    type="button"
-                    aria-label="上一个平面切割候选"
-                    onClick={() => selectPlaneCutCandidate(cutCandidateIndex - 1)}
-                  >
-                    ‹
-                  </button>
                   <span>{cutCandidate.label} · 推荐分 {cutCandidate.score}</span>
-                  <button
-                    type="button"
-                    aria-label="下一个平面切割候选"
-                    onClick={() => selectPlaneCutCandidate(cutCandidateIndex + 1)}
-                  >
-                    ›
-                  </button>
                   <button type="button" className="close" onClick={closePlaneCutPreview}>关闭</button>
+                </div>
+                <div className="split-workbench__steps" aria-label="拆件操作步骤">
+                  <span className="is-done">1 选对象</span>
+                  <span className={surfaceCutPhase === 'ready' ? 'is-done' : 'is-active'}>2 调引导</span>
+                  <span className={surfaceCutPhase === 'ready' ? 'is-done' : ''}>3 看切割</span>
+                </div>
+                <p className="split-workbench__help">选择 X/Y/Z 方向并移动引导位置，再在下方生成沿模型表面的真实切割预览。</p>
+                <div className="split-workbench__axes" aria-label="选择拆件方向">
+                  {cutCandidates.map((candidate, index) => (
+                    <button
+                      type="button"
+                      key={candidate.axis}
+                      className={index === cutCandidateIndex ? 'is-active' : ''}
+                      onClick={() => selectPlaneCutCandidate(index)}
+                    >
+                      {candidate.axis.toUpperCase()} 方向
+                    </button>
+                  ))}
                 </div>
                 <div className={`seam-recommendation is-${seamPhase}`}>
                   <div className="seam-recommendation__heading">
@@ -427,7 +435,7 @@ function IssueRow({
                 <div className="plane-cut-card__reason">{cutCandidate.rationale}</div>
                 <div className={`surface-cut-card is-${surfaceCutPhase}`}>
                   <div className="surface-cut-card__heading">
-                    <strong>真实表面自适应切割</strong>
+                    <strong>3 · 真实表面自适应切割</strong>
                     <span>{surfaceCutPhase === 'ready' ? 'A/B 已封口 · 临时预览' : '引导面不是最终切口'}</span>
                   </div>
                   <p>以当前位置为搜索中心，接缝可在带宽内沿网格表面移动，优先选择较短且折角更明显的闭合路径。</p>
@@ -550,14 +558,14 @@ function IssueRow({
               </>
             ) : (
               <>
-                <p>单一连通壳超出打印床。先比较 X / Y / Z 三个中线，再决定是否进入真实切割。</p>
+                <p>这个对象超出打印床。打开工作台后可比较 X / Y / Z 方向并生成真实表面切割预览。</p>
                 <button
                   type="button"
                   className="plane-cut-card__start"
                   disabled={stale}
                   onClick={() => startPlaneCutPreview(issue)}
                 >
-                  查看 3 个候选
+                  打开拆件工作台
                 </button>
               </>
             )}
@@ -627,7 +635,7 @@ function IssueRow({
   );
 }
 
-export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boolean; onOpenSplit?: () => void }) {
+export function CheckPanel({ embedded = false }: { embedded?: boolean }) {
   useUi((s) => s.rev); // 文档任何变化 → 重算过期/存活过滤
   useUi((s) => s.bed); // 床配置变化 → 过期
   const s = useCheckSnapshot();
@@ -770,15 +778,6 @@ export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boole
             </div>
           )}
 
-          {onOpenSplit && s.phase === 'done' && (
-            <div className="check-agent-cta">
-              <div>
-                <strong>让 AI 帮你判断是否需要拆件</strong>
-                <span>基于本次检查整理 2–3 套候选方案，不会修改模型。</span>
-              </div>
-              <button type="button" onClick={onOpenSplit}>AI 拆件分析</button>
-            </div>
-          )}
         </div>
       )}
     </section>

@@ -28,6 +28,7 @@ import { RepairPreviewMesh } from '../repair/RepairPreviewMesh';
 import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
 import { PlaneCutPreview } from '../split/PlaneCutPreview';
+import { usePlaneCutPreview } from '../split/plane-cut-state';
 
 function InteractionBridge() {
   useViewportInteraction();
@@ -44,12 +45,15 @@ const btn: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-function Toolbar() {
+export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
   const ortho = useUi((s) => s.ortho);
   const setOrtho = useUi((s) => s.setOrtho);
   const bed = useUi((s) => s.bed);
   const setBed = useUi((s) => s.setBed);
   const [custom, setCustom] = useState(false);
+  const splitPhase = usePlaneCutPreview((state) => state.phase);
+  useUi((state) => state.rev);
+  const selectedInstances = expandToInstances(doc.selection);
 
   const presetIdx = BED_PRESETS.findIndex(
     (p) => p.bed.x === bed.x && p.bed.y === bed.y && p.bed.z === bed.z,
@@ -60,6 +64,24 @@ function Toolbar() {
       <div className="viewport-toolbar__views">
         {/* T10 临时入口:文件选择器与拖放同语义(入库+建实例);T11 资产面板就位后改绑「仅入库」(IMP-02) */}
         <ImportButton className="viewport-tool" style={{ ...btn, borderColor: '#ffb454', color: '#ffb454' }} />
+        <button
+          type="button"
+          data-testid="split-tool-entry"
+          className={`viewport-tool viewport-tool--split${splitPhase === 'ready' ? ' is-active' : ''}`}
+          style={{
+            ...btn,
+            background: splitPhase === 'ready' ? '#285f50' : '#ffb454',
+            borderColor: splitPhase === 'ready' ? '#63d3ac' : '#ffb454',
+            color: splitPhase === 'ready' ? '#d9fff2' : '#17191d',
+            fontWeight: 750,
+          }}
+          onClick={onOpenSplit}
+          title={selectedInstances.length === 1
+            ? '打开所选对象的拆件工作台'
+            : '先选中一个对象，再打开拆件工作台'}
+        >
+          ✂ 拆件
+        </button>
         <button style={btn} onClick={() => setOrtho(!ortho)} title="快捷键 5">
           {ortho ? '正交' : '透视'}
         </button>
@@ -226,7 +248,7 @@ function isTyping(e: KeyboardEvent): boolean {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
-export function Viewport() {
+export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
   const setOrtho = useUi((s) => s.setOrtho);
 
   // 全局快捷键(VIEW-03/04)
@@ -302,7 +324,7 @@ export function Viewport() {
         <Gizmo />
         <InteractionBridge />
       </Canvas>
-      <Toolbar />
+      <Toolbar onOpenSplit={onOpenSplit} />
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />

@@ -181,6 +181,9 @@ select:focus-visible {
 .viewport-toolbar__bed { display: flex; align-items: center; gap: 6px; pointer-events: auto; }
 .viewport-toolbar__transform { margin-left: 10px; }
 .viewport-toolbar__bed { margin-left: auto; }
+.viewport-tool--split { min-width: 66px; box-shadow: 0 4px 14px rgba(255, 180, 84, .18); }
+.viewport-tool--split:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.viewport-tool--split.is-active { box-shadow: 0 4px 14px rgba(99, 211, 172, .18); }
 
 .viewport-status-bar {
   position: absolute;
@@ -217,32 +220,7 @@ select:focus-visible {
 .inspector-tab.is-active { color: var(--text); border-bottom-color: var(--accent); }
 .inspector-tab__count { margin-left: 5px; color: var(--danger); font-variant-numeric: tabular-nums; }
 .inspector-tab__meta { margin-left: 5px; color: #697483; font-size: 9px; font-variant-numeric: tabular-nums; }
-.inspector-tab__ready { margin-left: 5px; color: var(--success); font-size: 8px; }
 .inspector-content { min-width: 0; min-height: 0; padding: 8px; }
-
-.check-agent-cta {
-  display: grid;
-  gap: 8px;
-  margin: 8px;
-  padding: 10px;
-  border: 1px solid rgba(99, 211, 172, .26);
-  border-radius: 8px;
-  background: linear-gradient(145deg, rgba(61, 116, 95, .12), rgba(25, 29, 36, .78));
-}
-.check-agent-cta div { display: grid; gap: 3px; }
-.check-agent-cta strong { color: var(--text-2); font-size: 11px; }
-.check-agent-cta span { color: var(--muted); font-size: 10px; line-height: 1.5; }
-.check-agent-cta button {
-  justify-self: start;
-  padding: 5px 9px;
-  border: 1px solid rgba(99, 211, 172, .5);
-  border-radius: 6px;
-  background: rgba(99, 211, 172, .1);
-  color: #9be1c8;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 650;
-}
 
 /* M1.7.2 · 自交命中对浏览：局部证据只读定位，不写场景历史。 */
 .self-intersection-evidence {
@@ -363,6 +341,14 @@ select:focus-visible {
 .plane-cut-card__heading { gap: 6px; }
 .plane-cut-card__heading strong { color: #ffd49a; font-size: 9px; }
 .plane-cut-card__heading span { margin-left: auto; color: #9c8568; font-size: 8px; }
+.split-workbench__steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 5px; }
+.split-workbench__steps span { padding: 4px 3px; border: 1px solid #36343a; border-radius: 5px; color: #76737a; background: rgba(18, 18, 22, .55); font-size: 7px; text-align: center; }
+.split-workbench__steps span.is-active { border-color: rgba(255, 180, 84, .62); color: #ffd49a; background: rgba(255, 180, 84, .09); }
+.split-workbench__steps span.is-done { border-color: rgba(99, 211, 172, .38); color: #91d8bf; background: rgba(99, 211, 172, .06); }
+.split-workbench__help { color: #c3b49f !important; }
+.split-workbench__axes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 5px 0; }
+.split-workbench__axes button { border: 1px solid #393941; border-radius: 5px; padding: 4px 2px; background: #24242a; color: #9b9ba4; font-size: 8px; cursor: pointer; }
+.split-workbench__axes button.is-active { border-color: #ffb454; background: rgba(255, 180, 84, .12); color: #ffd49a; }
 .plane-cut-card p { margin: 5px 0; color: #a89b8c; font-size: 9px; line-height: 1.45; }
 .plane-cut-card__start {
   width: 100%;
