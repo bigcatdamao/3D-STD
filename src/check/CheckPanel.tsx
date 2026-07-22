@@ -27,12 +27,15 @@ import {
 } from '../repair/mesh-repair-state';
 import {
   cancelSeamRecommendationScan,
+  cancelSurfaceAdaptiveCutPreview,
   closePlaneCutPreview,
   planeCutPreviewIsStale,
   previewSeamRecommendation,
   selectPlaneCutCandidate,
   setPlaneCutPosition,
+  setSurfaceCutBandRatio,
   startSeamRecommendationScan,
+  startSurfaceAdaptiveCutPreview,
   startPlaneCutPreview,
   usePlaneCutPreviewSnapshot,
 } from '../split/plane-cut-state';
@@ -125,6 +128,19 @@ function IssueRow({
   const axisRecommendations = cutCandidate
     ? seamRecommendations.filter((recommendation) => recommendation.axis === cutCandidate.axis)
     : [];
+  const surfaceCutPhase = cutPreview.surfaceCutPhase;
+  const surfaceCutPhaseText = cutPreview.surfaceCutPhaseText;
+  const surfaceCutBandRatio = cutPreview.surfaceCutBandRatio;
+  const surfaceCutResult = cutPreview.surfaceCutResult;
+  const surfaceCutError = cutPreview.surfaceCutError;
+  const surfaceCutDurationMs = cutPreview.surfaceCutDurationMs;
+  const surfaceBandMm = cutCandidate && cutPreview.sourceBounds
+    ? (cutPreview.sourceBounds.max[cutCandidate.axisIndex] - cutPreview.sourceBounds.min[cutCandidate.axisIndex]) * surfaceCutBandRatio
+    : 0;
+  const partFitsBed = (dimensions: [number, number, number]) => {
+    const bed = cutPreview.sourceBed;
+    return !!bed && dimensions[0] <= bed.x + 0.05 && dimensions[1] <= bed.y + 0.05 && dimensions[2] <= bed.z + 0.05;
+  };
   const readOnlyDiagnosis = issue.code === 'self_intersection'
     || issue.code === 'internal_shell'
     || issue.code === 'isolated_fragment'
@@ -360,7 +376,7 @@ function IssueRow({
                 </div>
                 <div className="plane-cut-card__position">
                   <div>
-                    <span>{cutCandidate.axis.toUpperCase()} 轴切面位置</span>
+                    <span>{cutCandidate.axis.toUpperCase()} 轴{surfaceCutPhase === 'ready' ? '引导中心' : '切面位置'}</span>
                     <strong>{Math.round(cutCandidate.normalizedPosition * 100)}%</strong>
                   </div>
                   <input
@@ -409,10 +425,79 @@ function IssueRow({
                   </small>
                 </div>
                 <div className="plane-cut-card__reason">{cutCandidate.rationale}</div>
+                <div className={`surface-cut-card is-${surfaceCutPhase}`}>
+                  <div className="surface-cut-card__heading">
+                    <strong>真实表面自适应切割</strong>
+                    <span>{surfaceCutPhase === 'ready' ? 'A/B 已封口 · 临时预览' : '引导面不是最终切口'}</span>
+                  </div>
+                  <p>以当前位置为搜索中心，接缝可在带宽内沿网格表面移动，优先选择较短且折角更明显的闭合路径。</p>
+                  <div className="surface-cut-card__range">
+                    <label htmlFor={`surface-cut-range-${issue.instanceId}`}>
+                      表面吸附范围
+                      <strong>±{Math.round(surfaceCutBandRatio * 100)}% · {surfaceBandMm.toFixed(1)}mm</strong>
+                    </label>
+                    <input
+                      id={`surface-cut-range-${issue.instanceId}`}
+                      type="range"
+                      min={4}
+                      max={25}
+                      step={1}
+                      value={Math.round(surfaceCutBandRatio * 100)}
+                      disabled={surfaceCutPhase === 'running'}
+                      onChange={(event) => setSurfaceCutBandRatio(Number(event.target.value) / 100)}
+                    />
+                  </div>
+                  {surfaceCutPhase === 'running' && (
+                    <div className="surface-cut-card__working">
+                      <i />
+                      <span>{surfaceCutPhaseText || '计算表面闭合接缝'}</span>
+                      <button type="button" onClick={cancelSurfaceAdaptiveCutPreview}>取消</button>
+                    </div>
+                  )}
+                  {surfaceCutPhase === 'failed' && (
+                    <div className="surface-cut-card__failure">
+                      <strong>本次拒绝生成</strong>
+                      <span>{surfaceCutError ?? '无法形成安全闭合接缝'}</span>
+                      <button type="button" onClick={startSurfaceAdaptiveCutPreview}>调整后重试</button>
+                    </div>
+                  )}
+                  {surfaceCutPhase === 'ready' && surfaceCutResult && (
+                    <>
+                      <div className="surface-cut-card__metrics">
+                        <div><span>相对引导偏移</span><b>{surfaceCutResult.metrics.guideOffsetMm >= 0 ? '+' : ''}{surfaceCutResult.metrics.guideOffsetMm.toFixed(1)}mm</b></div>
+                        <div><span>接缝表面跨度</span><b>{surfaceCutResult.metrics.adaptiveSpanMm.toFixed(1)}mm</b></div>
+                        <div><span>闭合边界</span><b>{surfaceCutResult.metrics.boundaryVertices} 点</b></div>
+                        <div><span>接缝长度</span><b>{surfaceCutResult.metrics.seamLengthMm.toFixed(1)}mm</b></div>
+                      </div>
+                      <div className="surface-cut-card__parts">
+                        {[surfaceCutResult.partA, surfaceCutResult.partB].map((part, index) => (
+                          <div key={index} className={`part-${index === 0 ? 'a' : 'b'}`}>
+                            <b>{index === 0 ? 'A' : 'B'} · 真实临时网格</b>
+                            <span>{part.dimensionsMm.map((value) => value.toFixed(1)).join(' × ')} mm</span>
+                            <em className={partFitsBed(part.dimensionsMm) ? 'fits' : 'overflow'}>
+                              {partFitsBed(part.dimensionsMm) ? '可放入' : '仍超床'}
+                            </em>
+                            <small>{part.sourceFaceCount.toLocaleString()} 原面 + {part.capFaceCount.toLocaleString()} 封口面 · 开放边 {part.boundaryEdges}</small>
+                          </div>
+                        ))}
+                      </div>
+                      <small>耗时 {surfaceCutDurationMs?.toFixed(0) ?? '—'}ms · 当前只是内存临时网格，不创建场景对象、不写历史</small>
+                      <button type="button" className="surface-cut-card__retry" onClick={startSurfaceAdaptiveCutPreview}>按当前范围重新生成</button>
+                    </>
+                  )}
+                  {surfaceCutPhase === 'idle' && (
+                    <button type="button" className="surface-cut-card__start" onClick={startSurfaceAdaptiveCutPreview}>
+                      生成真实表面切割预览
+                    </button>
+                  )}
+                  <small className="surface-cut-card__boundary">
+                    首版仅支持：水密单一流形、单闭合接缝、≤80,000 面。非流形、分叉、多环或封口验证失败会直接拒绝。
+                  </small>
+                </div>
                 {cutSectionBusy && (
                   <div className="plane-cut-card__section is-pending">
                     <div className="plane-cut-card__section-heading">
-                      <strong>正在计算真实截面…</strong>
+                      <strong>正在计算引导平面截面…</strong>
                       <span>切面与尺寸已更新</span>
                     </div>
                   </div>
@@ -420,7 +505,7 @@ function IssueRow({
                 {cutSection && (
                   <div className={`plane-cut-card__section is-${cutSection.status}`}>
                     <div className="plane-cut-card__section-heading">
-                      <strong>真实截面证据</strong>
+                      <strong>{surfaceCutPhase === 'ready' ? '引导平面截面证据' : '真实截面证据'}</strong>
                       <span>{cutSection.complete ? '完整扫描' : '预算内部分扫描'}</span>
                     </div>
                     {cutSection.status === 'closed' && cutSection.areaMm2 !== null ? (
@@ -446,18 +531,22 @@ function IssueRow({
                     )}
                   </div>
                 )}
-                <div className="plane-cut-card__parts">
-                  {cutCandidate.parts.map((part) => (
-                    <div key={part.label} className={`part part-${part.label.toLowerCase()}`}>
-                      <b>{part.label}</b>
-                      <span>{part.dimensionsMm.map((value) => value.toFixed(1)).join(' × ')} mm</span>
-                      <em className={part.fitsBed ? 'fits' : 'overflow'}>{part.fitsBed ? '可放入' : '仍超床'}</em>
+                {surfaceCutPhase !== 'ready' && (
+                  <>
+                    <div className="plane-cut-card__parts">
+                      {cutCandidate.parts.map((part) => (
+                        <div key={part.label} className={`part part-${part.label.toLowerCase()}`}>
+                          <b>{part.label}</b>
+                          <span>{part.dimensionsMm.map((value) => value.toFixed(1)).join(' × ')} mm</span>
+                          <em className={part.fitsBed ? 'fits' : 'overflow'}>{part.fitsBed ? '可放入' : '仍超床'}</em>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <small>
-                  包围盒切面代理 {cutCandidate.cutAreaEstimateMm2.toFixed(0)} mm² · 不等于真实截面；当前仍不封口、不生成零件
-                </small>
+                    <small>
+                      包围盒切面代理 {cutCandidate.cutAreaEstimateMm2.toFixed(0)} mm² · 不等于真实截面；当前仍不封口、不生成零件
+                    </small>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -528,7 +617,7 @@ function IssueRow({
           title={components.length > 1
             ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
             : canPreviewPlaneCut
-              ? 'M1.7.7 几何低风险接缝：批量比较真实截面，只给推荐、不封口、不生成新零件'
+              ? 'M1.7.8 表面自适应真实切割：只生成已封口的内存临时网格，不创建场景对象、不写历史'
               : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
           {components.length > 1 || canPreviewPlaneCut ? '只读预览' : '只读诊断'}

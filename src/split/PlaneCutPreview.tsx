@@ -2,7 +2,12 @@ import { Html } from '@react-three/drei';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { doc, geometryRegistry, useUi } from '../state/store';
-import { planeCutPreviewIsStale, usePlaneCutPreview } from './plane-cut-state';
+import {
+  planeCutPreviewIsStale,
+  usePlaneCutPreview,
+  type SurfaceCutReadyResult,
+} from './plane-cut-state';
+import type { Transform } from '../kernel/types';
 import type { PlaneSectionSegment } from './plane-section-core';
 
 const SIDE_A = '#50c8ff';
@@ -62,6 +67,87 @@ function CutPlaneVisual({ axisIndex, position, min, max }: {
   );
 }
 
+function SurfaceCutVisual({
+  result,
+  transform,
+  axisIndex,
+  min,
+  max,
+}: {
+  result: SurfaceCutReadyResult;
+  transform: Transform;
+  axisIndex: 0 | 1 | 2;
+  min: [number, number, number];
+  max: [number, number, number];
+}) {
+  const geometries = useMemo(() => {
+    const makeMesh = (positions: Float32Array) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      return geometry;
+    };
+    const seam = new THREE.BufferGeometry();
+    seam.setAttribute('position', new THREE.BufferAttribute(result.seamPositions, 3));
+    return {
+      a: makeMesh(result.partA.positions),
+      b: makeMesh(result.partB.positions),
+      seam,
+    };
+  }, [result]);
+  useEffect(() => () => {
+    geometries.a.dispose();
+    geometries.b.dispose();
+    geometries.seam.dispose();
+  }, [geometries]);
+  const D2R = Math.PI / 180;
+  const centerOf = (part: 0 | 1): [number, number, number] => {
+    const ratio = part === 0 ? 0.28 : 0.72;
+    const center = [0, 1, 2].map((axis) => (min[axis] + max[axis]) / 2) as [number, number, number];
+    center[axisIndex] = min[axisIndex] + (max[axisIndex] - min[axisIndex]) * ratio;
+    return center;
+  };
+  return (
+    <group>
+      <group
+        position={transform.position}
+        rotation={transform.rotation.map((value) => value * D2R) as [number, number, number]}
+        scale={transform.scale}
+      >
+        <mesh geometry={geometries.a} renderOrder={7}>
+          <meshStandardMaterial color={SIDE_A} side={THREE.DoubleSide} roughness={0.55} metalness={0.05} transparent opacity={0.94} />
+        </mesh>
+        <mesh geometry={geometries.b} renderOrder={7}>
+          <meshStandardMaterial color={SIDE_B} side={THREE.DoubleSide} roughness={0.55} metalness={0.05} transparent opacity={0.94} />
+        </mesh>
+        <lineSegments geometry={geometries.seam} renderOrder={12}>
+          <lineBasicMaterial color={SECTION} depthTest={false} transparent opacity={1} />
+        </lineSegments>
+      </group>
+      <Html position={centerOf(0)} center style={{ pointerEvents: 'none' }}>
+        <div className="plane-cut-preview-label side-a">A · 真实闭合临时网格</div>
+      </Html>
+      <Html position={centerOf(1)} center style={{ pointerEvents: 'none' }}>
+        <div className="plane-cut-preview-label side-b">B · 真实闭合临时网格</div>
+      </Html>
+      <Html
+        position={[
+          (min[0] + max[0]) / 2,
+          (min[1] + max[1]) / 2,
+          max[2] + Math.max(5, (max[2] - min[2]) * 0.12),
+        ]}
+        center
+        style={{ pointerEvents: 'none' }}
+      >
+        <div className="plane-cut-preview-label cut">
+          表面自适应接缝 · 相对引导 {result.metrics.guideOffsetMm >= 0 ? '+' : ''}{result.metrics.guideOffsetMm.toFixed(1)}mm
+        </div>
+      </Html>
+    </group>
+  );
+}
+
 export function PlaneCutPreview() {
   useUi((state) => state.rev);
   useUi((state) => state.bed);
@@ -70,6 +156,8 @@ export function PlaneCutPreview() {
   const candidates = usePlaneCutPreview((state) => state.candidates);
   const sections = usePlaneCutPreview((state) => state.sections);
   const activeIndex = usePlaneCutPreview((state) => state.activeIndex);
+  const surfaceCutPhase = usePlaneCutPreview((state) => state.surfaceCutPhase);
+  const surfaceCutResult = usePlaneCutPreview((state) => state.surfaceCutResult);
   if (phase !== 'ready' || !instanceId || planeCutPreviewIsStale()) return null;
   const instance = doc.nodes.get(instanceId);
   if (!instance || instance.kind !== 'instance') return null;
@@ -88,6 +176,17 @@ export function PlaneCutPreview() {
     min: candidate.parts[0].bounds.min,
     max: candidate.parts[1].bounds.max,
   };
+  if (surfaceCutPhase === 'ready' && surfaceCutResult) {
+    return (
+      <SurfaceCutVisual
+        result={surfaceCutResult}
+        transform={transform}
+        axisIndex={candidate.axisIndex}
+        min={overall.min}
+        max={overall.max}
+      />
+    );
+  }
   const centerOf = (part: 0 | 1): [number, number, number] => {
     const bounds = candidate.parts[part].bounds;
     return [0, 1, 2].map((axis) => (bounds.min[axis] + bounds.max[axis]) / 2) as [number, number, number];

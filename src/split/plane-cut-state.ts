@@ -13,6 +13,10 @@ import { analyzePlaneSection, type PlaneSectionAnalysis } from './plane-section-
 import { rankSeamRecommendations, type SeamRecommendation, type SeamScanSample } from './seam-recommendation-core';
 import { SeamScanRunner } from './seam-scan-runner';
 import type { SeamScanCut, SeamScanResult } from './seam-scan-protocol';
+import { SurfaceCutRunner } from './surface-cut-runner';
+import type { SurfaceCutResult } from './surface-cut-core';
+
+export type SurfaceCutReadyResult = Extract<SurfaceCutResult, { status: 'ready' }>;
 
 interface PlaneCutPreviewState {
   phase: 'idle' | 'ready';
@@ -29,6 +33,13 @@ interface PlaneCutPreviewState {
   recommendationProgress: { done: number; total: number };
   recommendations: SeamRecommendation[];
   recommendationError: string | null;
+  surfaceCutPhase: 'idle' | 'running' | 'ready' | 'failed';
+  surfaceCutPhaseText: string;
+  surfaceCutBandRatio: number;
+  surfaceCutResult: SurfaceCutReadyResult | null;
+  surfaceCutError: string | null;
+  surfaceCutErrorCode: string | null;
+  surfaceCutDurationMs: number | null;
 }
 
 const initialState: PlaneCutPreviewState = {
@@ -46,11 +57,19 @@ const initialState: PlaneCutPreviewState = {
   recommendationProgress: { done: 0, total: 27 },
   recommendations: [],
   recommendationError: null,
+  surfaceCutPhase: 'idle',
+  surfaceCutPhaseText: '',
+  surfaceCutBandRatio: 0.12,
+  surfaceCutResult: null,
+  surfaceCutError: null,
+  surfaceCutErrorCode: null,
+  surfaceCutDurationMs: null,
 };
 
 export const usePlaneCutPreview = create<PlaneCutPreviewState>()(() => initialState);
 const sectionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 let seamScanRunner: SeamScanRunner | null = null;
+let surfaceCutRunner: SurfaceCutRunner | null = null;
 
 function getSeamScanRunner(): SeamScanRunner | null {
   if (seamScanRunner) return seamScanRunner;
@@ -60,6 +79,16 @@ function getSeamScanRunner(): SeamScanRunner | null {
     { type: 'module' },
   ) as unknown as import('./seam-scan-runner').SeamScanWorkerLike);
   return seamScanRunner;
+}
+
+function getSurfaceCutRunner(): SurfaceCutRunner | null {
+  if (surfaceCutRunner) return surfaceCutRunner;
+  if (typeof Worker === 'undefined') return null;
+  surfaceCutRunner = new SurfaceCutRunner(() => new Worker(
+    new URL('./surface-cut.worker.ts', import.meta.url),
+    { type: 'module' },
+  ) as unknown as import('./surface-cut-runner').SurfaceCutWorkerLike);
+  return surfaceCutRunner;
 }
 
 function clearSectionTimers(): void {
@@ -154,6 +183,159 @@ function scanStillCurrent(instanceId: string, sourceEditVersion: number): boolea
     && current.instanceId === instanceId
     && current.sourceEditVersion === sourceEditVersion
     && !planeCutPreviewIsStale();
+}
+
+function resetSurfaceCutState(): void {
+  surfaceCutRunner?.cancel();
+  usePlaneCutPreview.setState({
+    surfaceCutPhase: 'idle',
+    surfaceCutPhaseText: '',
+    surfaceCutResult: null,
+    surfaceCutError: null,
+    surfaceCutErrorCode: null,
+    surfaceCutDurationMs: null,
+  });
+}
+
+function surfaceCutStillCurrent(
+  instanceId: string,
+  sourceEditVersion: number,
+  axisIndex: 0 | 1 | 2,
+  positionMm: number,
+  bandRatio: number,
+): boolean {
+  const current = usePlaneCutPreview.getState();
+  const candidate = current.candidates[current.activeIndex];
+  return current.phase === 'ready'
+    && current.instanceId === instanceId
+    && current.sourceEditVersion === sourceEditVersion
+    && candidate?.axisIndex === axisIndex
+    && Math.abs((candidate?.positionMm ?? Infinity) - positionMm) < 1e-6
+    && Math.abs(current.surfaceCutBandRatio - bandRatio) < 1e-6
+    && !planeCutPreviewIsStale();
+}
+
+export function setSurfaceCutBandRatio(value: number): void {
+  surfaceCutRunner?.cancel();
+  usePlaneCutPreview.setState({
+    surfaceCutBandRatio: Math.max(0.04, Math.min(0.25, value)),
+    surfaceCutPhase: 'idle',
+    surfaceCutPhaseText: '',
+    surfaceCutResult: null,
+    surfaceCutError: null,
+    surfaceCutErrorCode: null,
+    surfaceCutDurationMs: null,
+  });
+}
+
+export function startSurfaceAdaptiveCutPreview(): boolean {
+  const state = usePlaneCutPreview.getState();
+  const candidate = state.candidates[state.activeIndex];
+  if (
+    state.phase !== 'ready'
+    || state.surfaceCutPhase === 'running'
+    || !state.instanceId
+    || !state.sourceBounds
+    || !candidate
+    || planeCutPreviewIsStale()
+  ) return false;
+  const instance = doc.nodes.get(state.instanceId);
+  const runner = getSurfaceCutRunner();
+  if (!instance || instance.kind !== 'instance' || !runner) {
+    usePlaneCutPreview.setState({
+      surfaceCutPhase: 'failed',
+      surfaceCutError: '当前环境无法启动真实切割 Worker',
+      surfaceCutErrorCode: 'worker_unavailable',
+    });
+    return false;
+  }
+  const axisLengthMm = state.sourceBounds.max[candidate.axisIndex] - state.sourceBounds.min[candidate.axisIndex];
+  const bandRatio = state.surfaceCutBandRatio;
+  const searchHalfWidthMm = Math.max(0.1, axisLengthMm * bandRatio);
+  const instanceId = state.instanceId;
+  const sourceEditVersion = state.sourceEditVersion;
+  const guidePositionMm = candidate.positionMm;
+  const axisIndex = candidate.axisIndex;
+  usePlaneCutPreview.setState({
+    surfaceCutPhase: 'running',
+    surfaceCutPhaseText: '准备源网格',
+    surfaceCutResult: null,
+    surfaceCutError: null,
+    surfaceCutErrorCode: null,
+    surfaceCutDurationMs: null,
+  });
+  const started = runner.run({
+    assetId: instance.assetId,
+    transform: instance.transform,
+    axisIndex,
+    guidePositionMm,
+    searchHalfWidthMm,
+  }, () => copyAssetGeometry(instance.assetId), {
+    onProgress: (phase) => {
+      if (!surfaceCutStillCurrent(instanceId, sourceEditVersion, axisIndex, guidePositionMm, bandRatio)) {
+        runner.cancel();
+        return;
+      }
+      usePlaneCutPreview.setState({ surfaceCutPhaseText: phase });
+    },
+    onResult: (result, durationMs) => {
+      if (!surfaceCutStillCurrent(instanceId, sourceEditVersion, axisIndex, guidePositionMm, bandRatio)) return;
+      if (result.status === 'ready') {
+        usePlaneCutPreview.setState({
+          surfaceCutPhase: 'ready',
+          surfaceCutPhaseText: '真实 A/B 临时网格已生成',
+          surfaceCutResult: result,
+          surfaceCutError: null,
+          surfaceCutErrorCode: null,
+          surfaceCutDurationMs: durationMs,
+        });
+      } else {
+        usePlaneCutPreview.setState({
+          surfaceCutPhase: 'failed',
+          surfaceCutPhaseText: '',
+          surfaceCutResult: null,
+          surfaceCutError: result.message,
+          surfaceCutErrorCode: result.code,
+          surfaceCutDurationMs: durationMs,
+        });
+      }
+    },
+    onError: (message) => {
+      if (surfaceCutStillCurrent(instanceId, sourceEditVersion, axisIndex, guidePositionMm, bandRatio)) {
+        usePlaneCutPreview.setState({
+          surfaceCutPhase: 'failed',
+          surfaceCutPhaseText: '',
+          surfaceCutResult: null,
+          surfaceCutError: message,
+          surfaceCutErrorCode: 'worker_failed',
+        });
+      }
+    },
+    onCancelled: () => {
+      if (surfaceCutStillCurrent(instanceId, sourceEditVersion, axisIndex, guidePositionMm, bandRatio)) {
+        usePlaneCutPreview.setState({
+          surfaceCutPhase: 'idle',
+          surfaceCutPhaseText: '',
+          surfaceCutResult: null,
+          surfaceCutError: null,
+          surfaceCutErrorCode: null,
+          surfaceCutDurationMs: null,
+        });
+      }
+    },
+  });
+  if (!started) {
+    usePlaneCutPreview.setState({
+      surfaceCutPhase: 'failed',
+      surfaceCutError: '无法读取当前模型几何，真实切割预览未启动',
+      surfaceCutErrorCode: 'geometry_missing',
+    });
+  }
+  return started;
+}
+
+export function cancelSurfaceAdaptiveCutPreview(): boolean {
+  return surfaceCutRunner?.cancel() ?? false;
 }
 
 export function startSeamRecommendationScan(): boolean {
@@ -264,6 +446,7 @@ export function startPlaneCutPreview(issue: CheckIssue): boolean {
   const sections: (PlaneSectionAnalysis | null)[] = candidates.map(() => null);
   sections[0] = analyzeCandidateSection(issue.instanceId, candidates[0]);
   seamScanRunner?.cancel();
+  surfaceCutRunner?.cancel();
   clearSectionTimers();
   usePlaneCutPreview.setState({
     phase: 'ready',
@@ -283,6 +466,13 @@ export function startPlaneCutPreview(issue: CheckIssue): boolean {
     recommendationProgress: { done: 0, total: 27 },
     recommendations: [],
     recommendationError: null,
+    surfaceCutPhase: 'idle',
+    surfaceCutPhaseText: '',
+    surfaceCutBandRatio: 0.12,
+    surfaceCutResult: null,
+    surfaceCutError: null,
+    surfaceCutErrorCode: null,
+    surfaceCutDurationMs: null,
   });
   useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: 0 });
   if (!doc.effectiveLocked(issue.instanceId)) dispatch((d) => d.select([issue.instanceId]));
@@ -301,6 +491,7 @@ export function setPlaneCutPosition(requestedPosition: number, deferSection = fa
   ) return false;
   const active = state.candidates[state.activeIndex];
   if (!active) return false;
+  resetSurfaceCutState();
   const next = evaluatePlaneCutCandidate(state.sourceBounds, state.sourceBed, active.axis, requestedPosition);
   const candidates = [...state.candidates];
   const sections = [...state.sections];
@@ -353,6 +544,7 @@ export function selectPlaneCutCandidate(requestedIndex: number): boolean {
   if (state.phase !== 'ready' || !state.candidates.length || planeCutPreviewIsStale()) return false;
   const activeIndex = ((requestedIndex % state.candidates.length) + state.candidates.length) % state.candidates.length;
   const candidate = state.candidates[activeIndex];
+  resetSurfaceCutState();
   const sections = [...state.sections];
   const sectionPending = [...state.sectionPending];
   if (!sections[activeIndex] && !sectionPending[activeIndex]) {
@@ -372,6 +564,7 @@ export function selectPlaneCutCandidate(requestedIndex: number): boolean {
 
 export function closePlaneCutPreview(): void {
   seamScanRunner?.cancel();
+  surfaceCutRunner?.cancel();
   clearSectionTimers();
   usePlaneCutPreview.setState(initialState);
 }

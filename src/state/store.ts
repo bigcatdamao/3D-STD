@@ -313,6 +313,58 @@ export function bootstrapPlaneCutPreviewQaScene(): boolean {
   return true;
 }
 
+function makeSurfaceCutQaGeometry(): THREE.BufferGeometry {
+  const xs = [-120, -80, -40, 20, 60, 100, 140];
+  const radii = [45, 45, 40, 16, 40, 45, 45];
+  const sides = 16;
+  const positions: number[] = [];
+  for (let ring = 0; ring < xs.length; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const angle = (side / sides) * Math.PI * 2;
+      positions.push(xs[ring], Math.cos(angle) * radii[ring], 45 + Math.sin(angle) * radii[ring]);
+    }
+  }
+  const leftCenter = positions.length / 3;
+  positions.push(xs[0], 0, 45);
+  const rightCenter = positions.length / 3;
+  positions.push(xs[xs.length - 1], 0, 45);
+  const indices: number[] = [];
+  for (let ring = 0; ring < xs.length - 1; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const next = (side + 1) % sides;
+      const a = ring * sides + side;
+      const d = ring * sides + next;
+      const b = (ring + 1) * sides + side;
+      const c = (ring + 1) * sides + next;
+      indices.push(a, d, b, d, c, b);
+    }
+  }
+  for (let side = 0; side < sides; side += 1) {
+    const next = (side + 1) % sides;
+    indices.push(leftCenter, next, side);
+    const base = (xs.length - 1) * sides;
+    indices.push(rightCenter, base + side, base + next);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** M1.7.8 隐藏 QA 场景：引导中线位于 X=10mm，真实表面接缝应吸附到 X=20mm 的收腰环。 */
+export function bootstrapSurfaceCutPreviewQaScene(): boolean {
+  const instanceId = 'ins_qa_surface_cut_preview';
+  if (doc.nodes.has(instanceId)) return false;
+  const assetId = 'ast_qa_surface_cut_preview';
+  const geometry = makeSurfaceCutQaGeometry();
+  const asset = demoAsset(assetId, '表面收腰真实切割样件', geometry, 224);
+  const instance = demoInstance(instanceId, assetId, '表面收腰 · 自适应真实切割', [0, 0, 0]);
+  doc.hydrate([asset], [instance]);
+  useUi.getState().bump();
+  return true;
+}
+
 function makeComponentPreviewQaGeometry(): THREE.BufferGeometry {
   const parts = [
     new THREE.BoxGeometry(28, 28, 28).toNonIndexed().translate(-34, 0, 14),
