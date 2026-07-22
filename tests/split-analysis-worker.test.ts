@@ -96,10 +96,10 @@ const post = (env: WorkerEnv, body: unknown, fetchImpl?: typeof fetch) => handle
   body: JSON.stringify(body),
 }), env, { fetchImpl });
 
-function openAiSuccess(assertRequest?: (body: Record<string, unknown>, init?: RequestInit) => void): typeof fetch {
-  return async (_url, init) => {
+function responsesSuccess(assertRequest?: (url: string, body: Record<string, unknown>, init?: RequestInit) => void): typeof fetch {
+  return async (url, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    assertRequest?.(body, init);
+    assertRequest?.(String(url), body, init);
     return Response.json({
       id: 'resp-1', status: 'completed',
       output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(output) }] }],
@@ -109,7 +109,8 @@ function openAiSuccess(assertRequest?: (body: Record<string, unknown>, init?: Re
 
 describe('M1.6.2 Responses API 拆件分析端点', () => {
   it('只把服务端 secret 发给 OpenAI，并启用 strict schema、低细节视觉证据和 no-store', async () => {
-    const fetchImpl = openAiSuccess((body, init) => {
+    const fetchImpl = responsesSuccess((url, body, init) => {
+      expect(url).toBe('https://api.openai.com/v1/responses');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer server-secret');
       expect(body.model).toBe('gpt-5.6-sol');
       expect(body.store).toBe(false);
@@ -120,8 +121,26 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
     const response = await post(makeEnv(), requestBody(), fetchImpl);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({ ok: true, result: { needsSplit: 'yes' }, meta: { model: 'gpt-5.6-sol', evidenceViews: 1 } });
+    expect(body).toMatchObject({ ok: true, result: { needsSplit: 'yes' }, meta: { provider: 'openai', model: 'gpt-5.6-sol', evidenceViews: 1 } });
     expect(JSON.stringify(body)).not.toContain('server-secret');
+  });
+
+  it('AIHubMix 使用独立 secret 和固定端点，并保留 OpenAI secret 作为回滚通道', async () => {
+    const fetchImpl = responsesSuccess((url, body, init) => {
+      expect(url).toBe('https://aihubmix.com/v1/responses');
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer aihubmix-secret');
+      expect(JSON.stringify(body)).not.toContain('aihubmix-secret');
+      expect(JSON.stringify(body)).not.toContain('server-secret');
+    });
+    const response = await post(makeEnv({
+      SPLIT_ANALYSIS_PROVIDER: 'aihubmix',
+      AIHUBMIX_API_KEY: 'aihubmix-secret',
+    }), requestBody(), fetchImpl);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      meta: { provider: 'aihubmix', model: 'gpt-5.6-sol', evidenceViews: 1 },
+    });
   });
 
   it('缺少服务端密钥时 fail-closed，且不会调用上游', async () => {
@@ -129,6 +148,22 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
     const response = await post(makeEnv({ OPENAI_API_KEY: undefined }), requestBody(), fetchImpl);
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ error: 'split_analysis_unconfigured', class: 'service' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('AIHubMix 缺少自己的 secret 时不会回退或误用 OpenAI secret', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const response = await post(makeEnv({ SPLIT_ANALYSIS_PROVIDER: 'aihubmix' }), requestBody(), fetchImpl);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: 'split_analysis_unconfigured', class: 'service' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('未知 Provider 会 fail-closed，且不会调用任意上游地址', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const response = await post(makeEnv({ SPLIT_ANALYSIS_PROVIDER: 'custom-proxy' }), requestBody(), fetchImpl);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: 'split_analysis_provider_invalid', class: 'service' });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -148,9 +183,9 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
     expect(failed.status).toBe(502);
     expect(await failed.json()).toMatchObject({ error: 'split_analysis_failed', refunded: true });
 
-    const retry = await post(env, requestBody(), openAiSuccess());
+    const retry = await post(env, requestBody(), responsesSuccess());
     expect(retry.status).toBe(200);
-    const exhausted = await post(env, requestBody(), openAiSuccess());
+    const exhausted = await post(env, requestBody(), responsesSuccess());
     expect(exhausted.status).toBe(429);
     expect(await exhausted.json()).toMatchObject({ error: 'split_analysis_quota_exhausted' });
   });

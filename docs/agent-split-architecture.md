@@ -2,9 +2,9 @@
 
 | 项 | 内容 |
 |---|---|
-| 文档版本 | v0.2 |
-| 日期 | 2026-07-21 |
-| 状态 | M1.6.2 已完成只读 UI、4 视角证据、Responses API 与明确降级；待线上 Secret 和 Gold Set 验收 |
+| 文档版本 | v0.3 |
+| 日期 | 2026-07-22 |
+| 状态 | M1.6.2.1 已加入 AIHubMix/OpenAI 固定白名单双 Provider；待线上真链和 Gold Set 验收 |
 | 第一阶段 | 单 Agent、Responses API、只分析不改模 |
 | 后续评估 | 阶段二继续优先评估 Responses API 工具调用；阶段三评估 Agents SDK 的审批、状态与追踪能力 |
 
@@ -15,7 +15,7 @@
 3. **阶段三再评估 Agents SDK。** 它的价值不是“多 Agent”，而是可恢复的工具循环、人工审批暂停、guardrails、session 和 tracing。即使采用 SDK，仍保持单 Agent，不做专家分工或自动 handoff。
 4. **模型永远不直接编辑 Three.js 场景或网格。** 模型只输出建议或工具调用意图；几何计算、权限校验、预览、确认、写历史和撤销都由 3D-STD 的确定性代码负责。
 5. **第一阶段不向模型发送原始 STL/OBJ/GLB 或顶点数组。** 原始几何留在浏览器/几何服务内，只发送计算后的指标、对象关系和压缩多视角图。
-6. **OpenAI API Key 只允许存在于后端 Secret `OPENAI_API_KEY`。** 不复用现有浏览器 `x-engine-key` 通道，不写入源码、Git、localStorage、IndexedDB、日志或浏览器响应。
+6. **Provider Key 只允许存在于后端 Secret。** AIHubMix 使用 `AIHUBMIX_API_KEY`，官方 OpenAI 使用 `OPENAI_API_KEY`；两者不自动混用，也不复用浏览器 `x-engine-key` 通道，不写入源码、Git、localStorage、IndexedDB、日志或浏览器响应。
 7. **不训练或微调自有模型，也不做多 Agent。** 第一阶段通过确定性数据、严格 Schema、提示词版本和 Gold Set 评测提升质量；阶段二、三仍保持一个拆件专家。
 
 ## 1. 当前项目哪些数据可以交给大模型
@@ -57,7 +57,7 @@
 
 ### 1.3 禁止发送的数据
 
-- `OPENAI_API_KEY`、`TRIPO_API_KEY`、Turnstile Secret、用户自带 API Key。
+- `AIHUBMIX_API_KEY`、`OPENAI_API_KEY`、`TRIPO_API_KEY`、Turnstile Secret、用户自带 API Key。
 - 原始模型文件、完整顶点/索引数组、材质贴图，除非未来有单独的数据授权设计。
 - IP、原始浏览器指纹、配额账本、Durable Object 内部键。
 - 历史记录中的函数闭包、IndexedDB 二进制资产、未脱敏日志。
@@ -115,8 +115,8 @@ flowchart LR
   V["离屏多视角渲染"] --> S
   S -->|"multipart: snapshot JSON + 视图文件"| W["POST /api/agent/split-analysis"]
   W --> G["Schema 校验 / 大小限制 / 配额 / 快照哈希"]
-  G --> R["Responses API · 无工具 · store:false"]
-  K["OPENAI_API_KEY\nWorker Secret"] --> R
+  G --> R["固定 Provider 白名单\nAIHubMix / OpenAI Responses"]
+  K["Provider 专属 Key\nWorker Secret"] --> R
   R --> O["Structured Output 严格 Schema"]
   O --> N["后端二次校验与标准化"]
   N --> P["前端方案卡片 / 风险 / 下一步"]
@@ -133,7 +133,7 @@ flowchart LR
 6. 浏览器提交 `multipart/form-data`：
    - `snapshot`: `split-analysis-input.v1` JSON；
    - `view_front`、`view_left`、`view_right`、`view_iso`: 图片文件。
-7. 浏览器请求中不携带 OpenAI key，不允许新增类似 `x-openai-key` 的自带 key 通道。
+7. 浏览器请求中不携带任何 Provider Key，不允许新增类似 `x-openai-key` 的自带 key 通道。
 
 ### 4.2 Worker 侧
 
@@ -411,6 +411,13 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 - A10 工程安全测试已覆盖密钥不进入响应、非法证据前置拒绝、严格请求字段、失败退款和 UI 适配；prompt injection Gold Set 随 M1.6.3 完成。
 - 阶段二按钮继续禁用；阶段三没有写工具、审批票据或几何修改入口。
 
+### 10.0.2 M1.6.2.1 Provider 适配快照
+
+- Provider 由服务端非敏感变量选择，仅接受 `openai` / `aihubmix`；上游 URL 来自代码内固定映射，不能由前端或任意环境地址覆盖。
+- AIHubMix 和 OpenAI 使用各自独立 Secret；选择的通道缺少对应 Secret 时 fail-closed，不会偷用另一个 Key。
+- 前端成功结果显示实际 Provider、模型和证据视角；发送前说明结构化场景摘要与多视角截图的数据流向。
+- Responses 输入、strict Schema、`store:false`、只读权限、配额和本地降级保持不变。
+
 | 任务 | 交付物 | 依赖 | 验收重点 |
 |---|---|---|---|
 | A1 契约定稿 | 输入/输出类型、JSON Schema、错误码 | 无 | JSON 可解析；输出严格校验 |
@@ -432,7 +439,7 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 - 每次返回符合 `split-analysis-output.v1`，或返回明确的 refusal/incomplete/error。
 - 结果稳定展示用户要求的全部字段，并包含证据引用和能力限制。
 - 分析前后 `SceneDocument.editVersion`、资产数、节点数和历史长度完全不变。
-- 浏览器源码、请求、响应、localStorage、IndexedDB、Git 和日志中均找不到 `OPENAI_API_KEY`。
+- 浏览器源码、请求、响应、localStorage、IndexedDB、Git 和日志中均找不到 `AIHUBMIX_API_KEY` 或 `OPENAI_API_KEY`。
 - 场景变更后旧分析立即标记过期，不能直接进入阶段二预览。
 - Gold Set 达到预先约定的准确率/幻觉率/成本/延迟门槛后，才进入阶段二。
 

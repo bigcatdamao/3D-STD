@@ -194,6 +194,7 @@ export interface SplitAnalysisApiSuccess {
   ok: true;
   result: SplitAnalysisApiOutput;
   meta: {
+    provider: 'openai' | 'aihubmix';
     model: string;
     requestId: string;
     evidenceViews: number;

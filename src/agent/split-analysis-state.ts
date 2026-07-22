@@ -14,6 +14,7 @@ import type {
 
 export type SplitAnalysisPhase = 'idle' | 'running' | 'done' | 'failed';
 export type SplitAnalysisSource = 'api' | 'fallback';
+export type SplitAnalysisProvider = 'openai' | 'aihubmix';
 
 export const DEFAULT_SPLIT_GOAL = '判断当前模型是否需要拆件，并在适配打印空间的前提下尽量减少支撑、保持外观。';
 export const DEFAULT_SPLIT_PRIORITIES: SplitPriority[] = ['fit_build_volume', 'reduce_support'];
@@ -27,6 +28,7 @@ interface SplitAnalysisState {
   result: SplitAnalysisResult | null;
   selectedSchemeId: string | null;
   resultSource: SplitAnalysisSource | null;
+  provider: SplitAnalysisProvider | null;
   model: string | null;
   evidenceViews: number;
   warning: string | null;
@@ -49,6 +51,7 @@ export const useSplitAnalysis = create<SplitAnalysisState>()((set) => ({
   result: null,
   selectedSchemeId: null,
   resultSource: null,
+  provider: null,
   model: null,
   evidenceViews: 0,
   warning: null,
@@ -70,6 +73,7 @@ export const useSplitAnalysis = create<SplitAnalysisState>()((set) => ({
       result: null,
       selectedSchemeId: null,
       resultSource: null,
+      provider: null,
       model: null,
       evidenceViews: 0,
       warning: null,
@@ -133,6 +137,7 @@ export function runMockSplitAnalysis(delayMs = 650): boolean {
     result: null,
     selectedSchemeId: null,
     resultSource: null,
+    provider: null,
     model: null,
     evidenceViews: 0,
     warning: null,
@@ -148,7 +153,7 @@ export function runMockSplitAnalysis(delayMs = 650): boolean {
       result,
       selectedSchemeId: result.schemes.find((scheme) => scheme.recommended)?.id ?? result.schemes[0]?.id ?? null,
       resultSource: 'fallback',
-      warning: '当前显示的是本地规则建议，未调用 Responses API。',
+      warning: '当前显示的是本地规则建议，未调用后台模型服务。',
     });
   };
   if (delayMs <= 0) complete();
@@ -216,6 +221,7 @@ export async function runSplitAnalysis(options: { fetchImpl?: typeof fetch; time
       phase: 'done',
       result: response.result,
       resultSource: 'api',
+      provider: response.meta.provider,
       model: response.meta.model,
       evidenceViews: response.meta.evidenceViews,
       selectedSchemeId: response.result.schemes[0]?.id ?? null,
@@ -230,6 +236,7 @@ export async function runSplitAnalysis(options: { fetchImpl?: typeof fetch; time
       phase: 'done',
       result,
       resultSource: 'fallback',
+      provider: null,
       model: null,
       selectedSchemeId: result.schemes.find((scheme) => scheme.recommended)?.id ?? result.schemes[0]?.id ?? null,
       warning: error instanceof Error ? error.message : 'AI 分析暂时不可用，当前显示本地降级建议。',

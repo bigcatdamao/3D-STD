@@ -46,6 +46,7 @@ describe('SplitAnalysisPanel SSR', () => {
       result: null,
       selectedSchemeId: null,
       resultSource: null,
+      provider: null,
       model: null,
       evidenceViews: 0,
       warning: null,
@@ -55,7 +56,8 @@ describe('SplitAnalysisPanel SSR', () => {
     const html = strip(renderToString(<SplitAnalysisPanel />));
     expect(html).toContain('AI 拆件分析');
     expect(html).toContain('不会修改模型');
-    expect(html).toContain('Responses API');
+    expect(html).toContain('后台配置的模型服务');
+    expect(html).toContain('多视角截图');
     expect(html).toContain('薄壁：未检测');
     expect(html).toContain('局部过悬：未检测');
     expect(html).not.toContain('应用切割');
@@ -69,6 +71,7 @@ describe('SplitAnalysisPanel SSR', () => {
       result,
       selectedSchemeId: result.schemes[0].id,
       resultSource: 'api',
+      provider: 'aihubmix',
       model: 'gpt-5.6-sol',
       evidenceViews: 4,
       warning: null,
@@ -77,7 +80,7 @@ describe('SplitAnalysisPanel SSR', () => {
     });
     const html = strip(renderToString(<SplitAnalysisPanel />));
     expect(html).toContain('建议拆件');
-    expect(html).toContain('AI 分析 · gpt-5.6-sol · 4 视角');
+    expect(html).toContain('AI 分析 · AIHubMix · gpt-5.6-sol · 4 视角');
     expect(html).toContain('沿 X 分段');
     expect(html).toContain('候选方案');
     expect(html).toContain('风险与下一步');

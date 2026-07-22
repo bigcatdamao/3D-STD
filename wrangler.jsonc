@@ -31,11 +31,13 @@
     "TRIPO_MODEL_VERSION": "v2.5-20250123",
     // T13a:排队+生成超时合成阈值(超过即按 AI-05 timeout 类失败并返还)
     "TRIPO_TIMEOUT_MS": "600000",
-    // M1.6.2:只读拆件分析。OPENAI_API_KEY 必须作为 Worker Secret 配置，禁止写入本文件。
-    "OPENAI_SPLIT_MODEL": "gpt-5.6-sol",
-    "OPENAI_SPLIT_REASONING_EFFORT": "low",
-    "OPENAI_SPLIT_TIMEOUT_MS": "45000",
-    "OPENAI_SPLIT_MAX_OUTPUT_TOKENS": "3200",
+    // M1.6.2.1:只读拆件分析。AIHUBMIX_API_KEY 必须作为 Worker Secret 配置，禁止写入本文件。
+    // Provider 仅接受 openai/aihubmix 固定白名单；切回 openai 时继续使用已保留的 OPENAI_API_KEY Secret。
+    "SPLIT_ANALYSIS_PROVIDER": "aihubmix",
+    "SPLIT_ANALYSIS_MODEL": "gpt-5.6-sol",
+    "SPLIT_ANALYSIS_REASONING_EFFORT": "low",
+    "SPLIT_ANALYSIS_TIMEOUT_MS": "45000",
+    "SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS": "3200",
     "SPLIT_ANALYSIS_DAILY_LIMIT": "3",
     "SPLIT_ANALYSIS_BREAKER_UNITS": "100",
     "SPLIT_ANALYSIS_COST_UNITS": "1",

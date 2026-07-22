@@ -48,11 +48,12 @@ export interface WorkerEnv {
   TRIPO_API_KEY?: string; // T13a(Workers Secret)
   TRIPO_MODEL_VERSION?: string; // T13a,默认 v2.5-20250123
   TRIPO_TIMEOUT_MS?: string; // T13a,默认 600000
-  OPENAI_API_KEY?: string; // M1.6.2 Responses API，只允许 Workers Secret
-  OPENAI_SPLIT_MODEL?: string; // 默认 gpt-5.6-sol
-  OPENAI_SPLIT_REASONING_EFFORT?: string; // 默认 low
-  OPENAI_SPLIT_TIMEOUT_MS?: string; // 默认 45000
-  OPENAI_SPLIT_MAX_OUTPUT_TOKENS?: string; // 默认 3200
+  OPENAI_API_KEY?: string; // 官方 OpenAI 回滚通道，只允许 Workers Secret
+  AIHUBMIX_API_KEY?: string; // AIHubMix 通道，只允许 Workers Secret
+  OPENAI_SPLIT_MODEL?: string; // 旧配置兼容，优先使用 SPLIT_ANALYSIS_MODEL
+  OPENAI_SPLIT_REASONING_EFFORT?: string; // 旧配置兼容
+  OPENAI_SPLIT_TIMEOUT_MS?: string; // 旧配置兼容
+  OPENAI_SPLIT_MAX_OUTPUT_TOKENS?: string; // 旧配置兼容
   // Vars(wrangler.jsonc,可覆盖):
   VISITOR_DAILY_LIMIT?: string; // 默认 3(PRD AI-11 / §9)
   DEMO_DEFAULT_LIMIT?: string; // 默认 20
@@ -63,6 +64,11 @@ export interface WorkerEnv {
   MOCK_FAIL_RATE?: string; // mock 随机失败率 0–1,默认 0
   SPLIT_ANALYSIS_DAILY_LIMIT?: string; // 单访客只读分析次数，默认 3
   SPLIT_ANALYSIS_BREAKER_UNITS?: string; // 独立 DO 的全站日熔断单位，默认 100
+  SPLIT_ANALYSIS_PROVIDER?: string; // openai | aihubmix，默认 openai
+  SPLIT_ANALYSIS_MODEL?: string; // 默认 gpt-5.6-sol
+  SPLIT_ANALYSIS_REASONING_EFFORT?: string; // 默认 low
+  SPLIT_ANALYSIS_TIMEOUT_MS?: string; // 默认 45000
+  SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS?: string; // 默认 3200
   SPLIT_ANALYSIS_COST_UNITS?: string; // 单次预扣单位，默认 1
 }
 
@@ -165,6 +171,21 @@ function splitReasoningEffort(raw: string | undefined): ResponsesConfig['reasoni
   return raw === 'none' || raw === 'medium' || raw === 'high' || raw === 'xhigh' ? raw : 'low';
 }
 
+type SplitAnalysisProvider = SplitAnalysisApiSuccess['meta']['provider'];
+
+const SPLIT_PROVIDER_ENDPOINTS: Record<SplitAnalysisProvider, string> = {
+  openai: 'https://api.openai.com/v1/responses',
+  aihubmix: 'https://aihubmix.com/v1/responses',
+};
+
+function splitProviderOf(env: WorkerEnv): { provider: SplitAnalysisProvider; endpoint: string; apiKey: string } | null {
+  const raw = env.SPLIT_ANALYSIS_PROVIDER?.trim().toLowerCase() || 'openai';
+  if (raw !== 'openai' && raw !== 'aihubmix') return null;
+  const provider: SplitAnalysisProvider = raw;
+  const apiKey = provider === 'aihubmix' ? env.AIHUBMIX_API_KEY?.trim() : env.OPENAI_API_KEY?.trim();
+  return { provider, endpoint: SPLIT_PROVIDER_ENDPOINTS[provider], apiKey: apiKey ?? '' };
+}
+
 /** M1.6.2:单 Agent、只读分析。独立配额实例，不占用 Tripo 生成配额，也不接受浏览器自带 key。 */
 async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
   let request;
@@ -177,7 +198,11 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
     return err(400, 'bad_request', 'validation', '拆件分析请求无法解析。');
   }
 
-  if (!env.OPENAI_API_KEY?.trim()) {
+  const providerConfig = splitProviderOf(env);
+  if (!providerConfig) {
+    return err(503, 'split_analysis_provider_invalid', 'service', 'AI 拆件分析 Provider 配置无效，已可使用本地降级建议。');
+  }
+  if (!providerConfig.apiKey) {
     return err(503, 'split_analysis_unconfigured', 'service', 'AI 拆件分析尚未配置服务端密钥，已可使用本地降级建议。');
   }
 
@@ -202,19 +227,21 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
       : err(429, 'split_analysis_quota_exhausted', 'quota', '今日 AI 拆件分析次数已用完，已可使用本地降级建议。');
   }
 
-  const model = env.OPENAI_SPLIT_MODEL?.trim() || 'gpt-5.6-sol';
+  const model = env.SPLIT_ANALYSIS_MODEL?.trim() || env.OPENAI_SPLIT_MODEL?.trim() || 'gpt-5.6-sol';
   try {
     const result = await callSplitAnalysisResponses(request, {
-      apiKey: env.OPENAI_API_KEY.trim(),
+      apiKey: providerConfig.apiKey,
+      endpoint: providerConfig.endpoint,
       model,
-      reasoningEffort: splitReasoningEffort(env.OPENAI_SPLIT_REASONING_EFFORT),
-      timeoutMs: Math.max(5_000, Math.min(90_000, num(env.OPENAI_SPLIT_TIMEOUT_MS, 45_000))),
-      maxOutputTokens: Math.max(1_500, Math.min(8_000, num(env.OPENAI_SPLIT_MAX_OUTPUT_TOKENS, 3_200))),
+      reasoningEffort: splitReasoningEffort(env.SPLIT_ANALYSIS_REASONING_EFFORT ?? env.OPENAI_SPLIT_REASONING_EFFORT),
+      timeoutMs: Math.max(5_000, Math.min(90_000, num(env.SPLIT_ANALYSIS_TIMEOUT_MS ?? env.OPENAI_SPLIT_TIMEOUT_MS, 45_000))),
+      maxOutputTokens: Math.max(1_500, Math.min(8_000, num(env.SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS ?? env.OPENAI_SPLIT_MAX_OUTPUT_TOKENS, 3_200))),
     }, deps.fetchImpl ?? fetch);
     const body: SplitAnalysisApiSuccess = {
       ok: true,
       result,
       meta: {
+        provider: providerConfig.provider,
         model,
         requestId: request.input.requestId,
         evidenceViews: request.images.length,

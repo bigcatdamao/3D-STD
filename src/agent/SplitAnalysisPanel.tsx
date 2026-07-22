@@ -91,7 +91,7 @@ export function SplitAnalysisPanel() {
 
       <div className="split-analysis__notice">
         <strong>不会修改模型</strong>
-        <span>Responses API 仅分析场景与多视角证据；服务不可用时会明确显示本地降级结果。</span>
+        <span>尺寸、检测结果与多视角截图会发送到后台配置的模型服务；仅分析建议，不修改模型。</span>
       </div>
 
       <div className="split-evidence" aria-label="当前分析证据">
@@ -189,7 +189,7 @@ export function SplitAnalysisPanel() {
         <div className={`split-result${resultStale ? ' is-stale' : ''}`}>
           <div className={`split-result__source is-${analysis.resultSource ?? 'fallback'}`}>
             {analysis.resultSource === 'api'
-              ? `AI 分析 · ${analysis.model ?? 'Responses API'} · ${analysis.evidenceViews} 视角`
+              ? `AI 分析 · ${analysis.provider === 'aihubmix' ? 'AIHubMix' : 'OpenAI'} · ${analysis.model ?? 'Responses API'} · ${analysis.evidenceViews} 视角`
               : '本地降级建议 · 未使用大模型'}
           </div>
           {analysis.warning && <div className="split-result__warning">{analysis.warning}</div>}
