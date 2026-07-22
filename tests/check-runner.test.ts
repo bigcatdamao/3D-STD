@@ -63,6 +63,7 @@ function defaultScript(m: CheckRunMsg, reply: (r: CheckReply) => void) {
           selfIntersectionComplete: true,
           selfIntersectionTrianglesScanned: 10,
           selfIntersectionPairTests: 0,
+          selfIntersectionEvidence: [],
         },
         analysisMs: 1,
         cached: !fresh,

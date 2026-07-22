@@ -70,6 +70,22 @@ describe('M1.7.1 深度网格只读检测', () => {
     const result = analyzeMeshHealth(positions, null);
     expect(result.selfIntersectionPairs).toBe(1);
     expect(result.selfIntersectionComplete).toBe(true);
+    expect(result.selfIntersectionEvidence).toHaveLength(1);
+    expect(result.selfIntersectionEvidence[0]).toMatchObject({ faceA: 1, faceB: 2 });
+    expect(result.selfIntersectionEvidence[0].triangleA).toEqual([
+      [-2, -2, 0], [2, -2, 0], [0, 2, 0],
+    ]);
+  });
+
+  it('命中数量可继续统计，但传回主线程的局部证据受独立预算保护', () => {
+    const positions = new Float32Array([
+      -2, -2, 0, 2, -2, 0, 0, 2, 0,
+      0, -1, -1, 0, 1, -1, 0, 0, 1,
+      -1, 0, -1, 1, 0, -1, 0, 0, 1,
+    ]);
+    const result = analyzeMeshHealth(positions, null, { maxSelfIntersectionEvidence: 1 });
+    expect(result.selfIntersectionPairs).toBeGreaterThan(1);
+    expect(result.selfIntersectionEvidence).toHaveLength(1);
   });
 
   it('超过扫描预算时明确标记为部分检测，不把零命中表述为完整通过', () => {
@@ -81,5 +97,6 @@ describe('M1.7.1 深度网格只读检测', () => {
     expect(result.selfIntersectionComplete).toBe(false);
     expect(result.componentAnalysisComplete).toBe(false);
     expect(result.connectedComponents).toBe(0);
+    expect(result.selfIntersectionEvidence).toEqual([]);
   });
 });

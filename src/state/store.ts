@@ -144,6 +144,7 @@ export type ViewPreset = 'top' | 'front' | 'side' | 'iso';
 export type CamCmd =
   | { kind: 'preset'; view: ViewPreset }
   | { kind: 'focus' }
+  | { kind: 'focusBounds'; min: [number, number, number]; max: [number, number, number] }
   | { kind: 'home' };
 
 const camListeners = new Set<(c: CamCmd) => void>();
@@ -270,6 +271,32 @@ export function bootstrapDemoScene(): boolean {
   doc.hydrate(assets, nodes);
   useUi.getState().bump();
   return true;
+}
+
+/** M1.7.2 隐藏 QA 场景：`?qa=self-intersection` 使用三片三角形形成两组确定命中，
+ *  让本地与线上都能稳定验收“检测 → 命中对浏览 → 局部聚焦”，不污染常规五对象示例与 Agent Gold Set。 */
+export function bootstrapSelfIntersectionQaScene(): boolean {
+  const instanceId = 'ins_qa_self_intersection';
+  if (doc.nodes.has(instanceId)) return false;
+  const assetId = 'ast_qa_self_intersection';
+  const geometry = makeSelfIntersectionPair();
+  const asset = demoAsset(assetId, '自交定位样件', geometry, 3, { watertight: false });
+  const instance = demoInstance(instanceId, assetId, '自交定位样件 · 只读证据', [0, 0, 12]);
+  doc.hydrate([asset], [instance]);
+  useUi.getState().bump();
+  return true;
+}
+
+function makeSelfIntersectionPair(): THREE.BufferGeometry {
+  const positions = new Float32Array([
+    -20, -20, 0, 20, -20, 0, 0, 20, 0,
+    -6, -10, -12, -6, 10, -12, -6, 0, 12,
+    6, -10, -12, 6, 10, -12, 6, 0, 12,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 /** 顶面缺失的开口盒(w×d×h,几何中心在原点):非水密(顶缘 4 条边界边)、面片朝外的手工三角网格。

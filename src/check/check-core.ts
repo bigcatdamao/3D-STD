@@ -206,7 +206,7 @@ export function checkInstance(
     push(
       'self_intersection',
       'error',
-      `检测到${health.selfIntersectionComplete ? '' : '至少 '}${health.selfIntersectionPairs} 组不相邻面片相交。当前仅定位风险，不自动改写复杂拓扑`,
+      `检测到${health.selfIntersectionComplete ? '' : '至少 '}${health.selfIntersectionPairs} 组不相邻面片相交。可逐组定位局部证据；当前只读，不自动改写复杂拓扑`,
     );
   }
   if (health?.internalShells) {

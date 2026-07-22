@@ -137,21 +137,64 @@ describe('CheckPanel SSR 冒烟', () => {
     useMeshRepair.setState({ phase: 'idle' });
   });
 
-  it('复杂拓扑问题显示只读诊断标识，不提供自动修复按钮', () => {
+  it('复杂拓扑问题显示只读诊断与自交证据浏览，不提供自动修复按钮', () => {
     const instance = [...doc.nodes.values()].find((node) => node.kind === 'instance')!;
+    const assetId = instance.kind === 'instance' ? instance.assetId : '';
     useCheck.setState({
       panelOpen: true,
       phase: 'done',
-      issues: [{
-        key: `internal_shell:${instance.id}`,
-        level: 'warning',
-        code: 'internal_shell',
-        instanceId: instance.id,
-        instanceName: instance.name,
-        assetId: instance.kind === 'instance' ? instance.assetId : '',
-        message: '疑似包含 1 个内部封闭壳体',
+      issues: [
+        {
+          key: `self_intersection:${instance.id}`,
+          level: 'error',
+          code: 'self_intersection',
+          instanceId: instance.id,
+          instanceName: instance.name,
+          assetId,
+          message: '检测到 1 组不相邻面片相交',
+        },
+        {
+          key: `internal_shell:${instance.id}`,
+          level: 'warning',
+          code: 'internal_shell',
+          instanceId: instance.id,
+          instanceName: instance.name,
+          assetId,
+          message: '疑似包含 1 个内部封闭壳体',
+        },
+      ],
+      assetMetas: [{
+        assetId,
+        faces: 10,
+        weldedVertices: 8,
+        degenerateCount: 0,
+        boundaryEdges: 0,
+        nonManifoldEdges: 0,
+        watertight: true,
+        health: {
+          connectedComponents: 1,
+          closedComponents: 1,
+          componentAnalysisComplete: true,
+          isolatedFragments: 0,
+          isolatedFragmentFaces: 0,
+          internalShells: 0,
+          selfIntersectionPairs: 1,
+          selfIntersectionComplete: true,
+          selfIntersectionTrianglesScanned: 10,
+          selfIntersectionPairTests: 2,
+          selfIntersectionEvidence: [{
+            faceA: 2,
+            faceB: 9,
+            triangleA: [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+            triangleB: [[0, 0, -1], [0, 0, 1], [1, 0, 0]],
+          }],
+        },
+        analysisMs: 1,
+        cached: false,
       }],
-      summary: { ...summary, errors: 0, warnings: 1, instances: 1 },
+      activeKey: `self_intersection:${instance.id}`,
+      activeEvidenceIndex: 0,
+      summary: { ...summary, errors: 1, warnings: 1, instances: 1 },
       unfinished: [],
       timedOut: false,
       fixedKeys: [],
@@ -160,6 +203,9 @@ describe('CheckPanel SSR 冒烟', () => {
     const html = strip(renderToString(<CheckPanel />));
     expect(html).toContain('只读诊断');
     expect(html).toContain('内部封闭壳体');
+    expect(html).toContain('证据 1/1');
+    expect(html).toContain('面 #2 × #9');
+    expect(html).toContain('定位');
     expect(html).not.toContain('修复预览');
   });
 

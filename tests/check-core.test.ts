@@ -190,6 +190,7 @@ describe('三级判定(CHK-01)与修复参数(CHK-06)', () => {
       selfIntersectionComplete: false,
       selfIntersectionTrianglesScanned: 60_000,
       selfIntersectionPairTests: 500_000,
+      selfIntersectionEvidence: [],
     };
     const w = worldStats(cube(20), T([0, 0, 10]));
     const issues = checkInstance(inst('deep'), { ...topoOK, faces: 120_000, health }, w, BED);

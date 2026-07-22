@@ -5,23 +5,34 @@
 // 过期(CHK-03)或对象已删(边界 2)即熄灭 —— 高亮承诺「问题就在这里」,承诺失效就不再亮。
 
 import { Html } from '@react-three/drei';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { doc, geometryRegistry, useUi } from '../state/store';
 import { edgeRegistry, liveIssues, reportIsStale, useCheck } from './check-state';
+import type { MeshHealthVec3, SelfIntersectionEvidence } from './mesh-health-core';
 
 const RED = '#f06a6a';
 const AMBER = '#ffb454';
+const EVIDENCE_A = '#ff596c';
+const EVIDENCE_B = '#50c8ff';
 
 export function CheckHighlight() {
   useUi((s) => s.rev);
   useUi((s) => s.bed);
   const activeKey = useCheck((s) => s.activeKey);
+  const activeEvidenceIndex = useCheck((s) => s.activeEvidenceIndex);
+  const assetMetas = useCheck((s) => s.assetMetas);
   const phase = useCheck((s) => s.phase);
 
   const issue = liveIssues().find((i) => i.key === activeKey) ?? null;
   const inst = issue ? doc.nodes.get(issue.instanceId) : null;
   const stale = phase === 'done' && reportIsStale();
+  const selfIntersectionEvidence = issue?.code === 'self_intersection'
+    ? assetMetas.find((meta) => meta.assetId === issue.assetId)?.health.selfIntersectionEvidence ?? []
+    : [];
+  const selectedEvidence = selfIntersectionEvidence.length
+    ? selfIntersectionEvidence[Math.min(activeEvidenceIndex, selfIntersectionEvidence.length - 1)]
+    : null;
 
   const segGeo = useMemo(() => {
     if (!issue || issue.code !== 'non_watertight') return null;
@@ -48,14 +59,23 @@ export function CheckHighlight() {
           rotation={[t.rotation[0] * D2R, t.rotation[1] * D2R, t.rotation[2] * D2R]}
           scale={[t.scale[0], t.scale[1], t.scale[2]]}
         >
-          <mesh geometry={geo} scale={[1.06, 1.06, 1.06]} renderOrder={2}>
-            <meshBasicMaterial color={shellColor} side={THREE.BackSide} depthWrite={false} transparent opacity={0.85} />
-          </mesh>
+          {issue.code !== 'self_intersection' && (
+            <mesh geometry={geo} scale={[1.06, 1.06, 1.06]} renderOrder={2}>
+              <meshBasicMaterial color={shellColor} side={THREE.BackSide} depthWrite={false} transparent opacity={0.85} />
+            </mesh>
+          )}
           {/* 非水密:边界边描红(局部坐标线段随实例变换) */}
           {segGeo && (
             <lineSegments geometry={segGeo} renderOrder={3}>
               <lineBasicMaterial color={RED} depthTest={false} />
             </lineSegments>
+          )}
+          {selectedEvidence && (
+            <SelfIntersectionEvidenceHighlight
+              evidence={selectedEvidence}
+              index={Math.min(activeEvidenceIndex, selfIntersectionEvidence.length - 1)}
+              total={selfIntersectionEvidence.length}
+            />
           )}
         </group>
       )}
@@ -64,6 +84,93 @@ export function CheckHighlight() {
       {issue.code === 'floating' && issue.world && (
         <FloatDropLine world={issue.world} />
       )}
+    </group>
+  );
+}
+
+function triangleGeometry(points: [MeshHealthVec3, MeshHealthVec3, MeshHealthVec3]): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points.flat()), 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function triangleEdgeGeometry(points: [MeshHealthVec3, MeshHealthVec3, MeshHealthVec3]): THREE.BufferGeometry {
+  const [a, b, c] = points;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    ...a, ...b,
+    ...b, ...c,
+    ...c, ...a,
+  ]), 3));
+  return geometry;
+}
+
+function SelfIntersectionEvidenceHighlight({
+  evidence,
+  index,
+  total,
+}: {
+  evidence: SelfIntersectionEvidence;
+  index: number;
+  total: number;
+}) {
+  const visual = useMemo(() => {
+    const all = [...evidence.triangleA, ...evidence.triangleB];
+    const min: MeshHealthVec3 = [Infinity, Infinity, Infinity];
+    const max: MeshHealthVec3 = [-Infinity, -Infinity, -Infinity];
+    for (const point of all) {
+      for (let axis = 0; axis < 3; axis++) {
+        min[axis] = Math.min(min[axis], point[axis]);
+        max[axis] = Math.max(max[axis], point[axis]);
+      }
+    }
+    const center: MeshHealthVec3 = [
+      (min[0] + max[0]) / 2,
+      (min[1] + max[1]) / 2,
+      (min[2] + max[2]) / 2,
+    ];
+    const diagonal = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+    return {
+      faceA: triangleGeometry(evidence.triangleA),
+      faceB: triangleGeometry(evidence.triangleB),
+      edgeA: triangleEdgeGeometry(evidence.triangleA),
+      edgeB: triangleEdgeGeometry(evidence.triangleB),
+      center,
+      markerRadius: Math.max(diagonal * 0.035, 0.15),
+    };
+  }, [evidence]);
+
+  useEffect(() => () => {
+    visual.faceA.dispose();
+    visual.faceB.dispose();
+    visual.edgeA.dispose();
+    visual.edgeB.dispose();
+  }, [visual]);
+
+  return (
+    <group>
+      <mesh geometry={visual.faceA} renderOrder={5}>
+        <meshBasicMaterial color={EVIDENCE_A} side={THREE.DoubleSide} depthTest={false} depthWrite={false} transparent opacity={0.82} />
+      </mesh>
+      <mesh geometry={visual.faceB} renderOrder={5}>
+        <meshBasicMaterial color={EVIDENCE_B} side={THREE.DoubleSide} depthTest={false} depthWrite={false} transparent opacity={0.82} />
+      </mesh>
+      <lineSegments geometry={visual.edgeA} renderOrder={6}>
+        <lineBasicMaterial color="#ffd8dd" depthTest={false} />
+      </lineSegments>
+      <lineSegments geometry={visual.edgeB} renderOrder={6}>
+        <lineBasicMaterial color="#d6f4ff" depthTest={false} />
+      </lineSegments>
+      <mesh position={visual.center} renderOrder={6}>
+        <sphereGeometry args={[visual.markerRadius, 18, 12]} />
+        <meshBasicMaterial color="#ffffff" depthTest={false} />
+      </mesh>
+      <Html position={visual.center} center style={{ pointerEvents: 'none' }}>
+        <div className="self-intersection-label">
+          自交证据 {index + 1}/{total}<br />面 #{evidence.faceA} × #{evidence.faceB}
+        </div>
+      </Html>
     </group>
   );
 }

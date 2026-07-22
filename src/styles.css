@@ -244,6 +244,54 @@ select:focus-visible {
   font-weight: 650;
 }
 
+/* M1.7.2 · 自交命中对浏览：局部证据只读定位，不写场景历史。 */
+.self-intersection-evidence {
+  display: grid;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid rgba(80, 200, 255, .18);
+  border-radius: 7px;
+  background: rgba(10, 14, 20, .42);
+}
+.self-intersection-evidence__legend,
+.self-intersection-evidence__legend span,
+.self-intersection-evidence__nav { display: flex; align-items: center; }
+.self-intersection-evidence__legend { gap: 6px; color: #83919e; font-size: 9px; }
+.self-intersection-evidence__legend span { gap: 4px; }
+.self-intersection-evidence__legend b { color: #596570; font-size: 8px; }
+.self-intersection-evidence__legend i { width: 7px; height: 7px; border-radius: 2px; box-shadow: 0 0 7px currentColor; }
+.self-intersection-evidence__legend i.face-a { background: #ff596c; color: #ff596c; }
+.self-intersection-evidence__legend i.face-b { background: #50c8ff; color: #50c8ff; }
+.self-intersection-evidence__nav { gap: 4px; }
+.self-intersection-evidence__nav span { flex: 1; min-width: 0; overflow: hidden; color: #a7b4bf; font-size: 9px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.self-intersection-evidence__nav button {
+  min-width: 23px;
+  padding: 2px 5px;
+  border: 1px solid #36414b;
+  border-radius: 5px;
+  background: #222831;
+  color: #aab8c3;
+  cursor: pointer;
+  font-size: 10px;
+}
+.self-intersection-evidence__nav button.locate { border-color: rgba(80, 200, 255, .42); color: #83d9ff; }
+.self-intersection-evidence__nav button:disabled { cursor: default; opacity: .32; }
+.self-intersection-label {
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 6px;
+  background: rgba(12, 15, 20, .9);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .35);
+  color: #f1f5f8;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* M1.7 · 打印问题修复工作台：先预览、再生成派生副本。 */
 .mesh-repair-card {
   display: grid;

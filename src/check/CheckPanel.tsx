@@ -6,10 +6,12 @@ import { doc, useUi } from '../state/store';
 import {
   applyFix,
   fixDisabledReason,
+  focusSelfIntersectionEvidence,
   focusIssue,
   liveIssues,
   reportIsStale,
   runPrintCheck,
+  selfIntersectionEvidenceForIssue,
   useCheck,
   useCheckSnapshot,
 } from './check-state';
@@ -63,7 +65,19 @@ function StatusChip({ stale }: { stale: boolean }) {
   return chip('✓ 通过', GREEN);
 }
 
-function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale: boolean; fixed: boolean; activeKey: string | null }) {
+function IssueRow({
+  issue,
+  stale,
+  fixed,
+  activeKey,
+  activeEvidenceIndex,
+}: {
+  issue: CheckIssue;
+  stale: boolean;
+  fixed: boolean;
+  activeKey: string | null;
+  activeEvidenceIndex: number;
+}) {
   const repairPhase = useMeshRepair((state) => state.phase);
   const repairIssueKey = useMeshRepair((state) => state.issueKey);
   const active = activeKey === issue.key;
@@ -77,6 +91,11 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
     || issue.code === 'deep_check_partial';
   const repairReason = canPreviewRepair ? meshRepairDisabledReason(issue) : null;
   const repairBusy = repairPhase === 'preparing';
+  const evidence = selfIntersectionEvidenceForIssue(issue);
+  const evidenceIndex = active && evidence.length
+    ? Math.min(activeEvidenceIndex, evidence.length - 1)
+    : 0;
+  const selectedEvidence = evidence[evidenceIndex];
 
   return (
     <div
@@ -103,6 +122,47 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
           {fixed && <span style={{ color: GREEN, fontWeight: 400 }}> · ✓ 已执行修复</span>}
         </div>
         <div style={{ color: issue.level === 'info' ? GREY : meta.color }}>{issue.message}</div>
+        {selectedEvidence && (
+          <div
+            className="self-intersection-evidence"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="self-intersection-evidence__legend">
+              <span><i className="face-a" />红色面 A</span>
+              <b>×</b>
+              <span><i className="face-b" />蓝色面 B</span>
+            </div>
+            <div className="self-intersection-evidence__nav">
+              <button
+                type="button"
+                aria-label="上一组自交证据"
+                disabled={stale || evidence.length <= 1}
+                onClick={() => focusSelfIntersectionEvidence(issue, evidenceIndex - 1)}
+              >
+                ‹
+              </button>
+              <span>
+                证据 {evidenceIndex + 1}/{evidence.length} · 面 #{selectedEvidence.faceA} × #{selectedEvidence.faceB}
+              </span>
+              <button
+                type="button"
+                aria-label="下一组自交证据"
+                disabled={stale || evidence.length <= 1}
+                onClick={() => focusSelfIntersectionEvidence(issue, evidenceIndex + 1)}
+              >
+                ›
+              </button>
+              <button
+                type="button"
+                className="locate"
+                disabled={stale}
+                onClick={() => focusSelfIntersectionEvidence(issue, evidenceIndex)}
+              >
+                定位
+              </button>
+            </div>
+          </div>
+        )}
         {issue.level === 'warning' && issue.code === 'floating' && issue.world && (
           <div style={{ color: GREY }}>投影落点 z=0,距离 {issue.world.min[2].toFixed(1)}mm</div>
         )}
@@ -154,7 +214,7 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
             fontSize: 9,
             whiteSpace: 'nowrap',
           }}
-          title="M1.7.1 只读深度诊断：提供证据，不自动修改复杂拓扑"
+          title="M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑"
         >
           只读诊断
         </span>
@@ -278,7 +338,14 @@ export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boole
                     {LEVEL_META[lv].icon} {LEVEL_META[lv].name}({list.length})
                   </div>
                   {list.map((i) => (
-                    <IssueRow key={i.key} issue={i} stale={stale} fixed={s.fixedKeys.includes(i.key)} activeKey={s.activeKey} />
+                    <IssueRow
+                      key={i.key}
+                      issue={i}
+                      stale={stale}
+                      fixed={s.fixedKeys.includes(i.key)}
+                      activeKey={s.activeKey}
+                      activeEvidenceIndex={s.activeEvidenceIndex}
+                    />
                   ))}
                 </div>
               );

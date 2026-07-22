@@ -1,12 +1,24 @@
 import { bboxOfPositions } from '../importer/parse-core';
 
-type Vec3 = [number, number, number];
+export type MeshHealthVec3 = [number, number, number];
+type Vec3 = MeshHealthVec3;
 type Tri = [number, number, number];
 
 export const MAX_SELF_INTERSECTION_TRIANGLES = 60_000;
 export const MAX_SELF_INTERSECTION_PAIR_TESTS = 500_000;
 export const MAX_SELF_INTERSECTION_HITS = 200;
+/** 视口逐条浏览只保留前 24 组确定命中，避免把大型模型的诊断证据无限传回主线程。 */
+export const MAX_SELF_INTERSECTION_EVIDENCE = 24;
 export const MAX_COMPONENT_ANALYSIS_TRIANGLES = 250_000;
+
+export interface SelfIntersectionEvidence {
+  /** 1-based 原始三角面序号，便于在 UI 中与外部网格工具核对。 */
+  faceA: number;
+  faceB: number;
+  /** 资产局部坐标；视口按实例 TRS 变换后只读高亮。 */
+  triangleA: [Vec3, Vec3, Vec3];
+  triangleB: [Vec3, Vec3, Vec3];
+}
 
 export interface MeshHealthAnalysis {
   connectedComponents: number;
@@ -19,18 +31,21 @@ export interface MeshHealthAnalysis {
   selfIntersectionComplete: boolean;
   selfIntersectionTrianglesScanned: number;
   selfIntersectionPairTests: number;
+  selfIntersectionEvidence: SelfIntersectionEvidence[];
 }
 
 export interface MeshHealthOptions {
   maxSelfIntersectionTriangles?: number;
   maxSelfIntersectionPairTests?: number;
   maxSelfIntersectionHits?: number;
+  maxSelfIntersectionEvidence?: number;
   maxComponentAnalysisTriangles?: number;
 }
 
 interface PreparedMesh {
   vertices: Vec3[];
   triangles: Tri[];
+  triangleSourceFaces: number[];
   diag: number;
   epsilon: number;
   sourceFaces: number;
@@ -106,6 +121,7 @@ function prepareMesh(positions: Float32Array, index: Uint32Array | null, options
   const processingCount = componentAnalysisComplete ? count : Math.min(count, fallbackLimit);
   const stride = componentAnalysisComplete ? 1 : count / processingCount;
   const triangles: Tri[] = [];
+  const triangleSourceFaces: number[] = [];
   for (let sample = 0; sample < processingCount; sample++) {
     const face = componentAnalysisComplete ? sample : Math.min(count - 1, Math.floor(sample * stride));
     const raw: Tri = index
@@ -126,8 +142,9 @@ function prepareMesh(positions: Float32Array, index: Uint32Array | null, options
     const area2 = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
     if (area2 < area2Epsilon) continue;
     triangles.push(tri);
+    triangleSourceFaces.push(face);
   }
-  return { vertices, triangles, diag, epsilon, sourceFaces: count, componentAnalysisComplete };
+  return { vertices, triangles, triangleSourceFaces, diag, epsilon, sourceFaces: count, componentAnalysisComplete };
 }
 
 const PACK = 1 << 26;
@@ -392,6 +409,8 @@ function selfIntersections(mesh: PreparedMesh, options: MeshHealthOptions) {
 
   const pairLimit = Math.max(1, options.maxSelfIntersectionPairTests ?? MAX_SELF_INTERSECTION_PAIR_TESTS);
   const hitLimit = Math.max(1, options.maxSelfIntersectionHits ?? MAX_SELF_INTERSECTION_HITS);
+  const evidenceLimit = Math.max(1, options.maxSelfIntersectionEvidence ?? MAX_SELF_INTERSECTION_EVIDENCE);
+  const evidence: SelfIntersectionEvidence[] = [];
   const active: TriangleBounds[] = [];
   const broadPhaseLimit = pairLimit * 10;
   let broadPhaseComparisons = 0;
@@ -424,6 +443,15 @@ function selfIntersections(mesh: PreparedMesh, options: MeshHealthOptions) {
         mesh.epsilon,
       )) {
         hits++;
+        if (evidence.length < evidenceLimit) {
+          const copyTriangle = (tri: Tri): [Vec3, Vec3, Vec3] => tri.map((id) => [...mesh.vertices[id]] as Vec3) as [Vec3, Vec3, Vec3];
+          evidence.push({
+            faceA: mesh.triangleSourceFaces[candidate.face] + 1,
+            faceB: mesh.triangleSourceFaces[current.face] + 1,
+            triangleA: copyTriangle(a),
+            triangleB: copyTriangle(b),
+          });
+        }
         if (hits >= hitLimit) {
           truncated = true;
           break outer;
@@ -437,6 +465,7 @@ function selfIntersections(mesh: PreparedMesh, options: MeshHealthOptions) {
     complete: !truncated,
     trianglesScanned: selected.length,
     pairTests: Math.min(pairTests, pairLimit),
+    evidence,
   };
 }
 
@@ -488,5 +517,6 @@ export function analyzeMeshHealth(
     selfIntersectionComplete: intersections.complete,
     selfIntersectionTrianglesScanned: intersections.trianglesScanned,
     selfIntersectionPairTests: intersections.pairTests,
+    selfIntersectionEvidence: intersections.evidence,
   };
 }

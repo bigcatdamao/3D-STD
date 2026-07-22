@@ -107,22 +107,26 @@ export function CameraRig() {
         }
         return;
       }
-      // F 聚焦:选中集包围盒;无选中 → 全部可见对象;空场景 → 床
-      const ids = doc.selection.size
-        ? [...doc.selection]
-        : [...meshRegistry.keys()].filter((id) => doc.nodes.get(id)?.visible);
       const box = new THREE.Box3();
-      let any = false;
-      const sub = new THREE.Box3();
-      for (const id of ids) {
-        const n = doc.nodes.get(id);
-        const pool = n?.kind === 'group' ? doc.descendants(id) : [id];
-        for (const pid of pool) {
-          const obj = meshRegistry.get(pid);
-          if (!obj) continue;
-          sub.setFromObject(obj);
-          box.union(sub);
-          any = true;
+      let any = cmd.kind === 'focusBounds';
+      if (cmd.kind === 'focusBounds') {
+        box.set(new THREE.Vector3(...cmd.min), new THREE.Vector3(...cmd.max));
+      } else {
+        // F 聚焦:选中集包围盒;无选中 → 全部可见对象;空场景 → 床
+        const ids = doc.selection.size
+          ? [...doc.selection]
+          : [...meshRegistry.keys()].filter((id) => doc.nodes.get(id)?.visible);
+        const sub = new THREE.Box3();
+        for (const id of ids) {
+          const n = doc.nodes.get(id);
+          const pool = n?.kind === 'group' ? doc.descendants(id) : [id];
+          for (const pid of pool) {
+            const obj = meshRegistry.get(pid);
+            if (!obj) continue;
+            sub.setFromObject(obj);
+            box.union(sub);
+            any = true;
+          }
         }
       }
       if (!any) box.set(new THREE.Vector3(-bed.x / 2, -bed.y / 2, 0), new THREE.Vector3(bed.x / 2, bed.y / 2, 10));

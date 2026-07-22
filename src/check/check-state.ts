@@ -5,8 +5,9 @@
 import { useEffect as useReactEffect, useState as useReactState } from 'react';
 import { create } from 'zustand';
 import { dispatch, doc, geometryRegistry, sendCam, useUi, type BedConfig } from '../state/store';
-import type { InstanceNode } from '../kernel/types';
+import type { InstanceNode, Transform, Vec3 } from '../kernel/types';
 import {
+  composeTRS,
   isReportStale,
   type AssetAnalysisMeta,
   type CheckIssue,
@@ -15,6 +16,7 @@ import {
   type RunMeta,
 } from './check-core';
 import { CheckRunner, type SpawnCheckWorker } from './check-runner';
+import type { SelfIntersectionEvidence } from './mesh-health-core';
 
 // ---------- 描红线段注册表(非序列化资源,与 geometryRegistry 同居内核之外) ----------
 /** 资产 id → 边界边线段端点(局部坐标)。Worker 首次分析回传,跨轮常驻主线程 */
@@ -35,10 +37,12 @@ interface CheckState {
   timedOut: boolean;
   runMeta: RunMeta | null; // 检查发起时刻的 editVersion + 床(过期判定基准)
   activeKey: string | null; // 当前聚焦的条目(视口高亮定位)
+  activeEvidenceIndex: number; // 自交命中对浏览位置；只读 UI 状态，不进入场景历史
   fixedKeys: string[]; // 本报告内已执行修复的条目(标记「已修复」;新一轮清空)
   panelOpen: boolean;
   setPanelOpen: (v: boolean) => void;
   setActiveKey: (k: string | null) => void;
+  setActiveEvidenceIndex: (index: number) => void;
 }
 
 export const useCheck = create<CheckState>()((set) => ({
@@ -52,10 +56,12 @@ export const useCheck = create<CheckState>()((set) => ({
   timedOut: false,
   runMeta: null,
   activeKey: null,
+  activeEvidenceIndex: 0,
   fixedKeys: [],
   panelOpen: false,
   setPanelOpen: (panelOpen) => set({ panelOpen }),
   setActiveKey: (activeKey) => set({ activeKey }),
+  setActiveEvidenceIndex: (activeEvidenceIndex) => set({ activeEvidenceIndex }),
 }));
 
 /** SSR 安全的全量订阅:zustand v5 的 useSyncExternalStore 服务端快照取 getInitialState,
@@ -151,6 +157,7 @@ export function runPrintCheck(opts: { onlyIds?: string[] } = {}): boolean {
     phaseText: '准备检查',
     panelOpen: true,
     activeKey: null,
+    activeEvidenceIndex: 0,
     // 重试轮:保留上一轮的存量结果,只补未完成部分;全量轮:清空重来
     issues: retrying ? prev.issues : [],
     assetMetas: retrying ? prev.assetMetas : [],
@@ -208,12 +215,58 @@ export function runPrintCheck(opts: { onlyIds?: string[] } = {}): boolean {
 
 /** 点击条目:选中(锁定对象只聚焦不选中,C7)+ 相机聚焦 + 激活视口高亮 */
 export function focusIssue(issue: CheckIssue) {
-  useCheck.getState().setActiveKey(issue.key);
+  if (issue.code === 'self_intersection' && selfIntersectionEvidenceForIssue(issue).length) {
+    focusSelfIntersectionEvidence(issue, 0);
+    return;
+  }
+  useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: 0 });
   if (!doc.nodes.has(issue.instanceId)) return;
   if (!doc.effectiveLocked(issue.instanceId)) {
     dispatch((d) => d.select([issue.instanceId]));
   }
   sendCam({ kind: 'focus' });
+}
+
+/** 资产级自交命中证据只保存于本地检查状态，不进入 Agent 请求，避免无价值的坐标 token。 */
+export function selfIntersectionEvidenceForIssue(issue: CheckIssue): SelfIntersectionEvidence[] {
+  if (issue.code !== 'self_intersection') return [];
+  return useCheck.getState().assetMetas.find((meta) => meta.assetId === issue.assetId)
+    ?.health.selfIntersectionEvidence ?? [];
+}
+
+/** 将一组资产局部自交三角形变换到实例世界空间，供相机精准聚焦。 */
+export function selfIntersectionEvidenceWorldBounds(
+  evidence: SelfIntersectionEvidence,
+  transform: Transform,
+): { min: Vec3; max: Vec3 } {
+  const matrix = composeTRS(transform);
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const [x, y, z] of [...evidence.triangleA, ...evidence.triangleB]) {
+    const point: Vec3 = [
+      matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+      matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+      matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+    ];
+    for (let axis = 0; axis < 3; axis++) {
+      min[axis] = Math.min(min[axis], point[axis]);
+      max[axis] = Math.max(max[axis], point[axis]);
+    }
+  }
+  return { min, max };
+}
+
+/** 选择并聚焦一组自交证据。索引循环，切换只改变检查 UI，不写历史、不改模型。 */
+export function focusSelfIntersectionEvidence(issue: CheckIssue, requestedIndex: number): boolean {
+  const evidence = selfIntersectionEvidenceForIssue(issue);
+  const inst = doc.nodes.get(issue.instanceId);
+  if (!evidence.length || !inst || inst.kind !== 'instance') return false;
+  const index = ((requestedIndex % evidence.length) + evidence.length) % evidence.length;
+  useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: index });
+  if (!doc.effectiveLocked(issue.instanceId)) dispatch((d) => d.select([issue.instanceId]));
+  const bounds = selfIntersectionEvidenceWorldBounds(evidence[index], inst.transform);
+  sendCam({ kind: 'focusBounds', ...bounds });
+  return true;
 }
 
 /** 场景树黄标数据源(CHK-05):新鲜报告中带错误/警告的实例 id 及其祖先链(组随成员亮标)。

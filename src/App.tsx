@@ -19,7 +19,7 @@ import {
   type InspectorTab,
   type WorkspaceLayout,
 } from './product/workspace-layout';
-import { bootstrapDemoScene, doc, sendCam, useUi } from './state/store';
+import { bootstrapDemoScene, bootstrapSelfIntersectionQaScene, doc, sendCam, useUi } from './state/store';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -192,6 +192,23 @@ export function App() {
 
   useEffect(() => {
     void initPersistence();
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('qa') !== 'self-intersection') return;
+    if (!bootstrapSelfIntersectionQaScene()) return;
+    setLayout((current) => ({
+      ...current,
+      leftOpen: true,
+      inspectorOpen: true,
+      creationOpen: false,
+      inspectorTab: 'check',
+    }));
+    const timer = window.setTimeout(() => {
+      sendCam({ kind: 'focus' });
+      runPrintCheck();
+    }, 120);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
