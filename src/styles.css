@@ -244,6 +244,41 @@ select:focus-visible {
   font-weight: 650;
 }
 
+/* M1.7 · 打印问题修复工作台：先预览、再生成派生副本。 */
+.mesh-repair-card {
+  display: grid;
+  gap: 8px;
+  margin: 8px;
+  padding: 10px;
+  border: 1px solid rgba(93, 202, 165, .38);
+  border-radius: 9px;
+  background: linear-gradient(145deg, rgba(34, 91, 72, .20), rgba(25, 29, 36, .94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+.mesh-repair-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.mesh-repair-card > header div { display: grid; gap: 2px; min-width: 0; }
+.mesh-repair-card > header strong { color: #dcebe6; font-size: 12px; }
+.mesh-repair-card > header span { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-repair-card > header em { flex: none; padding: 2px 6px; border: 1px solid rgba(93, 202, 165, .34); border-radius: 999px; color: #86d7bb; font-size: 9px; font-style: normal; }
+.mesh-repair-card__working { display: flex; align-items: center; gap: 7px; color: #a8c7bc; font-size: 10px; }
+.mesh-repair-card__working i { width: 10px; height: 10px; border: 2px solid rgba(93, 202, 165, .25); border-top-color: var(--success); border-radius: 50%; animation: repair-spin .75s linear infinite; }
+@keyframes repair-spin { to { transform: rotate(360deg); } }
+.mesh-repair-card__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.mesh-repair-card__metrics div { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 3px; padding: 6px; border: 1px solid rgba(255, 255, 255, .055); border-radius: 6px; background: rgba(8, 11, 14, .25); }
+.mesh-repair-card__metrics span { grid-column: 1 / -1; color: var(--muted); font-size: 8px; }
+.mesh-repair-card__metrics b { color: #d7d9dc; font-size: 10px; font-variant-numeric: tabular-nums; }
+.mesh-repair-card__metrics b:last-child { color: #77d9b7; }
+.mesh-repair-card__metrics i { color: #617169; font-size: 8px; font-style: normal; }
+.mesh-repair-card ul { display: grid; gap: 3px; margin: 0; padding: 0; color: #9fd8c4; font-size: 10px; list-style: none; }
+.mesh-repair-card p { margin: 0; font-size: 9px; line-height: 1.5; }
+.mesh-repair-card__warning { color: #e4b66e; }
+.mesh-repair-card__scope { color: #788981; }
+.mesh-repair-card__blocked { padding: 7px 8px; border-radius: 6px; background: rgba(240, 149, 149, .08); color: #e9a4a4; }
+.mesh-repair-card > footer { display: flex; justify-content: flex-end; gap: 6px; padding-top: 2px; }
+.mesh-repair-card > footer button { padding: 5px 8px; border: 1px solid #3b4140; border-radius: 6px; background: #252a2a; color: #b9c3c0; cursor: pointer; font-size: 10px; }
+.mesh-repair-card > footer button.primary { border-color: rgba(93, 202, 165, .6); background: rgba(93, 202, 165, .14); color: #96e3c8; font-weight: 650; }
+.mesh-repair-card > footer button:disabled { cursor: default; opacity: .38; }
+
 /* M1.6.1 · AI 拆件分析助手：只读体验原型。 */
 .split-analysis {
   height: 100%;

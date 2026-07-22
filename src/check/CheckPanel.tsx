@@ -14,6 +14,12 @@ import {
   useCheckSnapshot,
 } from './check-state';
 import type { CheckIssue, IssueLevel } from './check-core';
+import { MeshRepairPanel } from '../repair/MeshRepairPanel';
+import {
+  meshRepairDisabledReason,
+  prepareMeshRepair,
+  useMeshRepair,
+} from '../repair/mesh-repair-state';
 
 const AMBER = '#ffb454';
 const RED = '#f09595';
@@ -29,7 +35,9 @@ const LEVEL_META: Record<IssueLevel, { icon: string; name: string; color: string
 const btn: React.CSSProperties = {
   background: '#26262e',
   color: '#c9c9d1',
-  border: '1px solid #34343e',
+  borderWidth: 1,
+  borderStyle: 'solid',
+  borderColor: '#34343e',
   borderRadius: 6,
   padding: '3px 8px',
   fontSize: 11,
@@ -56,10 +64,15 @@ function StatusChip({ stale }: { stale: boolean }) {
 }
 
 function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale: boolean; fixed: boolean; activeKey: string | null }) {
+  const repairPhase = useMeshRepair((state) => state.phase);
+  const repairIssueKey = useMeshRepair((state) => state.issueKey);
   const active = activeKey === issue.key;
   const meta = LEVEL_META[issue.level];
   const fixReason = issue.fix ? fixDisabledReason(issue) : null;
   const fixLabel = issue.fix?.kind === 'drop' ? '⬇ 沉底' : issue.fix?.kind === 'clamp' ? '↩ 移回床内' : null;
+  const canPreviewRepair = issue.code === 'non_watertight' || issue.code === 'degenerate';
+  const repairReason = canPreviewRepair ? meshRepairDisabledReason(issue) : null;
+  const repairBusy = repairPhase === 'preparing';
 
   return (
     <div
@@ -105,6 +118,25 @@ function IssueRow({ issue, stale, fixed, activeKey }: { issue: CheckIssue; stale
           }}
         >
           {fixLabel}
+        </button>
+      )}
+      {canPreviewRepair && !fixed && (
+        <button
+          style={{
+            ...btn,
+            flex: 'none',
+            ...((repairReason || repairBusy)
+              ? { opacity: 0.4, cursor: 'default' }
+              : { borderColor: GREEN, color: GREEN }),
+          }}
+          disabled={!!repairReason || repairBusy}
+          title={repairReason ?? '先生成只读预览；确认后才创建修复副本，原模型不变'}
+          onClick={(event) => {
+            event.stopPropagation();
+            prepareMeshRepair(issue);
+          }}
+        >
+          {repairBusy && repairIssueKey === issue.key ? '分析中…' : '修复预览'}
         </button>
       )}
     </div>
@@ -205,6 +237,8 @@ export function CheckPanel({ embedded = false, onOpenSplit }: { embedded?: boole
               </button>
             </div>
           )}
+
+          <MeshRepairPanel />
 
           {/* 空结果空态 */}
           {s.phase === 'done' && s.summary?.instances === 0 && (

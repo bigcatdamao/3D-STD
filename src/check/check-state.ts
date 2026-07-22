@@ -233,7 +233,7 @@ export function flaggedIds(): Set<string> {
   return out;
 }
 
-// ---------- CHK-06 确定性修复(均入栈可撤销;不做网格补洞) ----------
+// ---------- CHK-06 位置类确定性修复(网格修复预览与派生副本见 repair/) ----------
 
 /** 修复可用性:报告新鲜、对象存活且未随组锁定(修复 = 变换,锁定对象不可变换) */
 export function fixDisabledReason(issue: CheckIssue): string | null {

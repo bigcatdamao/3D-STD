@@ -303,7 +303,7 @@ export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void }
               </button>
               <button type="button" disabled={!onOpenCheck || resultStale} onClick={onOpenCheck}>查看打印检查</button>
               <button type="button" disabled={check.phase === 'running' || resultStale} onClick={() => runPrintCheck()}>重新检查证据</button>
-              <button type="button" disabled title="M1.7 开放，只生成可丢弃预览">切割预览 · 阶段二</button>
+              <button type="button" disabled title="后续版本开放，只生成可丢弃预览">切割预览 · 阶段二</button>
             </div>
           </div>
 

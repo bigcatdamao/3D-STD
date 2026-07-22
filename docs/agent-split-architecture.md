@@ -424,7 +424,7 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 - 新增“立即可做”：可定位首个打印问题、打开打印检查、重新检查证据；这些动作由本地确定性代码执行，Agent 不获得写权限。
 - `preview_plane_cut`、`analyze_print_orientation` 等未实现工具继续显示为阶段二禁用按钮，不把规划包装成能力。
 - Worker 返回脱敏的响应耗时和 token 用量；前端显示真实遥测，Gold Set 用于 p95 延迟与成本比较。
-- 新增 Gold Set 契约、5 个种子定义、自动评分器和人工 rubric；目标 24 个真实样本，未达门槛不进入 M1.7。
+- 新增 Gold Set 契约、5 个种子定义、自动评分器和人工 rubric；目标 24 个真实样本，未达门槛不进入 Agent 自动工具循环。M1.7 的用户主动确定性修复不授予 Agent 写权限。
 
 | 任务 | 交付物 | 依赖 | 验收重点 |
 |---|---|---|---|

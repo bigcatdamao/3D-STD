@@ -82,6 +82,31 @@ describe('editVersion(CHK-03 过期信号源)', () => {
 });
 
 describe('CHK-06 修复命令', () => {
+  it('生成修复副本：原资产保留，实例切到派生资产，撤销/重做原子恢复', () => {
+    const d = new SceneDocument();
+    const original = d.addAsset(asset('开口盒'));
+    const instance = d.placeInstance(original.id);
+    const repaired = d.replaceInstanceAssetWithDerived(instance.id, {
+      ...asset('开口盒 · 修复版'),
+      genParams: { repair: { fromAssetId: original.id } },
+    });
+
+    expect(d.assets.has(original.id)).toBe(true);
+    expect(d.assets.has(repaired.id)).toBe(true);
+    expect(d.instance(instance.id).assetId).toBe(repaired.id);
+    expect(d.instance(instance.id).name).toContain('修复版');
+    expect(d.history.list().at(-1)).toMatchObject({ op: 'fix', label: '生成修复副本' });
+
+    d.history.undo();
+    expect(d.assets.has(original.id)).toBe(true);
+    expect(d.assets.has(repaired.id)).toBe(false);
+    expect(d.instance(instance.id).assetId).toBe(original.id);
+
+    d.history.redo();
+    expect(d.assets.has(repaired.id)).toBe(true);
+    expect(d.instance(instance.id).assetId).toBe(repaired.id);
+  });
+
   it('nudgeInstances:平移增量一步入栈(op=fix),撤销回原位', () => {
     const d = new SceneDocument();
     const a = d.addAsset(asset('件'));

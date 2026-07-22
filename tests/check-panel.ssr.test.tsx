@@ -8,6 +8,7 @@ import { useCheck } from '../src/check/check-state';
 import { dispatch, doc, useUi } from '../src/state/store';
 import type { Asset } from '../src/kernel/types';
 import type { CheckIssue, CheckSummary } from '../src/check/check-core';
+import { useMeshRepair } from '../src/repair/mesh-repair-state';
 
 const strip = (html: string) => html.replace(/<!-- -->/g, '');
 
@@ -43,7 +44,7 @@ function issuesFor(id: string, name: string): CheckIssue[] {
       instanceId: id,
       instanceName: name,
       assetId: 'a1',
-      message: '非水密网格(4 条开放边界边)。本产品不做网格补洞,导出后请在切片软件中修复',
+      message: '非水密网格(4 条开放边界边)。可先生成安全修复预览；复杂破损仍需外部网格工具',
     },
     {
       key: `floating:${id}`,
@@ -78,6 +79,7 @@ describe('CheckPanel SSR 冒烟', () => {
   });
 
   it('新鲜报告:分级列表 + 修复按钮 + 汇总行(CHK-05/CHK-04 口径)', () => {
+    useMeshRepair.setState({ phase: 'idle' });
     const a = dispatch((d) => d.addAsset(asset('开口盒')));
     const i = dispatch((d) => d.placeInstance(a.id, '导入', 'place', [70, -60, 14]));
     useCheck.setState({
@@ -96,10 +98,39 @@ describe('CheckPanel SSR 冒烟', () => {
     expect(html).toContain('警告(1)');
     expect(html).toContain('信息(1)');
     expect(html).toContain('非水密网格');
-    expect(html).toContain('切片软件'); // Non-goal 引导(CHK-06)
+    expect(html).toContain('安全修复预览');
+    expect(html).toContain('修复预览');
     expect(html).toContain('⬇ 沉底'); // 悬空修复按钮
     expect(html).toContain('投影落点'); // CHK-05 悬空示投影距离
     expect(html).toContain('几何分析 1 次 · 缓存复用 1 次'); // CHK-04 可观测口径
+  });
+
+  it('修复预览卡明确显示前后指标、原模型不变和确认动作', () => {
+    useMeshRepair.setState({
+      phase: 'ready',
+      sourceName: '开口盒',
+      instanceId: null,
+      sourceAssetId: null,
+      actions: ['封闭 1 个平面边界环，新增 2 个面'],
+      warnings: ['开口可能是设计意图'],
+      reason: null,
+      stats: {
+        before: { faces: 10, weldedVertices: 8, degenerateCount: 0, boundaryEdges: 4, nonManifoldEdges: 0, watertight: false },
+        after: { faces: 12, weldedVertices: 8, degenerateCount: 0, boundaryEdges: 0, nonManifoldEdges: 0, watertight: true },
+        sourceVertices: 30,
+        weldedVertices: 8,
+        removedDegenerateFaces: 0,
+        removedDuplicateFaces: 0,
+        filledHoles: 1,
+        addedFaces: 2,
+      },
+    });
+    const html = strip(renderToString(<CheckPanel />));
+    expect(html).toContain('网格修复预览');
+    expect(html).toContain('原模型不变');
+    expect(html).toContain('开放边');
+    expect(html).toContain('生成修复副本');
+    useMeshRepair.setState({ phase: 'idle' });
   });
 
   it('过期(CHK-03):灰显条 + 重新检查;修复按钮禁用理由', () => {

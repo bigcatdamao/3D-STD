@@ -262,6 +262,32 @@ export class SceneDocument {
     return asset;
   }
 
+  /** M1.7 网格修复落地：新建派生资产并让当前实例切换到该副本，整体只占一条历史。
+   *  原始资产从不改写；撤销同时恢复实例引用并移除派生资产，重做再原样恢复。 */
+  replaceInstanceAssetWithDerived(
+    instanceId: string,
+    data: Omit<Asset, 'id'>,
+    label = '生成修复副本',
+  ): Asset {
+    if (this.effectiveLocked(instanceId)) throw new Error('对象已锁定，不能生成修复副本');
+    const current = this.instance(instanceId);
+    const derived: Asset = { ...clone(data), id: genId('ast') } as Asset;
+    this.commit(
+      'fix',
+      label,
+      [instanceId],
+      () => {
+        this.assets.set(derived.id, clone(derived));
+        const live = this.instance(instanceId);
+        live.assetId = derived.id;
+        live.name = dedupeName(`${current.name} · 修复版`, this.takenNames());
+        this.selection = new Set([instanceId]);
+      },
+      { assetIds: [derived.id] },
+    );
+    return derived;
+  }
+
   /** AST 边界 6/场景树边界:删除资产 → 级联删除其全部实例,整体一步 */
   removeAssetCascade(assetId: string) {
     const victims = [...this.nodes.values()]

@@ -186,7 +186,7 @@ export function checkInstance(
     push(
       'non_watertight',
       'error',
-      `非水密网格(${parts.join(' · ') || '拓扑不封闭'})。本产品不做网格补洞,导出后请在切片软件中修复`,
+      `非水密网格(${parts.join(' · ') || '拓扑不封闭'})。可先生成安全修复预览；复杂破损仍需外部网格工具`,
     );
   }
   if (topo.degenerateCount > 0) {

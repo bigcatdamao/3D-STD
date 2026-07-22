@@ -2,10 +2,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 版本 | v1.9(图生模型与多视图落地修订) |
-| 日期 | 2026-07-20 |
+| 版本 | v2.0(确定性网格修复工作台落地修订) |
+| 日期 | 2026-07-22 |
 | 上游文档 | 《PRD v0.95》 |
 | 外部数据核实日 | 2026-07-20(Tripo 官方 Upload / Generation 文档) |
+
+**v2.0 变更记录(M1.7 确定性网格修复)**:① **先预览、再派生，不原位改几何**——打印检查的非水密/退化条目触发独立临时预览，预览不写 `SceneDocument` 与历史；用户确认后 `replaceInstanceAssetWithDerived` 在同一 command 中创建派生资产并切换实例引用，`capture` 同时覆盖实例与新资产，因此 undo/redo 能原子恢复。原始资产始终保留。② **修复内核 fail-closed**——复用检查器焊接容差，删除塌缩/零面积/重复面，只对方向一致、≤128 顶点、近似共面的简单边界环做三角化；结果必须重新通过水密、非流形边和非零体积验证。非流形、开放链、分叉、绕序冲突、非平面孔洞和不稳定体积均不产出结果。该算法不检测或修复任意自交、内部壳与复杂布尔残片，UI/版本记录不得把“拓扑水密”表述为“几何完全健康”。③ **第三个几何 Worker**——`mesh-repair.worker.ts` 接收位置/索引 Transferable，在后台运行清理、边界分析、三角化和验证；45 秒超时即 terminate，原模型零副作用。主线程只负责构建预览 BufferGeometry、亮显新增面和提交派生资产。④ **确认后自动复检**——新几何注册与缩略图生成完成后启动同源 `runPrintCheck`，结果面板、树黄标和导出闸门共享新报告；修复本身仅一条 `fix` 历史。⑤ **安全边界显式进入产品**——预览卡同时展示前后面数、开放边、退化面、动作与“开口可能是设计意图”提示；场景 editVersion 或实例 assetId 变化会让确认失效。
 
 **v1.9 变更记录(M1.5.3 图生模型)**:① **图片随 `/api/generate` multipart 一次上行**——浏览器不直连 Tripo、不持有服务 key，也不新增公开上传代理；Worker 在格式、大小、数量、正面必填、Turnstile 与配额检查全部通过后，才把图片转发至 Tripo `/upload/sts` 获取 `image_token`，上传或任务提交失败统一走 AI-07 返还。② **协议扩为 `text | image | multiview`，状态机不分叉**——单图映射 `image_to_model`；多图 UI 暂定正面/左侧/右侧三槽，服务端按 Tripo 要求组装四项 `[front,left,back,right]`，back 以空对象占位，至少两张且 front 不可缺。任务提交后的排队、轮询、失败、取消、结果代理、接受与 T16 落入完全复用。③ **双层校验**——前端即时校验提升反馈速度，Worker 以 PNG/JPEG/WebP、单张 10MB、单图 1 张、多图 2–3 张为安全边界；校验位于 Turnstile 和扣减之前。④ **本地文件不持久化**——活动票据只保存图片名称/大小/MIME/视角元数据，刷新可恢复已提交任务轮询，但调整或重试需要用户重新选择本地文件，避免把图片二进制塞进 localStorage。⑤ **Tripo 上传 multipart 不手写 `content-type`**，由运行时生成 boundary；图片上传与任务提交均复用服务 key/自带 key，并对 2000/5xx 做既有退避重试。
 
@@ -30,7 +32,7 @@
 ```
 浏览器(React + Three.js SPA)
   ├─ 渲染/编辑:Three.js 场景、gizmo、选择系统
-  ├─ Web Worker ×2:文件解析(loaders)、打印检查(几何分析)
+  ├─ Web Worker ×3:文件解析、打印检查、网格修复预览
   ├─ IndexedDB:资产库、项目场景(PRD C5)
   └─ fetch → 服务层
 服务层(Cloudflare Workers,单 Worker 多路由)
@@ -68,7 +70,7 @@ Tripo 映射:`text_to_model` / `image_to_model` / `multiview_to_model`;图片先
 
 - **栈**:React 18 + TypeScript + Vite;Three.js(r16x)+ @react-three/fiber 承载视口,drei 提供 TransformControls/相机控制的基础件(按 PRD VIEW-02 重映射鼠标)。
 - **状态**:Zustand 三个 store——场景(实例/组/选中集,单一事实源)、历史(command 栈)、任务(生成状态机)。历史栈实现为 command pattern(PRD HIST-02),store 变更一律经 command 派发,禁止旁路 setState 修改场景。旋转以欧拉角(固定 XYZ 序)为源数据,gizmo 旋转增量直接作用于欧拉,禁止从变换矩阵反解回写(等价角多解会造成面板数值跳变)。
-- **Worker 化**:`parse.worker.ts`(GLTFLoader/STLLoader/OBJLoader + 单位推断 + 水密性预检)、`check.worker.ts`(打印检查,PRD CHK-04 的资产级/实例级分层)。几何以 Transferable ArrayBuffer 传递,避免结构化克隆开销。
+- **Worker 化**:`parse.worker.ts`(GLTFLoader/STLLoader/OBJLoader + 单位推断 + 水密性预检)、`check.worker.ts`(打印检查,PRD CHK-04 的资产级/实例级分层)、`mesh-repair.worker.ts`(确定性清理/简单平面封口/结果验证)。几何以 Transferable ArrayBuffer 传递,避免结构化克隆开销。
 - **水密性算法**:**前置顶点焊接**(按距离 ε 合并重复顶点重建索引)后,再以半边结构统计边的相邻面数,存在邻面数 ≠ 2 的边即非水密。焊接不可省略:STL 格式按定义逐三角形独立存储顶点,AI 生成网格亦常见重复顶点,不焊接将导致全量误报。退化面按面积 < ε 判定。悬垂热图(M2)以面法线与 Z 轴夹角 > 45° 着色。
 - **持久化**:IndexedDB 经 idb 封装;资产几何存 ArrayBuffer,项目存 JSON(PRD §8 数据结构)。
 

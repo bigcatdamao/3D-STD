@@ -167,14 +167,14 @@ describe('三级判定(CHK-01)与修复参数(CHK-06)', () => {
     expect(TINY_MM).toBe(2);
   });
 
-  it('非水密 + 退化:错误级各一条,非水密文案含切片软件修复引导(Non-goal)', () => {
+  it('非水密 + 退化:错误级各一条,非水密文案提供安全修复预览入口', () => {
     const topoBad = { faces: 10, watertight: false, boundaryEdges: 4, nonManifoldEdges: 0, degenerateCount: 2 };
     const w = worldStats(openBoxExplicit(20), T([0, 0, 10]));
     const issues = checkInstance(inst('i1'), topoBad, w, BED);
     const nw = issues.find((i) => i.code === 'non_watertight')!;
     expect(nw.level).toBe('error');
     expect(nw.message).toContain('4 条开放边界边');
-    expect(nw.message).toContain('切片软件');
+    expect(nw.message).toContain('安全修复预览');
     expect(issues.find((i) => i.code === 'degenerate')?.message).toContain('2 个退化面片');
   });
 
