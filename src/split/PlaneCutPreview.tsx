@@ -1,11 +1,34 @@
 import { Html } from '@react-three/drei';
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { doc, geometryRegistry, useUi } from '../state/store';
 import { planeCutPreviewIsStale, usePlaneCutPreview } from './plane-cut-state';
+import type { PlaneSectionSegment } from './plane-section-core';
 
 const SIDE_A = '#50c8ff';
 const SIDE_B = '#c98ee0';
 const CUT = '#ffb454';
+const SECTION = '#fff1a8';
+
+function SectionContourVisual({ segments }: { segments: PlaneSectionSegment[] }) {
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(segments.length * 6);
+    segments.forEach((segment, index) => {
+      positions.set(segment.a, index * 6);
+      positions.set(segment.b, index * 6 + 3);
+    });
+    const next = new THREE.BufferGeometry();
+    next.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return next;
+  }, [segments]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  if (!segments.length) return null;
+  return (
+    <lineSegments geometry={geometry} renderOrder={11}>
+      <lineBasicMaterial color={SECTION} depthTest={false} transparent opacity={0.98} />
+    </lineSegments>
+  );
+}
 
 function CutPlaneVisual({ axisIndex, position, min, max }: {
   axisIndex: 0 | 1 | 2;
@@ -45,12 +68,14 @@ export function PlaneCutPreview() {
   const phase = usePlaneCutPreview((state) => state.phase);
   const instanceId = usePlaneCutPreview((state) => state.instanceId);
   const candidates = usePlaneCutPreview((state) => state.candidates);
+  const sections = usePlaneCutPreview((state) => state.sections);
   const activeIndex = usePlaneCutPreview((state) => state.activeIndex);
   if (phase !== 'ready' || !instanceId || planeCutPreviewIsStale()) return null;
   const instance = doc.nodes.get(instanceId);
   if (!instance || instance.kind !== 'instance') return null;
   const geometry = geometryRegistry.get(instance.assetId);
   const candidate = candidates[activeIndex];
+  const section = sections[activeIndex];
   if (!geometry || !candidate) return null;
 
   const normal = new THREE.Vector3(0, 0, 0);
@@ -104,6 +129,7 @@ export function PlaneCutPreview() {
         min={overall.min}
         max={overall.max}
       />
+      {section ? <SectionContourVisual segments={section.segments} /> : null}
       <Html position={centerOf(0)} center style={{ pointerEvents: 'none' }}>
         <div className="plane-cut-preview-label side-a">A · 包围盒估算</div>
       </Html>
@@ -119,7 +145,11 @@ export function PlaneCutPreview() {
         center
         style={{ pointerEvents: 'none' }}
       >
-        <div className="plane-cut-preview-label cut">{candidate.label} · 只读切割预览</div>
+        <div className="plane-cut-preview-label cut">
+          {candidate.label} · {section?.status === 'closed' && section.areaMm2 !== null
+            ? `真实截面 ${section.areaMm2.toFixed(0)}mm²`
+            : '真实截线证据'}
+        </div>
       </Html>
     </group>
   );

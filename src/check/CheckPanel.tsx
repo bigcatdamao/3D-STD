@@ -95,6 +95,8 @@ function IssueRow({
   const cutPhase = cutPreview.phase;
   const cutIssueKey = cutPreview.issueKey;
   const cutCandidates = cutPreview.candidates;
+  const cutSections = cutPreview.sections;
+  const cutSectionPending = cutPreview.sectionPending;
   const cutCandidateIndex = cutPreview.activeIndex;
   const active = activeKey === issue.key;
   const meta = LEVEL_META[issue.level];
@@ -111,6 +113,8 @@ function IssueRow({
     && cutIssueKey === issue.key
     && !planeCutPreviewIsStale();
   const cutCandidate = cutActive ? cutCandidates[cutCandidateIndex] : null;
+  const cutSection = cutActive ? cutSections[cutCandidateIndex] : null;
+  const cutSectionBusy = cutActive && !!cutSectionPending[cutCandidateIndex];
   const readOnlyDiagnosis = issue.code === 'self_intersection'
     || issue.code === 'internal_shell'
     || issue.code === 'isolated_fragment'
@@ -301,7 +305,7 @@ function IssueRow({
                     step={1}
                     aria-label="切面位置"
                     value={Math.round(cutCandidate.normalizedPosition * 100)}
-                    onChange={(event) => setPlaneCutPosition(Number(event.target.value) / 100)}
+                    onChange={(event) => setPlaneCutPosition(Number(event.target.value) / 100, true)}
                   />
                   <div className="plane-cut-card__presets">
                     {[25, 50, 75].map((percent) => (
@@ -325,6 +329,43 @@ function IssueRow({
                   </small>
                 </div>
                 <div className="plane-cut-card__reason">{cutCandidate.rationale}</div>
+                {cutSectionBusy && (
+                  <div className="plane-cut-card__section is-pending">
+                    <div className="plane-cut-card__section-heading">
+                      <strong>正在计算真实截面…</strong>
+                      <span>切面与尺寸已更新</span>
+                    </div>
+                  </div>
+                )}
+                {cutSection && (
+                  <div className={`plane-cut-card__section is-${cutSection.status}`}>
+                    <div className="plane-cut-card__section-heading">
+                      <strong>真实截面证据</strong>
+                      <span>{cutSection.complete ? '完整扫描' : '预算内部分扫描'}</span>
+                    </div>
+                    {cutSection.status === 'closed' && cutSection.areaMm2 !== null ? (
+                      <>
+                        <div className="plane-cut-card__section-metrics">
+                          <b>{cutSection.areaMm2.toFixed(0)} mm²</b>
+                          <span>{cutSection.loopCount} 个闭合环</span>
+                          <span>{cutSection.segmentCount} 条截线</span>
+                          <span>周长 {cutSection.perimeterMm.toFixed(0)} mm</span>
+                        </div>
+                        <small>亮黄色轮廓来自三角网格真实求交；面积尚未代表封口或可制造性</small>
+                      </>
+                    ) : (
+                      <>
+                        <div className="plane-cut-card__section-metrics">
+                          <b>{cutSection.segmentCount} 条截线</b>
+                          <span>{cutSection.loopCount} 个闭合环</span>
+                          {cutSection.openChainCount > 0 && <span>{cutSection.openChainCount} 组开链</span>}
+                          {!cutSection.complete && <span>{cutSection.facesTested.toLocaleString()} / {cutSection.facesTotal.toLocaleString()} 面</span>}
+                        </div>
+                        <small>{cutSection.warnings[0] ?? '截面未形成可验证的闭合轮廓，面积不可用'}</small>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="plane-cut-card__parts">
                   {cutCandidate.parts.map((part) => (
                     <div key={part.label} className={`part part-${part.label.toLowerCase()}`}>
@@ -335,7 +376,7 @@ function IssueRow({
                   ))}
                 </div>
                 <small>
-                  切面约 {cutCandidate.cutAreaEstimateMm2.toFixed(0)} mm² · 包围盒估算；未计算精确截面与封口，不生成零件
+                  包围盒切面代理 {cutCandidate.cutAreaEstimateMm2.toFixed(0)} mm² · 不等于真实截面；当前仍不封口、不生成零件
                 </small>
               </>
             ) : (
@@ -407,7 +448,7 @@ function IssueRow({
           title={components.length > 1
             ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
             : canPreviewPlaneCut
-              ? 'M1.7.5 可调平面切割预览：只估算候选，不生成新零件'
+              ? 'M1.7.6 真实截面证据预览：只计算截线与闭合环，不封口、不生成新零件'
               : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
           {components.length > 1 || canPreviewPlaneCut ? '只读预览' : '只读诊断'}

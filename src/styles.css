@@ -399,6 +399,16 @@ select:focus-visible {
 .plane-cut-card__position small.feasible { color: #65cdaa; }
 .plane-cut-card__position small.unavailable { color: #d28f8f; }
 .plane-cut-card__reason { margin: 5px 0; color: #a99c8e; font-size: 8px; line-height: 1.4; }
+.plane-cut-card__section { display: grid; gap: 4px; margin: 5px 0; padding: 5px; border: 1px solid rgba(255, 241, 168, .22); border-radius: 6px; background: rgba(255, 241, 168, .045); }
+.plane-cut-card__section.is-partial, .plane-cut-card__section.is-open, .plane-cut-card__section.is-ambiguous { border-color: rgba(210, 143, 143, .28); background: rgba(210, 143, 143, .045); }
+.plane-cut-card__section.is-pending { border-style: dashed; border-color: rgba(255, 180, 84, .34); background: rgba(255, 180, 84, .04); }
+.plane-cut-card__section-heading { display: flex; align-items: center; gap: 4px; }
+.plane-cut-card__section-heading strong { color: #fff1a8; font-size: 9px; }
+.plane-cut-card__section-heading span { margin-left: auto; color: #8c8378; font-size: 8px; }
+.plane-cut-card__section-metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 7px; color: #9d958a; font-size: 8px; }
+.plane-cut-card__section-metrics b { color: #f5e9a6; font-size: 11px; font-variant-numeric: tabular-nums; }
+.plane-cut-card__section > small { margin: 0; color: #938b80; font-size: 8px; line-height: 1.35; }
+.plane-cut-card__section.is-partial > small, .plane-cut-card__section.is-open > small, .plane-cut-card__section.is-ambiguous > small { color: #d2a0a0; }
 .plane-cut-card__parts { gap: 4px; }
 .plane-cut-card__parts .part { flex: 1; gap: 4px; min-width: 0; padding: 4px; border-radius: 5px; background: #202027; }
 .plane-cut-card__parts .part-a { border-left: 2px solid #50c8ff; }

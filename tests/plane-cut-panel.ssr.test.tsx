@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { CheckPanel } from '../src/check/CheckPanel';
@@ -6,10 +7,11 @@ import type { CheckIssue } from '../src/check/check-core';
 import { dispatch, doc, useUi } from '../src/state/store';
 import { findPlaneCutCandidates } from '../src/split/plane-cut-core';
 import { closePlaneCutPreview, usePlaneCutPreview } from '../src/split/plane-cut-state';
+import { analyzePlaneSection } from '../src/split/plane-section-core';
 
 const strip = (html: string) => html.replace(/<!-- -->/g, '');
 
-describe('M1.7.5 可调平面切割卡片 SSR', () => {
+describe('M1.7.6 真实截面证据卡片 SSR', () => {
   const asset = dispatch((scene) => scene.addAsset({
     name: '300mm 单壳',
     source: 'import',
@@ -24,6 +26,15 @@ describe('M1.7.5 可调平面切割卡片 SSR', () => {
   }));
   const instance = dispatch((scene) => scene.placeInstance(asset.id));
   const world = { min: [-150, -40, 0] as [number, number, number], max: [150, 40, 80] as [number, number, number] };
+  const sectionGeometry = new THREE.BoxGeometry(300, 80, 80).translate(0, 0, 40);
+  const section = analyzePlaneSection({
+    positions: sectionGeometry.getAttribute('position').array,
+    index: sectionGeometry.index?.array ?? null,
+    transform: instance.transform,
+    axisIndex: 0,
+    positionMm: 0,
+  });
+  sectionGeometry.dispose();
   const issues: CheckIssue[] = [
     {
       key: `out_of_bed:${instance.id}`,
@@ -73,6 +84,7 @@ describe('M1.7.5 可调平面切割卡片 SSR', () => {
       issueKey: `dims:${instance.id}`,
       instanceId: instance.id,
       candidates: findPlaneCutCandidates(world, useUi.getState().bed),
+      sections: [section, null, null],
       activeIndex: 0,
       sourceEditVersion: doc.editVersion,
       sourceBed: { ...useUi.getState().bed },
@@ -86,7 +98,10 @@ describe('M1.7.5 可调平面切割卡片 SSR', () => {
     expect(html).toContain('X 中线');
     expect(html).toContain('150.0 × 80.0 × 80.0 mm');
     expect(html.match(/class="fits">可放入/g)?.length).toBe(2);
-    expect(html).toContain('未计算精确截面与封口，不生成零件');
+    expect(html).toContain('真实截面证据');
+    expect(html).toContain('6400 mm²');
+    expect(html).toContain('1 个闭合环');
+    expect(html).toContain('当前仍不封口、不生成零件');
     closePlaneCutPreview();
   });
 });
