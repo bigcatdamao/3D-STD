@@ -22,11 +22,13 @@ import {
 import {
   bootstrapComponentPreviewQaScene,
   bootstrapDemoScene,
+  bootstrapPlaneCutPreviewQaScene,
   bootstrapSelfIntersectionQaScene,
   doc,
   sendCam,
   useUi,
 } from './state/store';
+import { startPlaneCutPreview } from './split/plane-cut-state';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -205,7 +207,9 @@ export function App() {
     const qa = new URLSearchParams(window.location.search).get('qa');
     const bootstrapped = qa === 'self-intersection'
       ? bootstrapSelfIntersectionQaScene()
-      : qa === 'component-preview' ? bootstrapComponentPreviewQaScene() : false;
+      : qa === 'component-preview'
+        ? bootstrapComponentPreviewQaScene()
+        : qa === 'plane-cut-preview' ? bootstrapPlaneCutPreviewQaScene() : false;
     if (!bootstrapped) return;
     setLayout((current) => ({
       ...current,
@@ -218,12 +222,13 @@ export function App() {
     const timer = window.setTimeout(() => {
       sendCam({ kind: 'focus' });
       runPrintCheck();
-      if (qa === 'component-preview') {
+      if (qa === 'component-preview' || qa === 'plane-cut-preview') {
         let attempts = 0;
         previewTimer = window.setInterval(() => {
           const issue = useCheck.getState().issues.find((candidate) => candidate.code === 'dims');
           if (issue) {
-            focusIssue(issue);
+            if (qa === 'plane-cut-preview') startPlaneCutPreview(issue);
+            else focusIssue(issue);
             window.clearInterval(previewTimer);
           } else if (++attempts >= 40) {
             window.clearInterval(previewTimer);

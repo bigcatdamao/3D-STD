@@ -8,7 +8,7 @@
 //      无需专门的重试按钮;禁止自动 LRU 淘汰由「只拒写、不删旧」保证。
 //
 // 存储结构:'assets' 表存条目 JSON + 缩略图 dataURL;'geometry' 表存顶点/法线 ArrayBuffer
-// (几何不可变:每资产至多写一次)。演示夹具(ast_demo_*)每次启动重建,不落库。
+// (几何不可变:每资产至多写一次)。演示/隐藏 QA 夹具(ast_demo_* / ast_qa_*)每次启动重建,不落库。
 //
 // 边界(PRD AST):
 //   1. IndexedDB 不可用 → 纯内存会话模式,面板常驻提示「本次会话的资产不会被保存」;
@@ -23,7 +23,7 @@ import { doc, geometryRegistry, thumbRegistry, useUi } from '../state/store';
 export const STORAGE_CAP_BYTES = 500 * 1024 * 1024; // AST-04 / PRD §9
 export const STORAGE_WARN_RATIO = 0.8;
 
-export const isDemoAsset = (id: string) => id.startsWith('ast_demo_');
+export const isDemoAsset = (id: string) => id.startsWith('ast_demo_') || id.startsWith('ast_qa_');
 
 interface AssetRecord {
   asset: Asset;

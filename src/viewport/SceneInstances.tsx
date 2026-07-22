@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { InstanceNode } from '../kernel/types';
 import { doc, geometryRegistry, meshRegistry, useUi } from '../state/store';
+import { planeCutPreviewIsStale, usePlaneCutPreview } from '../split/plane-cut-state';
 
 const SELECT_OUTLINE = '#ffb454';
 const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#e8a15d'];
@@ -33,11 +34,13 @@ function InstanceMesh({
   selected,
   locked,
   histHl,
+  planePreview,
 }: {
   node: InstanceNode;
   selected: boolean;
   locked: boolean; // 等效锁定(自身或随组,C7)
   histHl: boolean; // HIST-08:hover 历史条目高亮受影响对象
+  planePreview: boolean; // M1.7.4:原对象降为上下文，双色裁剪副本由只读预览层呈现
 }) {
   const ref = useRef<THREE.Mesh>(null);
   const geo = geometryRegistry.get(node.assetId);
@@ -76,11 +79,12 @@ function InstanceMesh({
           color={locked ? LOCKED_COLOR : (ov.color ?? colorFor(node.assetId))}
           roughness={ov.roughness ?? DEFAULT_ROUGHNESS}
           metalness={ov.metalness ?? DEFAULT_METALNESS}
-          transparent={locked}
-          opacity={locked ? 0.75 : 1}
+          transparent={locked || planePreview}
+          opacity={planePreview ? 0.12 : locked ? 0.75 : 1}
+          depthWrite={!planePreview}
         />
       </mesh>
-      {selected && outlineGeo && (
+      {selected && outlineGeo && !planePreview && (
         <mesh geometry={outlineGeo} scale={[1.045, 1.045, 1.045]} renderOrder={1}>
           <meshBasicMaterial color={SELECT_OUTLINE} side={THREE.BackSide} depthWrite={false} />
         </mesh>
@@ -98,6 +102,9 @@ function InstanceMesh({
 export function SceneInstances() {
   useUi((s) => s.rev); // 订阅文档版本:任何 command 后重派生
   const histHover = useUi((s) => s.histHover); // HIST-08(低频,不影响拖拽帧率)
+  const planePreviewInstanceId = usePlaneCutPreview((s) => s.instanceId);
+  const planePreviewPhase = usePlaneCutPreview((s) => s.phase);
+  const hasFreshPlanePreview = planePreviewPhase === 'ready' && !planeCutPreviewIsStale();
   const nodes = [...doc.nodes.values()].filter(
     (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
   );
@@ -110,6 +117,7 @@ export function SceneInstances() {
           selected={doc.selection.has(n.id)}
           locked={doc.effectiveLocked(n.id)}
           histHl={!!histHover?.includes(n.id)}
+          planePreview={hasFreshPlanePreview && planePreviewInstanceId === n.id}
         />
       ))}
     </group>

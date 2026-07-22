@@ -25,6 +25,13 @@ import {
   prepareMeshRepair,
   useMeshRepair,
 } from '../repair/mesh-repair-state';
+import {
+  closePlaneCutPreview,
+  planeCutPreviewIsStale,
+  selectPlaneCutCandidate,
+  startPlaneCutPreview,
+  usePlaneCutPreviewSnapshot,
+} from '../split/plane-cut-state';
 
 const AMBER = '#ffb454';
 const RED = '#f09595';
@@ -83,17 +90,32 @@ function IssueRow({
 }) {
   const repairPhase = useMeshRepair((state) => state.phase);
   const repairIssueKey = useMeshRepair((state) => state.issueKey);
+  const cutPreview = usePlaneCutPreviewSnapshot();
+  const cutPhase = cutPreview.phase;
+  const cutIssueKey = cutPreview.issueKey;
+  const cutCandidates = cutPreview.candidates;
+  const cutCandidateIndex = cutPreview.activeIndex;
   const active = activeKey === issue.key;
   const meta = LEVEL_META[issue.level];
   const fixReason = issue.fix ? fixDisabledReason(issue) : null;
   const fixLabel = issue.fix?.kind === 'drop' ? '⬇ 沉底' : issue.fix?.kind === 'clamp' ? '↩ 移回床内' : null;
   const canPreviewRepair = issue.code === 'non_watertight' || issue.code === 'degenerate';
   const components = connectedComponentEvidenceForIssue(issue);
+  const hasOutOfBedIssue = issue.code === 'dims' && liveIssues().some(
+    (candidate) => candidate.instanceId === issue.instanceId && candidate.code === 'out_of_bed',
+  );
+  const canPreviewPlaneCut = issue.code === 'dims' && !!issue.world && components.length <= 1 && hasOutOfBedIssue;
+  const cutActive = canPreviewPlaneCut
+    && cutPhase === 'ready'
+    && cutIssueKey === issue.key
+    && !planeCutPreviewIsStale();
+  const cutCandidate = cutActive ? cutCandidates[cutCandidateIndex] : null;
   const readOnlyDiagnosis = issue.code === 'self_intersection'
     || issue.code === 'internal_shell'
     || issue.code === 'isolated_fragment'
     || issue.code === 'deep_check_partial'
-    || components.length > 1;
+    || components.length > 1
+    || canPreviewPlaneCut;
   const repairReason = canPreviewRepair ? meshRepairDisabledReason(issue) : null;
   const repairBusy = repairPhase === 'preparing';
   const evidence = selfIntersectionEvidenceForIssue(issue);
@@ -237,6 +259,64 @@ function IssueRow({
             )}
           </div>
         )}
+        {canPreviewPlaneCut && (
+          <div
+            className={`plane-cut-card${cutActive ? ' is-active' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="plane-cut-card__heading">
+              <strong>平面切割候选</strong>
+              <span>本地确定性 · 3 个</span>
+            </div>
+            {cutCandidate ? (
+              <>
+                <div className="plane-cut-card__nav">
+                  <button
+                    type="button"
+                    aria-label="上一个平面切割候选"
+                    onClick={() => selectPlaneCutCandidate(cutCandidateIndex - 1)}
+                  >
+                    ‹
+                  </button>
+                  <span>{cutCandidate.label} · 推荐分 {cutCandidate.score}</span>
+                  <button
+                    type="button"
+                    aria-label="下一个平面切割候选"
+                    onClick={() => selectPlaneCutCandidate(cutCandidateIndex + 1)}
+                  >
+                    ›
+                  </button>
+                  <button type="button" className="close" onClick={closePlaneCutPreview}>关闭</button>
+                </div>
+                <div className="plane-cut-card__reason">{cutCandidate.rationale}</div>
+                <div className="plane-cut-card__parts">
+                  {cutCandidate.parts.map((part) => (
+                    <div key={part.label} className={`part part-${part.label.toLowerCase()}`}>
+                      <b>{part.label}</b>
+                      <span>{part.dimensionsMm.map((value) => value.toFixed(1)).join(' × ')} mm</span>
+                      <em className={part.fitsBed ? 'fits' : 'overflow'}>{part.fitsBed ? '可放入' : '仍超床'}</em>
+                    </div>
+                  ))}
+                </div>
+                <small>
+                  切面约 {cutCandidate.cutAreaEstimateMm2.toFixed(0)} mm² · 包围盒估算；未计算精确截面与封口，不生成零件
+                </small>
+              </>
+            ) : (
+              <>
+                <p>单一连通壳超出打印床。先比较 X / Y / Z 三个中线，再决定是否进入真实切割。</p>
+                <button
+                  type="button"
+                  className="plane-cut-card__start"
+                  disabled={stale}
+                  onClick={() => startPlaneCutPreview(issue)}
+                >
+                  查看 3 个候选
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {issue.level === 'warning' && issue.code === 'floating' && issue.world && (
           <div style={{ color: GREY }}>投影落点 z=0,距离 {issue.world.min[2].toFixed(1)}mm</div>
         )}
@@ -290,9 +370,11 @@ function IssueRow({
           }}
           title={components.length > 1
             ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
-            : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
+            : canPreviewPlaneCut
+              ? 'M1.7.4 只读平面切割预览：只估算候选，不生成新零件'
+              : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
-          {components.length > 1 ? '只读预览' : '只读诊断'}
+          {components.length > 1 || canPreviewPlaneCut ? '只读预览' : '只读诊断'}
         </span>
       )}
     </div>

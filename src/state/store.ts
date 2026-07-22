@@ -300,6 +300,19 @@ export function bootstrapComponentPreviewQaScene(): boolean {
   return true;
 }
 
+/** M1.7.4 隐藏 QA 场景：300×80×80mm 单一封闭壳沿 X 中切后，两侧均可放入 256mm 打印床。 */
+export function bootstrapPlaneCutPreviewQaScene(): boolean {
+  const instanceId = 'ins_qa_plane_cut_preview';
+  if (doc.nodes.has(instanceId)) return false;
+  const assetId = 'ast_qa_plane_cut_preview';
+  const geometry = new THREE.BoxGeometry(300, 80, 80).translate(0, 0, 40);
+  const asset = demoAsset(assetId, '300mm 单壳超床样件', geometry, 12);
+  const instance = demoInstance(instanceId, assetId, '300mm 单壳 · 平面切割预览', [0, 0, 0]);
+  doc.hydrate([asset], [instance]);
+  useUi.getState().bump();
+  return true;
+}
+
 function makeComponentPreviewQaGeometry(): THREE.BufferGeometry {
   const parts = [
     new THREE.BoxGeometry(28, 28, 28).toNonIndexed().translate(-34, 0, 14),

@@ -6,6 +6,7 @@ import {
   useSplitAnalysisSnapshot,
 } from './split-analysis-state';
 import type { NeedsSplit, PrintProcess, SplitNextStep, SplitPriority, SplitScheme } from './split-analysis-types';
+import { startPlaneCutPreview } from '../split/plane-cut-state';
 
 const PROCESS_OPTIONS: Array<{ value: PrintProcess; label: string }> = [
   { value: 'fdm', label: 'FDM' },
@@ -74,9 +75,24 @@ const TOOL_LABELS: Record<string, string> = {
   analyze_print_orientation: '分析打印朝向',
 };
 
-function StepCard({ step, disabled, onOpenCheck }: { step: SplitNextStep; disabled: boolean; onOpenCheck?: () => void }) {
+function StepCard({
+  step,
+  disabled,
+  onOpenCheck,
+  onPreviewCut,
+}: {
+  step: SplitNextStep;
+  disabled: boolean;
+  onOpenCheck?: () => void;
+  onPreviewCut?: () => void;
+}) {
   const inspectAvailable = step.suggestedTool === 'inspect_model' && !!onOpenCheck;
-  const futureTool = step.suggestedTool && step.suggestedTool !== 'inspect_model' ? TOOL_LABELS[step.suggestedTool] ?? step.suggestedTool : null;
+  const previewAvailable = (step.suggestedTool === 'find_cut_candidates' || step.suggestedTool === 'preview_plane_cut') && !!onPreviewCut;
+  const futureTool = step.suggestedTool
+    && step.suggestedTool !== 'inspect_model'
+    && !previewAvailable
+    ? TOOL_LABELS[step.suggestedTool] ?? step.suggestedTool
+    : null;
   return (
     <article className="split-next-step">
       <div className="split-next-step__topline">
@@ -87,6 +103,11 @@ function StepCard({ step, disabled, onOpenCheck }: { step: SplitNextStep; disabl
       <div className="split-next-step__action">
         {inspectAvailable && (
           <button type="button" disabled={disabled} onClick={onOpenCheck}>打开打印检查</button>
+        )}
+        {previewAvailable && (
+          <button type="button" disabled={disabled} onClick={onPreviewCut}>
+            {TOOL_LABELS[step.suggestedTool!] ?? '切割候选预览'}
+          </button>
         )}
         {futureTool && <button type="button" disabled>{futureTool} · 阶段二</button>}
         {!step.suggestedTool && <span>在当前页面完成判断</span>}
@@ -109,6 +130,16 @@ export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void }
   const selectedScheme = analysis.result?.schemes.find((scheme) => scheme.id === analysis.selectedSchemeId) ?? null;
   const actionableIssues = liveIssues().filter((issue) => issue.level !== 'info');
   const firstIssue = actionableIssues[0] ?? null;
+  const allLiveIssues = liveIssues();
+  const planeCutIssue = allLiveIssues.find((issue) => issue.code === 'dims'
+    && !!issue.world
+    && allLiveIssues.some((candidate) => candidate.instanceId === issue.instanceId && candidate.code === 'out_of_bed')) ?? null;
+  const canPreviewCut = !!planeCutIssue && !checkStale && !resultStale;
+  const openPlaneCutPreview = () => {
+    if (!planeCutIssue || !startPlaneCutPreview(planeCutIssue)) return;
+    onOpenCheck?.();
+    useUi.getState().setToast('已生成 3 个本地轴向切面候选；这只是预览，不会修改模型');
+  };
   const telemetry = analysis.resultSource === 'api'
     ? [
       analysis.latencyMs != null ? `${(analysis.latencyMs / 1000).toFixed(1)} 秒` : null,
@@ -275,8 +306,13 @@ export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void }
                 <span>当前选择</span>
                 <strong>{selectedScheme.title}</strong>
               </div>
-              <button type="button" disabled title="阶段二开放：先生成预览，再等待用户确认">
-                生成切割预览 · 阶段二
+              <button
+                type="button"
+                disabled={!canPreviewCut}
+                title={canPreviewCut ? '比较本地确定性轴向候选，不执行切割' : '需要新鲜的超床检查结果'}
+                onClick={openPlaneCutPreview}
+              >
+                比较本地切面候选
               </button>
             </div>
           )}
@@ -303,7 +339,14 @@ export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void }
               </button>
               <button type="button" disabled={!onOpenCheck || resultStale} onClick={onOpenCheck}>查看打印检查</button>
               <button type="button" disabled={check.phase === 'running' || resultStale} onClick={() => runPrintCheck()}>重新检查证据</button>
-              <button type="button" disabled title="后续版本开放，只生成可丢弃预览">切割预览 · 阶段二</button>
+              <button
+                type="button"
+                disabled={!canPreviewCut}
+                title={canPreviewCut ? '只读预览 X / Y / Z 三个中线候选' : '当前没有可预览的单壳超床对象'}
+                onClick={openPlaneCutPreview}
+              >
+                预览切面候选
+              </button>
             </div>
           </div>
 
@@ -315,7 +358,13 @@ export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void }
             </div>
             <div className="split-next-steps">
               {analysis.result.nextSteps.map((step) => (
-                <StepCard key={`${step.order}-${step.action}`} step={step} disabled={resultStale} onOpenCheck={onOpenCheck} />
+                <StepCard
+                  key={`${step.order}-${step.action}`}
+                  step={step}
+                  disabled={resultStale || ((step.suggestedTool === 'find_cut_candidates' || step.suggestedTool === 'preview_plane_cut') && !canPreviewCut)}
+                  onOpenCheck={onOpenCheck}
+                  onPreviewCut={canPreviewCut ? openPlaneCutPreview : undefined}
+                />
               ))}
             </div>
           </div>

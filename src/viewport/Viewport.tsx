@@ -27,6 +27,7 @@ import { CheckHighlight } from '../check/CheckHighlight';
 import { RepairPreviewMesh } from '../repair/RepairPreviewMesh';
 import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
+import { PlaneCutPreview } from '../split/PlaneCutPreview';
 
 function InteractionBridge() {
   useViewportInteraction();
@@ -285,6 +286,7 @@ export function Viewport() {
     <div style={{ position: 'relative', width: '100%', height: '100%' }} {...dropProps}>
       <Canvas
         style={{ background: '#141417' }}
+        onCreated={({ gl }) => { gl.localClippingEnabled = true; }}
         onContextMenu={(e) => e.preventDefault()} // 右键归 orbit,屏蔽浏览器菜单
       >
         <ambientLight intensity={0.55} />
@@ -294,6 +296,7 @@ export function Viewport() {
         <Bed bed={bed} />
         <SceneInstances />
         <CheckHighlight />
+        <PlaneCutPreview />
         <RepairPreviewMesh />
         <GhostPreview />
         <Gizmo />

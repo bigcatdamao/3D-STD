@@ -348,6 +348,69 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.plane-cut-card {
+  margin-top: 6px;
+  padding: 6px;
+  border: 1px solid rgba(255, 180, 84, .24);
+  border-radius: 7px;
+  background: rgba(255, 180, 84, .045);
+}
+.plane-cut-card.is-active { border-color: rgba(255, 180, 84, .58); }
+.plane-cut-card__heading,
+.plane-cut-card__nav,
+.plane-cut-card__parts,
+.plane-cut-card__parts .part { display: flex; align-items: center; }
+.plane-cut-card__heading { gap: 6px; }
+.plane-cut-card__heading strong { color: #ffd49a; font-size: 9px; }
+.plane-cut-card__heading span { margin-left: auto; color: #9c8568; font-size: 8px; }
+.plane-cut-card p { margin: 5px 0; color: #a89b8c; font-size: 9px; line-height: 1.45; }
+.plane-cut-card__start {
+  width: 100%;
+  border: 1px solid rgba(255, 180, 84, .44);
+  border-radius: 5px;
+  background: rgba(255, 180, 84, .09);
+  color: #ffd49a;
+  padding: 4px 7px;
+  font-size: 9px;
+  cursor: pointer;
+}
+.plane-cut-card__start:disabled { cursor: default; opacity: .34; }
+.plane-cut-card__nav { gap: 4px; margin-top: 5px; }
+.plane-cut-card__nav span { flex: 1; min-width: 0; color: #e0c7a7; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plane-cut-card__nav button {
+  border: 1px solid #4c4135;
+  border-radius: 4px;
+  background: #25231f;
+  color: #d8b98f;
+  padding: 1px 6px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.plane-cut-card__nav button.close { color: #9e968d; font-size: 8px; }
+.plane-cut-card__reason { margin: 5px 0; color: #a99c8e; font-size: 8px; line-height: 1.4; }
+.plane-cut-card__parts { gap: 4px; }
+.plane-cut-card__parts .part { flex: 1; gap: 4px; min-width: 0; padding: 4px; border-radius: 5px; background: #202027; }
+.plane-cut-card__parts .part-a { border-left: 2px solid #50c8ff; }
+.plane-cut-card__parts .part-b { border-left: 2px solid #c98ee0; }
+.plane-cut-card__parts b { color: #e6e6eb; font-size: 9px; }
+.plane-cut-card__parts span { flex: 1; min-width: 0; color: #a5a5ad; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.plane-cut-card__parts em { font-size: 8px; font-style: normal; white-space: nowrap; }
+.plane-cut-card__parts em.fits { color: #5dcaa5; }
+.plane-cut-card__parts em.overflow { color: #f09595; }
+.plane-cut-card small { display: block; margin-top: 5px; color: #7e7469; font-size: 8px; line-height: 1.4; }
+.plane-cut-preview-label {
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: rgba(20, 20, 23, .88);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.plane-cut-preview-label.side-a { color: #8fddff; }
+.plane-cut-preview-label.side-b { color: #e3b2f0; }
+.plane-cut-preview-label.cut { color: #ffca83; }
+
 /* M1.7 · 打印问题修复工作台：先预览、再生成派生副本。 */
 .mesh-repair-card {
   display: grid;

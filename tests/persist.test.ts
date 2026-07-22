@@ -1,7 +1,7 @@
 // T11 持久化测试(fake-indexeddb 提供 Node 侧 IndexedDB)。
 // 覆盖:往返装载(刷新模拟)、genId 地板防撞车、改名/删除对账、AST-04 容量策略
 // (80% 预警 / 超限拒写 / 清理后自动补存 / 不淘汰旧资产)、几何丢失 → 失效(边界 3)、
-// IndexedDB 不可用 → 会话模式(边界 1)、演示夹具不落库。
+// IndexedDB 不可用 → 会话模式(边界 1)、演示/隐藏 QA 夹具不落库。
 
 import 'fake-indexeddb/auto';
 import * as THREE from 'three';
@@ -128,7 +128,7 @@ describe('往返装载(C5 / AST-04)', () => {
     expect(doc.assets.get(a.id)?.name).toBe('将删'); // 撤销的结果同样被持久化
   });
 
-  it('演示夹具(ast_demo_*)不落库', async () => {
+  it('演示与隐藏 QA 夹具(ast_demo_* / ast_qa_*)不落库', async () => {
     const db = freshDbName();
     await initPersistence({ dbName: db });
     doc.hydrateAssets([
@@ -139,11 +139,19 @@ describe('往返装载(C5 / AST-04)', () => {
         state: 'ready',
         meta: { faces: 1, bbox: { min: [0, 0, 0], max: [1, 1, 1] }, unitChoice: 'mm', watertight: true, degenerate: false },
       },
+      {
+        id: 'ast_qa_plane_cut_preview',
+        name: '隐藏 QA',
+        source: 'import',
+        state: 'ready',
+        meta: { faces: 12, bbox: { min: [-1, -1, 0], max: [1, 1, 2] }, unitChoice: 'mm', watertight: true, degenerate: false },
+      },
     ]);
     useUi.getState().bump();
     await _syncNowForTest();
     expect(useUi.getState().storage.usedBytes).toBe(0);
     expect(isDemoAsset('ast_demo_x')).toBe(true);
+    expect(isDemoAsset('ast_qa_plane_cut_preview')).toBe(true);
   });
 });
 
