@@ -5,13 +5,16 @@
 import { doc, useUi } from '../state/store';
 import {
   applyFix,
+  connectedComponentEvidenceForIssue,
   fixDisabledReason,
+  focusConnectedComponent,
   focusSelfIntersectionEvidence,
   focusIssue,
   liveIssues,
   reportIsStale,
   runPrintCheck,
   selfIntersectionEvidenceForIssue,
+  startConnectedComponentPreview,
   useCheck,
   useCheckSnapshot,
 } from './check-state';
@@ -85,10 +88,12 @@ function IssueRow({
   const fixReason = issue.fix ? fixDisabledReason(issue) : null;
   const fixLabel = issue.fix?.kind === 'drop' ? '⬇ 沉底' : issue.fix?.kind === 'clamp' ? '↩ 移回床内' : null;
   const canPreviewRepair = issue.code === 'non_watertight' || issue.code === 'degenerate';
+  const components = connectedComponentEvidenceForIssue(issue);
   const readOnlyDiagnosis = issue.code === 'self_intersection'
     || issue.code === 'internal_shell'
     || issue.code === 'isolated_fragment'
-    || issue.code === 'deep_check_partial';
+    || issue.code === 'deep_check_partial'
+    || components.length > 1;
   const repairReason = canPreviewRepair ? meshRepairDisabledReason(issue) : null;
   const repairBusy = repairPhase === 'preparing';
   const evidence = selfIntersectionEvidenceForIssue(issue);
@@ -96,6 +101,18 @@ function IssueRow({
     ? Math.min(activeEvidenceIndex, evidence.length - 1)
     : 0;
   const selectedEvidence = evidence[evidenceIndex];
+  const componentIndex = active && components.length
+    ? Math.min(activeEvidenceIndex, components.length - 1)
+    : 0;
+  const selectedComponent = components[componentIndex];
+  const componentHealth = components.length
+    ? useCheck.getState().assetMetas.find((asset) => asset.assetId === issue.assetId)?.health
+    : null;
+  const componentKind = selectedComponent?.kind === 'primary'
+    ? '主体'
+    : selectedComponent?.kind === 'internal'
+      ? '内部壳'
+      : selectedComponent?.kind === 'fragment' ? '疑似碎片' : '独立壳';
 
   return (
     <div
@@ -163,6 +180,63 @@ function IssueRow({
             </div>
           </div>
         )}
+        {components.length > 1 && selectedComponent && (
+          <div
+            className={`component-preview${active ? ' is-active' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="component-preview__heading">
+              <strong>连通壳拆件预览</strong>
+              <span>{componentHealth?.connectedComponents ?? components.length} 个候选零件</span>
+            </div>
+            {active ? (
+              <>
+                <div className="component-preview__legend">
+                  <i className="part-1" /><i className="part-2" /><i className="part-3" /><i className="part-4" />
+                  <span>颜色区分现有独立壳，亮框是当前零件</span>
+                </div>
+                <div className="component-preview__nav">
+                  <button
+                    type="button"
+                    aria-label="上一个连通壳零件"
+                    onClick={() => focusConnectedComponent(issue, componentIndex - 1)}
+                  >
+                    ‹
+                  </button>
+                  <span>
+                    零件 {componentIndex + 1}/{components.length} · {componentKind} · {selectedComponent.faceCount.toLocaleString()} 面
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="下一个连通壳零件"
+                    onClick={() => focusConnectedComponent(issue, componentIndex + 1)}
+                  >
+                    ›
+                  </button>
+                  <button
+                    type="button"
+                    className="locate"
+                    onClick={() => focusConnectedComponent(issue, componentIndex)}
+                  >
+                    定位
+                  </button>
+                </div>
+                <small>
+                  {componentHealth?.componentEvidenceComplete ? '完整预览' : '预算内抽样预览'} · 当前只读，不会创建零件或修改原模型
+                </small>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="component-preview__start"
+                disabled={stale}
+                onClick={() => startConnectedComponentPreview(issue)}
+              >
+                预览拆成 {componentHealth?.connectedComponents ?? components.length} 件
+              </button>
+            )}
+          </div>
+        )}
         {issue.level === 'warning' && issue.code === 'floating' && issue.world && (
           <div style={{ color: GREY }}>投影落点 z=0,距离 {issue.world.min[2].toFixed(1)}mm</div>
         )}
@@ -214,9 +288,11 @@ function IssueRow({
             fontSize: 9,
             whiteSpace: 'nowrap',
           }}
-          title="M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑"
+          title={components.length > 1
+            ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
+            : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
-          只读诊断
+          {components.length > 1 ? '只读预览' : '只读诊断'}
         </span>
       )}
     </div>

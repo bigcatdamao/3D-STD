@@ -56,6 +56,8 @@ function defaultScript(m: CheckRunMsg, reply: (r: CheckReply) => void) {
           connectedComponents: 1,
           closedComponents: 0,
           componentAnalysisComplete: true,
+          componentEvidence: [],
+          componentEvidenceComplete: true,
           isolatedFragments: 0,
           isolatedFragmentFaces: 0,
           internalShells: 0,

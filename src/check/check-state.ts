@@ -16,7 +16,7 @@ import {
   type RunMeta,
 } from './check-core';
 import { CheckRunner, type SpawnCheckWorker } from './check-runner';
-import type { SelfIntersectionEvidence } from './mesh-health-core';
+import type { ConnectedComponentEvidence, SelfIntersectionEvidence } from './mesh-health-core';
 
 // ---------- 描红线段注册表(非序列化资源,与 geometryRegistry 同居内核之外) ----------
 /** 资产 id → 边界边线段端点(局部坐标)。Worker 首次分析回传,跨轮常驻主线程 */
@@ -37,7 +37,7 @@ interface CheckState {
   timedOut: boolean;
   runMeta: RunMeta | null; // 检查发起时刻的 editVersion + 床(过期判定基准)
   activeKey: string | null; // 当前聚焦的条目(视口高亮定位)
-  activeEvidenceIndex: number; // 自交命中对浏览位置；只读 UI 状态，不进入场景历史
+  activeEvidenceIndex: number; // 自交命中对/连通壳浏览位置；只读 UI 状态，不进入场景历史
   fixedKeys: string[]; // 本报告内已执行修复的条目(标记「已修复」;新一轮清空)
   panelOpen: boolean;
   setPanelOpen: (v: boolean) => void;
@@ -219,6 +219,10 @@ export function focusIssue(issue: CheckIssue) {
     focusSelfIntersectionEvidence(issue, 0);
     return;
   }
+  if (issue.code === 'dims' && connectedComponentEvidenceForIssue(issue).length > 1) {
+    startConnectedComponentPreview(issue);
+    return;
+  }
   useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: 0 });
   if (!doc.nodes.has(issue.instanceId)) return;
   if (!doc.effectiveLocked(issue.instanceId)) {
@@ -232,6 +236,77 @@ export function selfIntersectionEvidenceForIssue(issue: CheckIssue): SelfInterse
   if (issue.code !== 'self_intersection') return [];
   return useCheck.getState().assetMetas.find((meta) => meta.assetId === issue.assetId)
     ?.health.selfIntersectionEvidence ?? [];
+}
+
+/** 连通壳预览只挂在尺寸信息条目，避免内部壳、碎片警告重复出现同一套入口。 */
+export function connectedComponentEvidenceForIssue(issue: CheckIssue): ConnectedComponentEvidence[] {
+  if (issue.code !== 'dims') return [];
+  return useCheck.getState().assetMetas.find((meta) => meta.assetId === issue.assetId)
+    ?.health.componentEvidence ?? [];
+}
+
+/** 将资产局部连通壳包围盒按实例 TRS 变换为世界 AABB。 */
+export function connectedComponentWorldBounds(
+  component: ConnectedComponentEvidence,
+  transform: Transform,
+): { min: Vec3; max: Vec3 } {
+  const matrix = composeTRS(transform);
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const x of [component.bounds.min[0], component.bounds.max[0]]) {
+    for (const y of [component.bounds.min[1], component.bounds.max[1]]) {
+      for (const z of [component.bounds.min[2], component.bounds.max[2]]) {
+        const point: Vec3 = [
+          matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+          matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+          matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+        ];
+        for (let axis = 0; axis < 3; axis++) {
+          min[axis] = Math.min(min[axis], point[axis]);
+          max[axis] = Math.max(max[axis], point[axis]);
+        }
+      }
+    }
+  }
+  return { min, max };
+}
+
+/** 首次进入预览先展示整个对象的分色关系，随后上一件/下一件才做局部聚焦。 */
+export function startConnectedComponentPreview(issue: CheckIssue): boolean {
+  const components = connectedComponentEvidenceForIssue(issue);
+  const inst = doc.nodes.get(issue.instanceId);
+  if (components.length <= 1 || !inst || inst.kind !== 'instance') return false;
+  useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: 0 });
+  if (!doc.effectiveLocked(issue.instanceId)) dispatch((d) => d.select([issue.instanceId]));
+  sendCam({ kind: 'focus' });
+  return true;
+}
+
+function padComponentFocusBounds(bounds: { min: Vec3; max: Vec3 }): { min: Vec3; max: Vec3 } {
+  const min = [...bounds.min] as Vec3;
+  const max = [...bounds.max] as Vec3;
+  for (let axis = 0; axis < 3; axis++) {
+    const center = (bounds.min[axis] + bounds.max[axis]) / 2;
+    const half = Math.max((bounds.max[axis] - bounds.min[axis]) / 2, 0.5) * 1.6;
+    min[axis] = center - half;
+    max[axis] = center + half;
+  }
+  return { min, max };
+}
+
+/** 开启逐壳只读预览并聚焦指定壳；不会创建零件、修改几何或写入历史。 */
+export function focusConnectedComponent(issue: CheckIssue, requestedIndex: number): boolean {
+  const components = connectedComponentEvidenceForIssue(issue);
+  const inst = doc.nodes.get(issue.instanceId);
+  if (components.length <= 1 || !inst || inst.kind !== 'instance') return false;
+  const index = ((requestedIndex % components.length) + components.length) % components.length;
+  useCheck.setState({ activeKey: issue.key, activeEvidenceIndex: index });
+  if (!doc.effectiveLocked(issue.instanceId)) dispatch((d) => d.select([issue.instanceId]));
+  sendCam({
+    kind: 'focusBounds',
+    ...padComponentFocusBounds(connectedComponentWorldBounds(components[index], inst.transform)),
+  });
+  return true;
 }
 
 /** 将一组资产局部自交三角形变换到实例世界空间，供相机精准聚焦。 */

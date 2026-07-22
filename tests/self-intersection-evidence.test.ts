@@ -81,6 +81,8 @@ describe('M1.7.2 自交证据定位', () => {
           connectedComponents: 3,
           closedComponents: 0,
           componentAnalysisComplete: true,
+          componentEvidence: [],
+          componentEvidenceComplete: true,
           isolatedFragments: 0,
           isolatedFragmentFaces: 0,
           internalShells: 0,

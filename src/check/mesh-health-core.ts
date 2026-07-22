@@ -10,6 +10,10 @@ export const MAX_SELF_INTERSECTION_HITS = 200;
 /** 视口逐条浏览只保留前 24 组确定命中，避免把大型模型的诊断证据无限传回主线程。 */
 export const MAX_SELF_INTERSECTION_EVIDENCE = 24;
 export const MAX_COMPONENT_ANALYSIS_TRIANGLES = 250_000;
+/** 逐壳预览只展示面积最大的前 24 个连通壳，避免异常碎片模型撑爆检查面板。 */
+export const MAX_COMPONENT_EVIDENCE = 24;
+/** Worker 返回给主线程的逐壳预览面预算；完整壳统计不受该预算影响。 */
+export const MAX_COMPONENT_PREVIEW_FACES = 120_000;
 
 export interface SelfIntersectionEvidence {
   /** 1-based 原始三角面序号，便于在 UI 中与外部网格工具核对。 */
@@ -20,10 +24,25 @@ export interface SelfIntersectionEvidence {
   triangleB: [Vec3, Vec3, Vec3];
 }
 
+export type ConnectedComponentKind = 'primary' | 'separate' | 'internal' | 'fragment';
+
+/** M1.7.3 只读拆件预览证据。sourceFaceIndices 为原始几何的 0-based 三角面序号。 */
+export interface ConnectedComponentEvidence {
+  componentIndex: number;
+  faceCount: number;
+  closed: boolean;
+  kind: ConnectedComponentKind;
+  bounds: { min: Vec3; max: Vec3 };
+  sourceFaceIndices: number[];
+  previewComplete: boolean;
+}
+
 export interface MeshHealthAnalysis {
   connectedComponents: number;
   closedComponents: number;
   componentAnalysisComplete: boolean;
+  componentEvidence: ConnectedComponentEvidence[];
+  componentEvidenceComplete: boolean;
   isolatedFragments: number;
   isolatedFragmentFaces: number;
   internalShells: number;
@@ -40,6 +59,8 @@ export interface MeshHealthOptions {
   maxSelfIntersectionHits?: number;
   maxSelfIntersectionEvidence?: number;
   maxComponentAnalysisTriangles?: number;
+  maxComponentEvidence?: number;
+  maxComponentPreviewFaces?: number;
 }
 
 interface PreparedMesh {
@@ -298,6 +319,51 @@ function internalComponentIndexes(components: Component[], mesh: PreparedMesh): 
   return internal;
 }
 
+function connectedComponentEvidence(
+  components: Component[],
+  mesh: PreparedMesh,
+  internal: Set<number>,
+  fragments: Set<number>,
+  options: MeshHealthOptions,
+): { evidence: ConnectedComponentEvidence[]; complete: boolean } {
+  if (!mesh.componentAnalysisComplete) return { evidence: [], complete: false };
+  // 单壳资产没有“拆成现有零件”的预览价值，不为其复制最多 120k 个面索引。
+  if (components.length <= 1) return { evidence: [], complete: true };
+  const componentLimit = Math.max(1, options.maxComponentEvidence ?? MAX_COMPONENT_EVIDENCE);
+  const visible = components.slice(0, componentLimit);
+  let remainingFaces = Math.max(
+    visible.length,
+    options.maxComponentPreviewFaces ?? MAX_COMPONENT_PREVIEW_FACES,
+  );
+  const evidence: ConnectedComponentEvidence[] = [];
+  for (let index = 0; index < visible.length; index++) {
+    const component = visible[index];
+    const remainingComponents = visible.length - index;
+    const allowance = Math.max(1, Math.floor(remainingFaces / remainingComponents));
+    const sampleCount = Math.min(component.faces.length, allowance);
+    const stride = component.faces.length / sampleCount;
+    const sourceFaceIndices: number[] = [];
+    for (let sample = 0; sample < sampleCount; sample++) {
+      const preparedFace = component.faces[Math.min(component.faces.length - 1, Math.floor(sample * stride))];
+      sourceFaceIndices.push(mesh.triangleSourceFaces[preparedFace]);
+    }
+    remainingFaces -= sampleCount;
+    evidence.push({
+      componentIndex: index + 1,
+      faceCount: component.faces.length,
+      closed: component.closed,
+      kind: index === 0 ? 'primary' : internal.has(index) ? 'internal' : fragments.has(index) ? 'fragment' : 'separate',
+      bounds: { min: [...component.min], max: [...component.max] },
+      sourceFaceIndices,
+      previewComplete: sampleCount === component.faces.length,
+    });
+  }
+  return {
+    evidence,
+    complete: components.length <= componentLimit && evidence.every((component) => component.previewComplete),
+  };
+}
+
 interface TriangleBounds {
   face: number;
   min: Vec3;
@@ -490,6 +556,7 @@ export function analyzeMeshHealth(
   ) || 1;
   let isolatedFragments = 0;
   let isolatedFragmentFaces = 0;
+  const fragments = new Set<number>();
   for (let index = 1; index < components.length; index++) {
     if (internal.has(index)) continue;
     const component = components[index];
@@ -503,13 +570,17 @@ export function analyzeMeshHealth(
     if (lowFaceFragment || faceRatio <= 0.01 || diagonal / overallDiag <= 0.03) {
       isolatedFragments++;
       isolatedFragmentFaces += component.faces.length;
+      fragments.add(index);
     }
   }
+  const componentPreview = connectedComponentEvidence(components, mesh, internal, fragments, options);
   const intersections = selfIntersections(mesh, options);
   return {
     connectedComponents: components.length,
     closedComponents: components.filter((component) => component.closed).length,
     componentAnalysisComplete: mesh.componentAnalysisComplete,
+    componentEvidence: componentPreview.evidence,
+    componentEvidenceComplete: componentPreview.complete,
     isolatedFragments,
     isolatedFragmentFaces,
     internalShells: internal.size,

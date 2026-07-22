@@ -4,7 +4,7 @@ import { SplitAnalysisPanel } from './agent/SplitAnalysisPanel';
 import { useSplitAnalysis } from './agent/split-analysis-state';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
-import { reportIsStale, runPrintCheck, useCheck } from './check/check-state';
+import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
 import { ExportDialog, HeaderExportButton } from './export/ExportDialog';
 import { HistoryPanel } from './history/HistoryPanel';
 import { ImportButton } from './importer/ImportUI';
@@ -19,7 +19,14 @@ import {
   type InspectorTab,
   type WorkspaceLayout,
 } from './product/workspace-layout';
-import { bootstrapDemoScene, bootstrapSelfIntersectionQaScene, doc, sendCam, useUi } from './state/store';
+import {
+  bootstrapComponentPreviewQaScene,
+  bootstrapDemoScene,
+  bootstrapSelfIntersectionQaScene,
+  doc,
+  sendCam,
+  useUi,
+} from './state/store';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -195,8 +202,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('qa') !== 'self-intersection') return;
-    if (!bootstrapSelfIntersectionQaScene()) return;
+    const qa = new URLSearchParams(window.location.search).get('qa');
+    const bootstrapped = qa === 'self-intersection'
+      ? bootstrapSelfIntersectionQaScene()
+      : qa === 'component-preview' ? bootstrapComponentPreviewQaScene() : false;
+    if (!bootstrapped) return;
     setLayout((current) => ({
       ...current,
       leftOpen: true,
@@ -204,11 +214,27 @@ export function App() {
       creationOpen: false,
       inspectorTab: 'check',
     }));
+    let previewTimer: number | undefined;
     const timer = window.setTimeout(() => {
       sendCam({ kind: 'focus' });
       runPrintCheck();
+      if (qa === 'component-preview') {
+        let attempts = 0;
+        previewTimer = window.setInterval(() => {
+          const issue = useCheck.getState().issues.find((candidate) => candidate.code === 'dims');
+          if (issue) {
+            focusIssue(issue);
+            window.clearInterval(previewTimer);
+          } else if (++attempts >= 40) {
+            window.clearInterval(previewTimer);
+          }
+        }, 50);
+      }
     }, 120);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (previewTimer !== undefined) window.clearInterval(previewTimer);
+    };
   }, []);
 
   useEffect(() => {

@@ -183,6 +183,8 @@ describe('三级判定(CHK-01)与修复参数(CHK-06)', () => {
       connectedComponents: 4,
       closedComponents: 2,
       componentAnalysisComplete: false,
+      componentEvidence: [],
+      componentEvidenceComplete: false,
       isolatedFragments: 2,
       isolatedFragmentFaces: 7,
       internalShells: 1,

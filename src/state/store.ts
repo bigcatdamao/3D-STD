@@ -287,6 +287,40 @@ export function bootstrapSelfIntersectionQaScene(): boolean {
   return true;
 }
 
+/** M1.7.3 隐藏 QA 场景：单一资产内含三个彼此分离的封闭壳，稳定验收逐壳分色与只读定位。 */
+export function bootstrapComponentPreviewQaScene(): boolean {
+  const instanceId = 'ins_qa_component_preview';
+  if (doc.nodes.has(instanceId)) return false;
+  const assetId = 'ast_qa_component_preview';
+  const geometry = makeComponentPreviewQaGeometry();
+  const asset = demoAsset(assetId, '三连通壳拆件样件', geometry, 36);
+  const instance = demoInstance(instanceId, assetId, '三连通壳 · 只读拆件预览', [0, 0, 0]);
+  doc.hydrate([asset], [instance]);
+  useUi.getState().bump();
+  return true;
+}
+
+function makeComponentPreviewQaGeometry(): THREE.BufferGeometry {
+  const parts = [
+    new THREE.BoxGeometry(28, 28, 28).toNonIndexed().translate(-34, 0, 14),
+    new THREE.BoxGeometry(20, 20, 20).toNonIndexed().translate(0, 0, 10),
+    new THREE.BoxGeometry(14, 14, 14).toNonIndexed().translate(25, 0, 7),
+  ];
+  const counts = parts.map((part) => part.getAttribute('position').array.length);
+  const positions = new Float32Array(counts.reduce((sum, count) => sum + count, 0));
+  let offset = 0;
+  for (const part of parts) {
+    const array = part.getAttribute('position').array as Float32Array;
+    positions.set(array, offset);
+    offset += array.length;
+    part.dispose();
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function makeSelfIntersectionPair(): THREE.BufferGeometry {
   const positions = new Float32Array([
     -20, -20, 0, 20, -20, 0, 0, 20, 0,

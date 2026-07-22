@@ -60,6 +60,29 @@ describe('M1.7.1 深度网格只读检测', () => {
     expect(result.internalShells).toBe(0);
     expect(result.isolatedFragments).toBe(0);
     expect(result.selfIntersectionPairs).toBe(0);
+    expect(result.componentEvidence).toHaveLength(2);
+    expect(result.componentEvidence[0]).toMatchObject({
+      componentIndex: 1,
+      faceCount: 12,
+      closed: true,
+      kind: 'primary',
+      previewComplete: true,
+    });
+    expect(result.componentEvidence[1]).toMatchObject({ componentIndex: 2, kind: 'separate' });
+    expect(result.componentEvidenceComplete).toBe(true);
+  });
+
+  it('逐壳预览面数受独立预算保护，壳数量与完整诊断保持准确', () => {
+    const result = analyzeMeshHealth(new Float32Array([
+      ...cube(20, [-15, 0, 0]),
+      ...cube(20, [15, 0, 0]),
+    ]), null, { maxComponentPreviewFaces: 2 });
+    expect(result.connectedComponents).toBe(2);
+    expect(result.componentAnalysisComplete).toBe(true);
+    expect(result.componentEvidence).toHaveLength(2);
+    expect(result.componentEvidence.map((item) => item.sourceFaceIndices.length)).toEqual([1, 1]);
+    expect(result.componentEvidence.every((item) => !item.previewComplete)).toBe(true);
+    expect(result.componentEvidenceComplete).toBe(false);
   });
 
   it('两片不相邻三角形互相穿过：报告确定自交', () => {

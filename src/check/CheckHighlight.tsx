@@ -9,12 +9,17 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { doc, geometryRegistry, useUi } from '../state/store';
 import { edgeRegistry, liveIssues, reportIsStale, useCheck } from './check-state';
-import type { MeshHealthVec3, SelfIntersectionEvidence } from './mesh-health-core';
+import type {
+  ConnectedComponentEvidence,
+  MeshHealthVec3,
+  SelfIntersectionEvidence,
+} from './mesh-health-core';
 
 const RED = '#f06a6a';
 const AMBER = '#ffb454';
 const EVIDENCE_A = '#ff596c';
 const EVIDENCE_B = '#50c8ff';
+const COMPONENT_COLORS = ['#ffb454', '#50c8ff', '#c98ee0', '#5dcaa5', '#ff7f8f', '#9acb63'];
 
 export function CheckHighlight() {
   useUi((s) => s.rev);
@@ -33,6 +38,12 @@ export function CheckHighlight() {
   const selectedEvidence = selfIntersectionEvidence.length
     ? selfIntersectionEvidence[Math.min(activeEvidenceIndex, selfIntersectionEvidence.length - 1)]
     : null;
+  const componentEvidence = issue?.code === 'dims'
+    ? assetMetas.find((meta) => meta.assetId === issue.assetId)?.health.componentEvidence ?? []
+    : [];
+  const selectedComponentIndex = componentEvidence.length
+    ? Math.min(activeEvidenceIndex, componentEvidence.length - 1)
+    : 0;
 
   const segGeo = useMemo(() => {
     if (!issue || issue.code !== 'non_watertight') return null;
@@ -53,13 +64,13 @@ export function CheckHighlight() {
   return (
     <group>
       {/* 壳描边:与选中壳同法(BackSide 放大),半径再外扩一档,红/琥珀按级别 */}
-      {geo && issue.code !== 'dims' && (
+      {geo && (
         <group
           position={[t.position[0], t.position[1], t.position[2]]}
           rotation={[t.rotation[0] * D2R, t.rotation[1] * D2R, t.rotation[2] * D2R]}
           scale={[t.scale[0], t.scale[1], t.scale[2]]}
         >
-          {issue.code !== 'self_intersection' && (
+          {issue.code !== 'self_intersection' && issue.code !== 'dims' && (
             <mesh geometry={geo} scale={[1.06, 1.06, 1.06]} renderOrder={2}>
               <meshBasicMaterial color={shellColor} side={THREE.BackSide} depthWrite={false} transparent opacity={0.85} />
             </mesh>
@@ -77,6 +88,13 @@ export function CheckHighlight() {
               total={selfIntersectionEvidence.length}
             />
           )}
+          {componentEvidence.length > 1 && (
+            <ConnectedComponentPreviewHighlight
+              source={geo}
+              components={componentEvidence}
+              activeIndex={selectedComponentIndex}
+            />
+          )}
         </group>
       )}
 
@@ -84,6 +102,90 @@ export function CheckHighlight() {
       {issue.code === 'floating' && issue.world && (
         <FloatDropLine world={issue.world} />
       )}
+    </group>
+  );
+}
+
+function componentGeometry(source: THREE.BufferGeometry, faceIndices: number[]): THREE.BufferGeometry {
+  const position = source.getAttribute('position');
+  const index = source.index;
+  const vertices = new Float32Array(faceIndices.length * 9);
+  let cursor = 0;
+  for (const face of faceIndices) {
+    for (let corner = 0; corner < 3; corner++) {
+      const vertex = index ? index.getX(face * 3 + corner) : face * 3 + corner;
+      vertices[cursor++] = position.getX(vertex);
+      vertices[cursor++] = position.getY(vertex);
+      vertices[cursor++] = position.getZ(vertex);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function ConnectedComponentPreviewHighlight({
+  source,
+  components,
+  activeIndex,
+}: {
+  source: THREE.BufferGeometry;
+  components: ConnectedComponentEvidence[];
+  activeIndex: number;
+}) {
+  const geometries = useMemo(
+    () => components.map((component) => componentGeometry(source, component.sourceFaceIndices)),
+    [components, source],
+  );
+  useEffect(() => () => geometries.forEach((geometry) => geometry.dispose()), [geometries]);
+
+  const selected = components[activeIndex];
+  const center: MeshHealthVec3 = [
+    (selected.bounds.min[0] + selected.bounds.max[0]) / 2,
+    (selected.bounds.min[1] + selected.bounds.max[1]) / 2,
+    (selected.bounds.min[2] + selected.bounds.max[2]) / 2,
+  ];
+  const size: MeshHealthVec3 = [
+    Math.max(0.1, selected.bounds.max[0] - selected.bounds.min[0]),
+    Math.max(0.1, selected.bounds.max[1] - selected.bounds.min[1]),
+    Math.max(0.1, selected.bounds.max[2] - selected.bounds.min[2]),
+  ];
+  const kind = selected.kind === 'primary'
+    ? '主体'
+    : selected.kind === 'internal'
+      ? '内部壳'
+      : selected.kind === 'fragment' ? '疑似碎片' : '独立壳';
+
+  return (
+    <group>
+      {components.map((component, index) => {
+        const active = index === activeIndex;
+        const color = COMPONENT_COLORS[index % COMPONENT_COLORS.length];
+        return (
+          <mesh key={component.componentIndex} geometry={geometries[index]} renderOrder={active ? 5 : 4}>
+            <meshBasicMaterial
+              color={color}
+              side={THREE.DoubleSide}
+              depthTest={!active}
+              depthWrite={false}
+              transparent
+              opacity={active ? 0.86 : 0.64}
+              polygonOffset
+              polygonOffsetFactor={-2}
+            />
+          </mesh>
+        );
+      })}
+      <mesh position={center} renderOrder={6}>
+        <boxGeometry args={size} />
+        <meshBasicMaterial color={COMPONENT_COLORS[activeIndex % COMPONENT_COLORS.length]} wireframe depthTest={false} />
+      </mesh>
+      <Html position={center} center style={{ pointerEvents: 'none' }}>
+        <div className="component-preview-label">
+          零件 {activeIndex + 1}/{components.length}<br />{kind} · {selected.faceCount.toLocaleString()} 面
+        </div>
+      </Html>
     </group>
   );
 }

@@ -292,6 +292,62 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+/* M1.7.3 · 现有连通壳的只读拆件预览。 */
+.component-preview {
+  display: grid;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 7px;
+  border: 1px solid rgba(80, 200, 255, .2);
+  border-radius: 7px;
+  background: linear-gradient(145deg, rgba(80, 200, 255, .055), rgba(20, 25, 32, .72));
+}
+.component-preview.is-active { border-color: rgba(80, 200, 255, .42); }
+.component-preview__heading,
+.component-preview__legend,
+.component-preview__nav { display: flex; align-items: center; }
+.component-preview__heading { gap: 6px; }
+.component-preview__heading strong { color: #bfeaff; font-size: 9px; }
+.component-preview__heading span { margin-left: auto; color: #7f9bab; font-size: 8px; }
+.component-preview__legend { gap: 3px; color: #7f8e99; font-size: 8px; }
+.component-preview__legend i { width: 6px; height: 6px; border-radius: 2px; }
+.component-preview__legend i.part-1 { background: #ffb454; }
+.component-preview__legend i.part-2 { background: #50c8ff; }
+.component-preview__legend i.part-3 { background: #c98ee0; }
+.component-preview__legend i.part-4 { background: #5dcaa5; }
+.component-preview__legend span { margin-left: 3px; }
+.component-preview__nav { gap: 4px; }
+.component-preview__nav span { flex: 1; min-width: 0; overflow: hidden; color: #b5c6d0; font-size: 9px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.component-preview__nav button,
+.component-preview__start {
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid #36414b;
+  border-radius: 5px;
+  background: #222831;
+  color: #aab8c3;
+  cursor: pointer;
+  font-size: 9px;
+}
+.component-preview__nav button.locate { border-color: rgba(80, 200, 255, .44); color: #83d9ff; }
+.component-preview__start { width: 100%; border-color: rgba(80, 200, 255, .42); background: rgba(80, 200, 255, .08); color: #9ee2ff; }
+.component-preview__start:disabled { cursor: default; opacity: .34; }
+.component-preview small { color: #738491; font-size: 8px; line-height: 1.4; }
+.component-preview-label {
+  padding: 4px 7px;
+  border: 1px solid rgba(80, 200, 255, .42);
+  border-radius: 6px;
+  background: rgba(10, 14, 19, .92);
+  box-shadow: 0 3px 16px rgba(0, 0, 0, .42);
+  color: #eaf7fc;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* M1.7 · 打印问题修复工作台：先预览、再生成派生副本。 */
 .mesh-repair-card {
   display: grid;

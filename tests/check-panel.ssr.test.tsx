@@ -175,6 +175,8 @@ describe('CheckPanel SSR 冒烟', () => {
           connectedComponents: 1,
           closedComponents: 1,
           componentAnalysisComplete: true,
+          componentEvidence: [],
+          componentEvidenceComplete: true,
           isolatedFragments: 0,
           isolatedFragmentFaces: 0,
           internalShells: 0,
@@ -207,6 +209,73 @@ describe('CheckPanel SSR 冒烟', () => {
     expect(html).toContain('面 #2 × #9');
     expect(html).toContain('定位');
     expect(html).not.toContain('修复预览');
+  });
+
+  it('多个连通壳显示拆件只读预览、逐壳导航和当前零件信息', () => {
+    const a = dispatch((d) => d.addAsset({ ...asset('三连通壳'), meta: { ...asset('三连通壳').meta, watertight: true } }));
+    const i = dispatch((d) => d.placeInstance(a.id));
+    const components = [0, 1, 2].map((index) => ({
+      componentIndex: index + 1,
+      faceCount: 12,
+      closed: true,
+      kind: index === 0 ? 'primary' as const : 'separate' as const,
+      bounds: { min: [index * 10, 0, 0] as [number, number, number], max: [index * 10 + 5, 5, 5] as [number, number, number] },
+      sourceFaceIndices: [index],
+      previewComplete: true,
+    }));
+    useCheck.setState({
+      panelOpen: true,
+      phase: 'done',
+      issues: [{
+        key: `dims:${i.id}`,
+        level: 'info',
+        code: 'dims',
+        instanceId: i.id,
+        instanceName: '三连通壳',
+        assetId: a.id,
+        message: '25.0 × 5.0 × 5.0 mm · 36 面 · 3 个连通壳',
+      }],
+      assetMetas: [{
+        assetId: a.id,
+        faces: 36,
+        weldedVertices: 24,
+        degenerateCount: 0,
+        boundaryEdges: 0,
+        nonManifoldEdges: 0,
+        watertight: true,
+        health: {
+          connectedComponents: 3,
+          closedComponents: 3,
+          componentAnalysisComplete: true,
+          componentEvidence: components,
+          componentEvidenceComplete: true,
+          isolatedFragments: 0,
+          isolatedFragmentFaces: 0,
+          internalShells: 0,
+          selfIntersectionPairs: 0,
+          selfIntersectionComplete: true,
+          selfIntersectionTrianglesScanned: 36,
+          selfIntersectionPairTests: 0,
+          selfIntersectionEvidence: [],
+        },
+        analysisMs: 1,
+        cached: false,
+      }],
+      activeKey: `dims:${i.id}`,
+      activeEvidenceIndex: 1,
+      summary: { ...summary, errors: 0, warnings: 0, instances: 1 },
+      unfinished: [],
+      timedOut: false,
+      fixedKeys: [],
+      runMeta: { editVersion: doc.editVersion, bed: { ...useUi.getState().bed } },
+    });
+    const html = strip(renderToString(<CheckPanel />));
+    expect(html).toContain('连通壳拆件预览');
+    expect(html).toContain('3 个候选零件');
+    expect(html).toContain('零件 2/3 · 独立壳 · 12 面');
+    expect(html).toContain('完整预览');
+    expect(html).toContain('只读预览');
+    expect(html).toContain('当前只读，不会创建零件或修改原模型');
   });
 
   it('过期(CHK-03):灰显条 + 重新检查;修复按钮禁用理由', () => {

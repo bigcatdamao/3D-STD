@@ -1,7 +1,7 @@
 # 3D STD · Web 工作台
 
 AI 生成 → 编辑摆盘 → 打印检查 → 导出 STL 的网页版 3D 打印创作工作台。
-规格见 `docs/`(PRD v0.95 · 技术方案 v2.2 · Backlog v1.1)。当前进度:T1–T16 功能闭环 + M1.5.3 图生模型 + M1.6.3 AI 拆件建议 + M1.7 修复工作台 + M1.7.2 自交局部证据定位。生产默认使用 AIHubMix Responses 兼容接口，官方 OpenAI 通道保留为回滚；当前优先把检查问题转化为可验证证据和可预览、可确认、可撤销的确定性操作，录屏与高度自主拆件后置。
+规格见 `docs/`(PRD v0.95 · 技术方案 v2.3 · Backlog v1.1)。当前进度:T1–T16 功能闭环 + M1.5.3 图生模型 + M1.6.3 AI 拆件建议 + M1.7 修复工作台 + M1.7.2 自交局部证据定位 + M1.7.3 连通壳拆件只读预览。生产默认使用 AIHubMix Responses 兼容接口，官方 OpenAI 通道保留为回滚；当前优先把检查问题转化为可验证证据和可预览、可确认、可撤销的确定性操作，录屏与高度自主拆件后置。
 
 渐进式拆件 Agent 的架构与产品方案见 [`docs/agent-split-architecture.md`](docs/agent-split-architecture.md)，评测计划见 [`docs/agent-eval-plan.md`](docs/agent-eval-plan.md)。M1.6.3 增加可定位/可检查的建议操作卡、耗时与 token 遥测、Gold Set 契约和自动评分；仍然只读，没有自动拆件能力。
 
