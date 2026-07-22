@@ -26,10 +26,13 @@ import {
   useMeshRepair,
 } from '../repair/mesh-repair-state';
 import {
+  cancelSeamRecommendationScan,
   closePlaneCutPreview,
   planeCutPreviewIsStale,
+  previewSeamRecommendation,
   selectPlaneCutCandidate,
   setPlaneCutPosition,
+  startSeamRecommendationScan,
   startPlaneCutPreview,
   usePlaneCutPreviewSnapshot,
 } from '../split/plane-cut-state';
@@ -115,6 +118,13 @@ function IssueRow({
   const cutCandidate = cutActive ? cutCandidates[cutCandidateIndex] : null;
   const cutSection = cutActive ? cutSections[cutCandidateIndex] : null;
   const cutSectionBusy = cutActive && !!cutSectionPending[cutCandidateIndex];
+  const seamPhase = cutPreview.recommendationPhase;
+  const seamProgress = cutPreview.recommendationProgress;
+  const seamRecommendations = cutPreview.recommendations;
+  const seamError = cutPreview.recommendationError;
+  const axisRecommendations = cutCandidate
+    ? seamRecommendations.filter((recommendation) => recommendation.axis === cutCandidate.axis)
+    : [];
   const readOnlyDiagnosis = issue.code === 'self_intersection'
     || issue.code === 'internal_shell'
     || issue.code === 'isolated_fragment'
@@ -293,6 +303,61 @@ function IssueRow({
                   </button>
                   <button type="button" className="close" onClick={closePlaneCutPreview}>关闭</button>
                 </div>
+                <div className={`seam-recommendation is-${seamPhase}`}>
+                  <div className="seam-recommendation__heading">
+                    <strong>几何低风险接缝</strong>
+                    <span>27 个轴向样本 · 只读</span>
+                  </div>
+                  {seamPhase === 'idle' && (
+                    <>
+                      <p>比较双侧入床、局部薄颈、截面复杂度、截线密度和零件比例。</p>
+                      <button type="button" onClick={startSeamRecommendationScan}>扫描推荐位置</button>
+                    </>
+                  )}
+                  {seamPhase === 'scanning' && (
+                    <>
+                      <div className="seam-recommendation__progress">
+                        <i style={{ width: `${seamProgress.total ? (seamProgress.done / seamProgress.total) * 100 : 0}%` }} />
+                      </div>
+                      <div className="seam-recommendation__status">
+                        <span>正在扫描 {seamProgress.done}/{seamProgress.total}</span>
+                        <button type="button" onClick={cancelSeamRecommendationScan}>取消</button>
+                      </div>
+                    </>
+                  )}
+                  {seamPhase === 'failed' && (
+                    <>
+                      <p className="error">{seamError ?? '扫描失败，请重试'}</p>
+                      <button type="button" onClick={startSeamRecommendationScan}>重新扫描</button>
+                    </>
+                  )}
+                  {seamPhase === 'ready' && seamRecommendations.length === 0 && (
+                    <>
+                      <p>27 个样本中没有同时满足“双侧入床 + 完整闭合截面”的候选。</p>
+                      <button type="button" onClick={startSeamRecommendationScan}>重新扫描</button>
+                    </>
+                  )}
+                  {seamPhase === 'ready' && seamRecommendations.length > 0 && (
+                    <div className="seam-recommendation__list">
+                      {seamRecommendations.map((recommendation, index) => (
+                        <button
+                          type="button"
+                          key={recommendation.id}
+                          className={cutCandidate.axis === recommendation.axis
+                            && Math.abs(cutCandidate.normalizedPosition - recommendation.normalizedPosition) < 0.001
+                            ? 'is-active' : ''}
+                          onClick={() => previewSeamRecommendation(recommendation)}
+                        >
+                          <span><b>推荐 {index + 1}</b> · {recommendation.axis.toUpperCase()} {Math.round(recommendation.normalizedPosition * 100)}%</span>
+                          <strong>{recommendation.score} 分</strong>
+                          <small>{recommendation.reasons.join(' · ')}</small>
+                          <em>{recommendation.risks[0]}</em>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <small>评分是几何代理，不识别角色脸部、机械关节、受力或装配语义。</small>
+                </div>
                 <div className="plane-cut-card__position">
                   <div>
                     <span>{cutCandidate.axis.toUpperCase()} 轴切面位置</span>
@@ -307,6 +372,21 @@ function IssueRow({
                     value={Math.round(cutCandidate.normalizedPosition * 100)}
                     onChange={(event) => setPlaneCutPosition(Number(event.target.value) / 100, true)}
                   />
+                  {axisRecommendations.length > 0 && (
+                    <div className="plane-cut-card__markers" aria-label="当前轴推荐位置">
+                      {axisRecommendations.map((recommendation) => (
+                        <button
+                          type="button"
+                          key={recommendation.id}
+                          aria-label={`${recommendation.axis.toUpperCase()} 轴 ${Math.round(recommendation.normalizedPosition * 100)}% 推荐位置`}
+                          title={`几何推荐 ${recommendation.score} 分`}
+                          className={Math.abs(cutCandidate.normalizedPosition - recommendation.normalizedPosition) < 0.001 ? 'is-active' : ''}
+                          style={{ left: `${recommendation.normalizedPosition * 100}%` }}
+                          onClick={() => previewSeamRecommendation(recommendation)}
+                        />
+                      ))}
+                    </div>
+                  )}
                   <div className="plane-cut-card__presets">
                     {[25, 50, 75].map((percent) => (
                       <button
@@ -448,7 +528,7 @@ function IssueRow({
           title={components.length > 1
             ? 'M1.7.3 只读拆件预览：只浏览现有连通壳，不创建新零件'
             : canPreviewPlaneCut
-              ? 'M1.7.6 真实截面证据预览：只计算截线与闭合环，不封口、不生成新零件'
+              ? 'M1.7.7 几何低风险接缝：批量比较真实截面，只给推荐、不封口、不生成新零件'
               : 'M1.7.2 只读深度诊断：提供局部证据，不自动修改复杂拓扑'}
         >
           {components.length > 1 || canPreviewPlaneCut ? '只读预览' : '只读诊断'}

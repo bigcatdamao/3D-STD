@@ -25,6 +25,13 @@ export interface PlaneSectionAnalysis {
   warnings: string[];
 }
 
+export type PlaneSectionSummary = Omit<PlaneSectionAnalysis, 'segments'>;
+
+export function summarizePlaneSection(analysis: PlaneSectionAnalysis): PlaneSectionSummary {
+  const { segments: _segments, ...summary } = analysis;
+  return summary;
+}
+
 export interface PlaneSectionInput {
   positions: ArrayLike<number>;
   index?: ArrayLike<number> | null;

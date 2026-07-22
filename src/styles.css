@@ -387,10 +387,41 @@ select:focus-visible {
   cursor: pointer;
 }
 .plane-cut-card__nav button.close { color: #9e968d; font-size: 8px; }
+.seam-recommendation { display: grid; gap: 5px; margin-top: 6px; padding: 6px; border: 1px solid rgba(101, 205, 170, .22); border-radius: 6px; background: rgba(36, 103, 83, .075); }
+.seam-recommendation__heading, .seam-recommendation__status { display: flex; align-items: center; gap: 5px; }
+.seam-recommendation__heading strong { color: #8fe2c3; font-size: 9px; }
+.seam-recommendation__heading span { margin-left: auto; color: #789589; font-size: 8px; }
+.seam-recommendation p { margin: 0; color: #98a99f; font-size: 8px; line-height: 1.4; }
+.seam-recommendation p.error { color: #d69a9a; }
+.seam-recommendation > button, .seam-recommendation__status button {
+  border: 1px solid rgba(101, 205, 170, .40);
+  border-radius: 5px;
+  background: rgba(101, 205, 170, .08);
+  color: #9ce5ca;
+  padding: 3px 6px;
+  font-size: 8px;
+  cursor: pointer;
+}
+.seam-recommendation__progress { height: 4px; overflow: hidden; border-radius: 999px; background: #252c29; }
+.seam-recommendation__progress i { display: block; height: 100%; border-radius: inherit; background: #65cdaa; transition: width .14s ease; }
+.seam-recommendation__status span { flex: 1; color: #91a39a; font-size: 8px; font-variant-numeric: tabular-nums; }
+.seam-recommendation__list { display: grid; gap: 4px; }
+.seam-recommendation__list > button { display: grid; grid-template-columns: 1fr auto; gap: 2px 5px; padding: 5px; border: 1px solid #33443e; border-radius: 5px; background: rgba(20, 31, 27, .58); color: #b9c8c1; text-align: left; cursor: pointer; }
+.seam-recommendation__list > button.is-active { border-color: rgba(101, 205, 170, .68); background: rgba(101, 205, 170, .11); }
+.seam-recommendation__list span { min-width: 0; font-size: 8px; }
+.seam-recommendation__list span b { color: #a8efd4; }
+.seam-recommendation__list strong { color: #e5fff5; font-size: 9px; font-variant-numeric: tabular-nums; }
+.seam-recommendation__list small, .seam-recommendation__list em { grid-column: 1 / -1; margin: 0; font-size: 7px; line-height: 1.35; }
+.seam-recommendation__list small { color: #8fa69b; }
+.seam-recommendation__list em { color: #b99878; font-style: normal; }
+.seam-recommendation > small { margin: 0; color: #687d74; font-size: 7px; }
 .plane-cut-card__position { display: grid; gap: 4px; margin-top: 6px; padding: 5px; border-radius: 6px; background: rgba(11, 12, 15, .38); }
 .plane-cut-card__position > div:first-child { display: flex; align-items: center; color: #9d9184; font-size: 8px; }
 .plane-cut-card__position > div:first-child strong { margin-left: auto; color: #ffd49a; font-size: 10px; font-variant-numeric: tabular-nums; }
 .plane-cut-card__position input[type='range'] { width: 100%; height: 12px; accent-color: #ffb454; cursor: ew-resize; }
+.plane-cut-card__markers { position: relative; height: 5px; margin: -4px 5px 0; }
+.plane-cut-card__markers button { position: absolute; top: 0; width: 5px; height: 5px; padding: 0; transform: translateX(-50%); border: 1px solid #6ce0b5; border-radius: 50%; background: #244c3e; cursor: pointer; }
+.plane-cut-card__markers button.is-active { background: #8fe2c3; box-shadow: 0 0 0 2px rgba(101, 205, 170, .16); }
 .plane-cut-card__presets { display: flex; align-items: center; gap: 3px; }
 .plane-cut-card__presets button { padding: 1px 5px; border: 1px solid #433a30; border-radius: 4px; background: #23211f; color: #9f9386; font-size: 8px; cursor: pointer; }
 .plane-cut-card__presets button.is-active { border-color: rgba(255, 180, 84, .58); color: #ffd49a; background: rgba(255, 180, 84, .10); }
