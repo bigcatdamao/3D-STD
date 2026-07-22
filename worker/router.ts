@@ -229,7 +229,8 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
 
   const model = env.SPLIT_ANALYSIS_MODEL?.trim() || env.OPENAI_SPLIT_MODEL?.trim() || 'gpt-5.6-sol';
   try {
-    const result = await callSplitAnalysisResponses(request, {
+    const startedAt = Date.now();
+    const responsesResult = await callSplitAnalysisResponses(request, {
       apiKey: providerConfig.apiKey,
       endpoint: providerConfig.endpoint,
       model,
@@ -239,12 +240,14 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
     }, deps.fetchImpl ?? fetch);
     const body: SplitAnalysisApiSuccess = {
       ok: true,
-      result,
+      result: responsesResult.output,
       meta: {
         provider: providerConfig.provider,
         model,
         requestId: request.input.requestId,
         evidenceViews: request.images.length,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        usage: responsesResult.usage,
       },
     };
     return Response.json(body, { headers: { 'cache-control': 'no-store' } });

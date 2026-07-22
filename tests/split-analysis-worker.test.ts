@@ -102,6 +102,7 @@ function responsesSuccess(assertRequest?: (url: string, body: Record<string, unk
     assertRequest?.(String(url), body, init);
     return Response.json({
       id: 'resp-1', status: 'completed',
+      usage: { input_tokens: 840, output_tokens: 360, total_tokens: 1200 },
       output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(output) }] }],
     });
   };
@@ -122,6 +123,8 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({ ok: true, result: { needsSplit: 'yes' }, meta: { provider: 'openai', model: 'gpt-5.6-sol', evidenceViews: 1 } });
+    expect(body.meta.latencyMs).toEqual(expect.any(Number));
+    expect(body.meta.usage).toEqual({ inputTokens: 840, outputTokens: 360, totalTokens: 1200 });
     expect(JSON.stringify(body)).not.toContain('server-secret');
   });
 
@@ -139,7 +142,7 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       ok: true,
-      meta: { provider: 'aihubmix', model: 'gpt-5.6-sol', evidenceViews: 1 },
+      meta: { provider: 'aihubmix', model: 'gpt-5.6-sol', evidenceViews: 1, usage: { totalTokens: 1200 } },
     });
   });
 

@@ -74,6 +74,8 @@ describe('SplitAnalysisPanel SSR', () => {
       provider: 'aihubmix',
       model: 'gpt-5.6-sol',
       evidenceViews: 4,
+      latencyMs: 18400,
+      totalTokens: 1234,
       warning: null,
       runMeta: null,
       error: null,
@@ -81,9 +83,14 @@ describe('SplitAnalysisPanel SSR', () => {
     const html = strip(renderToString(<SplitAnalysisPanel />));
     expect(html).toContain('建议拆件');
     expect(html).toContain('AI 分析 · AIHubMix · gpt-5.6-sol · 4 视角');
+    expect(html).toContain('18.4 秒');
+    expect(html).toContain('1,234 tokens');
     expect(html).toContain('沿 X 分段');
     expect(html).toContain('候选方案');
     expect(html).toContain('风险与下一步');
+    expect(html).toContain('立即可做');
+    expect(html).toContain('查看打印检查');
+    expect(html).toContain('阶段二生成只读切割预览');
     expect(html).toContain('生成切割预览 · 阶段二');
     expect(html).toContain('disabled');
   });

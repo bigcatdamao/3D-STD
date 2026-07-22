@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://3d-std.local/contracts/split-analysis-gold.schema.json",
+  "title": "3D-STD Split Analysis Gold Set",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "targetCaseCount", "cases"],
+  "properties": {
+    "schemaVersion": { "const": "split-analysis-gold.v1" },
+    "targetCaseCount": { "type": "integer", "minimum": 20, "maximum": 30 },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "title", "category", "status", "modelPath", "notes", "expected"],
+        "properties": {
+          "caseId": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "category": { "enum": ["fits_whole", "exceeds_build_volume", "mesh_blocking", "support_sensitive", "pre_split_assembly", "surface_sensitive"] },
+          "status": { "enum": ["seeded", "needs_model", "ready", "reviewed"] },
+          "modelPath": { "type": ["string", "null"] },
+          "notes": { "type": "string" },
+          "expected": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["acceptableNeedsSplit", "requiredReasonCodes", "allowedEvidenceRefs", "preferredPartCount", "requiredLimitationTerms"],
+            "properties": {
+              "acceptableNeedsSplit": { "type": "array", "minItems": 1, "items": { "enum": ["yes", "no", "uncertain"] }, "uniqueItems": true },
+              "requiredReasonCodes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+              "allowedEvidenceRefs": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+              "preferredPartCount": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["min", "max"],
+                "properties": { "min": { "type": "integer", "minimum": 1 }, "max": { "type": "integer", "minimum": 1 } }
+              },
+              "requiredLimitationTerms": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+            }
+          }
+        }
+      }
+    }
+  }
+}

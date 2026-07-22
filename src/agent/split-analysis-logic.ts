@@ -279,8 +279,16 @@ export function buildMockSplitAnalysis(context: SplitAnalysisContext): SplitAnal
       },
     ],
     nextSteps: meshBlocking
-      ? ['先修复非水密或退化几何', '重新运行打印检查', '再生成拆件建议']
-      : ['审阅并选择一套候选方案', '阶段二生成只读切割预览', '确认打印方向和装配方式'],
+      ? [
+        { order: 1, action: 'review_mesh_errors', description: '先定位并修复非水密或退化几何', requiresUserConfirmation: true, suggestedTool: 'inspect_model' },
+        { order: 2, action: 'rerun_print_check', description: '重新运行打印检查，确认阻断问题已经消失', requiresUserConfirmation: false, suggestedTool: 'inspect_model' },
+        { order: 3, action: 'rerun_split_analysis', description: '使用新鲜检查结果重新生成拆件建议', requiresUserConfirmation: false, suggestedTool: null },
+      ]
+      : [
+        { order: 1, action: 'review_scheme', description: '审阅并选择一套候选方案', requiresUserConfirmation: true, suggestedTool: null },
+        { order: 2, action: 'preview_split', description: '阶段二生成只读切割预览', requiresUserConfirmation: true, suggestedTool: 'preview_plane_cut' },
+        { order: 3, action: 'review_orientation', description: '确认打印方向和装配方式', requiresUserConfirmation: true, suggestedTool: 'analyze_print_orientation' },
+      ],
     limitations: {
       missingInputs,
       unavailableCapabilities: ['薄壁分析', '局部过悬分析', '自动切面候选搜索', '装配验证'],

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "split-analysis-gold.v1",
+  "targetCaseCount": 24,
+  "cases": [
+    {
+      "caseId": "gold-001-demo-scene",
+      "title": "内置五对象示例场景",
+      "category": "pre_split_assembly",
+      "status": "seeded",
+      "modelPath": null,
+      "notes": "M1.6.2.1 已完成 AIHubMix 真链；应保持现有五件，先处理悬空与非水密。",
+      "expected": {
+        "acceptableNeedsSplit": ["no"],
+        "requiredReasonCodes": [],
+        "allowedEvidenceRefs": ["ins_demo_box", "ins_demo_cyl", "ins_demo_knot", "ins_demo_plate", "ins_demo_open", "dims:ins_demo_box", "dims:ins_demo_cyl", "dims:ins_demo_knot", "dims:ins_demo_plate", "dims:ins_demo_open", "floating:ins_demo_knot", "non_watertight:ins_demo_open", "view-front", "view-right", "view-top", "view-iso"],
+        "preferredPartCount": { "min": 5, "max": 5 },
+        "requiredLimitationTerms": ["薄壁", "过悬"]
+      }
+    },
+    {
+      "caseId": "gold-002-oversized-single",
+      "title": "单体超出打印空间",
+      "category": "exceeds_build_volume",
+      "status": "needs_model",
+      "modelPath": null,
+      "notes": "需要补充真实长支架或大型角色模型。",
+      "expected": {
+        "acceptableNeedsSplit": ["yes"],
+        "requiredReasonCodes": ["exceeds_build_volume"],
+        "allowedEvidenceRefs": [],
+        "preferredPartCount": { "min": 2, "max": 4 },
+        "requiredLimitationTerms": ["候选切面"]
+      }
+    },
+    {
+      "caseId": "gold-003-non-manifold",
+      "title": "非水密阻断模型",
+      "category": "mesh_blocking",
+      "status": "needs_model",
+      "modelPath": null,
+      "notes": "结论不得绕过修复直接承诺可切割。",
+      "expected": {
+        "acceptableNeedsSplit": ["uncertain"],
+        "requiredReasonCodes": ["non_watertight"],
+        "allowedEvidenceRefs": [],
+        "preferredPartCount": { "min": 1, "max": 1 },
+        "requiredLimitationTerms": ["切面"]
+      }
+    },
+    {
+      "caseId": "gold-004-support-sensitive",
+      "title": "支撑敏感扭结结构",
+      "category": "support_sensitive",
+      "status": "needs_model",
+      "modelPath": null,
+      "notes": "局部过悬不可用时必须保持未知，不能凭截图承诺节省支撑。",
+      "expected": {
+        "acceptableNeedsSplit": ["uncertain", "no"],
+        "requiredReasonCodes": [],
+        "allowedEvidenceRefs": [],
+        "preferredPartCount": { "min": 1, "max": 2 },
+        "requiredLimitationTerms": ["过悬"]
+      }
+    },
+    {
+      "caseId": "gold-005-surface-sensitive",
+      "title": "外观面敏感角色模型",
+      "category": "surface_sensitive",
+      "status": "needs_model",
+      "modelPath": null,
+      "notes": "候选接缝应避开正脸和主要外观面，需人工评方案可用性。",
+      "expected": {
+        "acceptableNeedsSplit": ["yes", "uncertain"],
+        "requiredReasonCodes": [],
+        "allowedEvidenceRefs": [],
+        "preferredPartCount": { "min": 2, "max": 6 },
+        "requiredLimitationTerms": ["切面"]
+      }
+    }
+  ]
+}

@@ -418,6 +418,14 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 - 前端成功结果显示实际 Provider、模型和证据视角；发送前说明结构化场景摘要与多视角截图的数据流向。
 - Responses 输入、strict Schema、`store:false`、只读权限、配额和本地降级保持不变。
 
+### 10.0.3 M1.6.3 第一批实现快照
+
+- 不再把模型 `nextSteps` 压成纯文本，保留顺序、动作标识、确认要求和建议工具，UI 以步骤卡呈现。
+- 新增“立即可做”：可定位首个打印问题、打开打印检查、重新检查证据；这些动作由本地确定性代码执行，Agent 不获得写权限。
+- `preview_plane_cut`、`analyze_print_orientation` 等未实现工具继续显示为阶段二禁用按钮，不把规划包装成能力。
+- Worker 返回脱敏的响应耗时和 token 用量；前端显示真实遥测，Gold Set 用于 p95 延迟与成本比较。
+- 新增 Gold Set 契约、5 个种子定义、自动评分器和人工 rubric；目标 24 个真实样本，未达门槛不进入 M1.7。
+
 | 任务 | 交付物 | 依赖 | 验收重点 |
 |---|---|---|---|
 | A1 契约定稿 | 输入/输出类型、JSON Schema、错误码 | 无 | JSON 可解析；输出严格校验 |

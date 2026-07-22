@@ -88,7 +88,8 @@ describe('M1.6 拆件分析上下文与 Mock 结构化结果', () => {
     expect(result.needsSplit).toBe('uncertain');
     expect(result.schemes[0].id).toBe('repair-first');
     expect(result.risks[0].severity).toBe('blocking');
-    expect(result.nextSteps[0]).toContain('修复');
+    expect(result.nextSteps[0].description).toContain('修复');
+    expect(result.nextSteps[0].suggestedTool).toBe('inspect_model');
   });
 
   it('缺少打印检查时明确列入限制，不把薄壁和过悬当作已通过', () => {

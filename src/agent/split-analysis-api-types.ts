@@ -198,5 +198,11 @@ export interface SplitAnalysisApiSuccess {
     model: string;
     requestId: string;
     evidenceViews: number;
+    latencyMs: number;
+    usage: {
+      inputTokens: number | null;
+      outputTokens: number | null;
+      totalTokens: number | null;
+    };
   };
 }

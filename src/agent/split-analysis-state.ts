@@ -31,8 +31,10 @@ interface SplitAnalysisState {
   provider: SplitAnalysisProvider | null;
   model: string | null;
   evidenceViews: number;
+  latencyMs: number | null;
+  totalTokens: number | null;
   warning: string | null;
-  runMeta: { editVersion: number; bed: { x: number; y: number; z: number } } | null;
+  runMeta: { editVersion: number; bed: { x: number; y: number; z: number }; checkFingerprint: string } | null;
   error: string | null;
   setGoal: (goal: string) => void;
   setProcess: (process: PrintProcess) => void;
@@ -54,6 +56,8 @@ export const useSplitAnalysis = create<SplitAnalysisState>()((set) => ({
   provider: null,
   model: null,
   evidenceViews: 0,
+  latencyMs: null,
+  totalTokens: null,
   warning: null,
   runMeta: null,
   error: null,
@@ -76,6 +80,8 @@ export const useSplitAnalysis = create<SplitAnalysisState>()((set) => ({
       provider: null,
       model: null,
       evidenceViews: 0,
+      latencyMs: null,
+      totalTokens: null,
       warning: null,
       runMeta: null,
       error: null,
@@ -97,7 +103,22 @@ export function splitAnalysisIsStale(): boolean {
   const meta = useSplitAnalysis.getState().runMeta;
   if (!meta) return false;
   const bed = useUi.getState().bed;
-  return meta.editVersion !== doc.editVersion || meta.bed.x !== bed.x || meta.bed.y !== bed.y || meta.bed.z !== bed.z;
+  return meta.editVersion !== doc.editVersion
+    || meta.bed.x !== bed.x
+    || meta.bed.y !== bed.y
+    || meta.bed.z !== bed.z
+    || meta.checkFingerprint !== checkFingerprint();
+}
+
+function checkFingerprint(): string {
+  const check = useCheck.getState();
+  return JSON.stringify({
+    phase: check.phase,
+    editVersion: check.runMeta?.editVersion ?? null,
+    issues: liveIssues().map((issue) => issue.key).sort(),
+    unfinished: check.unfinished.map((item) => item.id).sort(),
+    timedOut: check.timedOut,
+  });
 }
 
 /** M1.6.1 体验原型：本地规则生成与正式 schema 同形的建议，不调用模型、不修改场景。 */
@@ -140,8 +161,10 @@ export function runMockSplitAnalysis(delayMs = 650): boolean {
     provider: null,
     model: null,
     evidenceViews: 0,
+    latencyMs: null,
+    totalTokens: null,
     warning: null,
-    runMeta: { editVersion: doc.editVersion, bed },
+    runMeta: { editVersion: doc.editVersion, bed, checkFingerprint: checkFingerprint() },
     error: null,
   });
 
@@ -201,7 +224,7 @@ export async function runSplitAnalysis(options: { fetchImpl?: typeof fetch; time
     model: null,
     evidenceViews: 0,
     warning: null,
-    runMeta: { editVersion: doc.editVersion, bed },
+    runMeta: { editVersion: doc.editVersion, bed, checkFingerprint: checkFingerprint() },
     error: null,
   });
 
@@ -224,6 +247,8 @@ export async function runSplitAnalysis(options: { fetchImpl?: typeof fetch; time
       provider: response.meta.provider,
       model: response.meta.model,
       evidenceViews: response.meta.evidenceViews,
+      latencyMs: response.meta.latencyMs,
+      totalTokens: response.meta.usage.totalTokens,
       selectedSchemeId: response.result.schemes[0]?.id ?? null,
       warning: captured.images.length ? null : '当前浏览器未能生成多视角截图，本次仅使用结构化场景数据。',
       error: null,
@@ -238,6 +263,8 @@ export async function runSplitAnalysis(options: { fetchImpl?: typeof fetch; time
       resultSource: 'fallback',
       provider: null,
       model: null,
+      latencyMs: null,
+      totalTokens: null,
       selectedSchemeId: result.schemes.find((scheme) => scheme.recommended)?.id ?? result.schemes[0]?.id ?? null,
       warning: error instanceof Error ? error.message : 'AI 分析暂时不可用，当前显示本地降级建议。',
       error: null,

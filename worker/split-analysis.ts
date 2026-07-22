@@ -166,11 +166,35 @@ export interface ResponsesConfig {
   maxOutputTokens: number;
 }
 
+export interface ResponsesUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+}
+
+export interface SplitAnalysisResponsesResult {
+  output: SplitAnalysisApiOutput;
+  usage: ResponsesUsage;
+}
+
+function finiteTokenCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+}
+
+function usageOf(raw: Record<string, unknown>): ResponsesUsage {
+  const usage = raw.usage && typeof raw.usage === 'object' ? raw.usage as Record<string, unknown> : {};
+  return {
+    inputTokens: finiteTokenCount(usage.input_tokens),
+    outputTokens: finiteTokenCount(usage.output_tokens),
+    totalTokens: finiteTokenCount(usage.total_tokens),
+  };
+}
+
 export async function callSplitAnalysisResponses(
   request: SplitAnalysisApiRequest,
   config: ResponsesConfig,
   fetchImpl: typeof fetch = fetch,
-): Promise<SplitAnalysisApiOutput> {
+): Promise<SplitAnalysisResponsesResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   const viewLabels = new Map(request.input.views.map((view) => [view.viewId, view.label]));
@@ -241,5 +265,5 @@ export async function callSplitAnalysisResponses(
   if (!validateOutput(output)) {
     throw new SplitAnalysisUpstreamError('bad_output', 'Responses API 的结构化结果不符合拆件分析契约。');
   }
-  return output;
+  return { output, usage: usageOf(raw) };
 }

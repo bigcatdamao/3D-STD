@@ -83,6 +83,14 @@ export interface SplitRisk {
   mitigation: string;
 }
 
+export interface SplitNextStep {
+  order: number;
+  action: string;
+  description: string;
+  requiresUserConfirmation: boolean;
+  suggestedTool: string | null;
+}
+
 export interface SplitAnalysisResult {
   schemaVersion: 'split-analysis-output.v1';
   needsSplit: NeedsSplit;
@@ -98,7 +106,7 @@ export interface SplitAnalysisResult {
   recommendedRegions: RecommendedRegion[];
   schemes: SplitScheme[];
   risks: SplitRisk[];
-  nextSteps: string[];
+  nextSteps: SplitNextStep[];
   limitations: {
     missingInputs: string[];
     unavailableCapabilities: string[];

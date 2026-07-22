@@ -21,6 +21,12 @@ describe('M1.6.2 API 输出适配', () => {
     expect(result.schemes[0]).toMatchObject({ id: 's1', recommended: true, assembly: '平面对接', risk: '中' });
     expect(result.schemes[1]).toMatchObject({ recommended: false, assembly: '定位销（阶段三）' });
     expect(result.recommendedRegions[0].candidateType).toBe('natural_seam');
-    expect(result.nextSteps).toEqual(['审阅方案']);
+    expect(result.nextSteps).toEqual([{
+      order: 1,
+      action: 'review_scheme',
+      description: '审阅方案',
+      requiresUserConfirmation: true,
+      suggestedTool: null,
+    }]);
   });
 });

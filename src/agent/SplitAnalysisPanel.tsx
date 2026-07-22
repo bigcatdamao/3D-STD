@@ -1,11 +1,11 @@
-import { reportIsStale, runPrintCheck, useCheckSnapshot } from '../check/check-state';
+import { focusIssue, liveIssues, reportIsStale, runPrintCheck, useCheckSnapshot } from '../check/check-state';
 import { doc, useUi } from '../state/store';
 import {
   runSplitAnalysis,
   splitAnalysisIsStale,
   useSplitAnalysisSnapshot,
 } from './split-analysis-state';
-import type { NeedsSplit, PrintProcess, SplitPriority, SplitScheme } from './split-analysis-types';
+import type { NeedsSplit, PrintProcess, SplitNextStep, SplitPriority, SplitScheme } from './split-analysis-types';
 
 const PROCESS_OPTIONS: Array<{ value: PrintProcess; label: string }> = [
   { value: 'fdm', label: 'FDM' },
@@ -66,7 +66,36 @@ function SchemeCard({
   );
 }
 
-export function SplitAnalysisPanel() {
+const TOOL_LABELS: Record<string, string> = {
+  inspect_model: '检查模型',
+  find_cut_candidates: '查找候选切面',
+  preview_plane_cut: '生成切割预览',
+  compare_split_schemes: '比较拆件方案',
+  analyze_print_orientation: '分析打印朝向',
+};
+
+function StepCard({ step, disabled, onOpenCheck }: { step: SplitNextStep; disabled: boolean; onOpenCheck?: () => void }) {
+  const inspectAvailable = step.suggestedTool === 'inspect_model' && !!onOpenCheck;
+  const futureTool = step.suggestedTool && step.suggestedTool !== 'inspect_model' ? TOOL_LABELS[step.suggestedTool] ?? step.suggestedTool : null;
+  return (
+    <article className="split-next-step">
+      <div className="split-next-step__topline">
+        <span>第 {step.order} 步</span>
+        {step.requiresUserConfirmation && <span className="is-confirm">需要你确认</span>}
+      </div>
+      <strong>{step.description}</strong>
+      <div className="split-next-step__action">
+        {inspectAvailable && (
+          <button type="button" disabled={disabled} onClick={onOpenCheck}>打开打印检查</button>
+        )}
+        {futureTool && <button type="button" disabled>{futureTool} · 阶段二</button>}
+        {!step.suggestedTool && <span>在当前页面完成判断</span>}
+      </div>
+    </article>
+  );
+}
+
+export function SplitAnalysisPanel({ onOpenCheck }: { onOpenCheck?: () => void } = {}) {
   useUi((state) => state.rev);
   const bed = useUi((state) => state.bed);
   const check = useCheckSnapshot();
@@ -78,6 +107,14 @@ export function SplitAnalysisPanel() {
   );
   const canAnalyze = visibleObjects.length > 0 && analysis.goal.trim().length > 0 && analysis.phase !== 'running';
   const selectedScheme = analysis.result?.schemes.find((scheme) => scheme.id === analysis.selectedSchemeId) ?? null;
+  const actionableIssues = liveIssues().filter((issue) => issue.level !== 'info');
+  const firstIssue = actionableIssues[0] ?? null;
+  const telemetry = analysis.resultSource === 'api'
+    ? [
+      analysis.latencyMs != null ? `${(analysis.latencyMs / 1000).toFixed(1)} 秒` : null,
+      analysis.totalTokens != null ? `${analysis.totalTokens.toLocaleString('zh-CN')} tokens` : null,
+    ].filter(Boolean).join(' · ')
+    : '';
 
   return (
     <section className="split-analysis" data-testid="split-analysis-panel">
@@ -187,14 +224,17 @@ export function SplitAnalysisPanel() {
 
       {analysis.phase === 'done' && analysis.result && (
         <div className={`split-result${resultStale ? ' is-stale' : ''}`}>
-          <div className={`split-result__source is-${analysis.resultSource ?? 'fallback'}`}>
-            {analysis.resultSource === 'api'
-              ? `AI 分析 · ${analysis.provider === 'aihubmix' ? 'AIHubMix' : 'OpenAI'} · ${analysis.model ?? 'Responses API'} · ${analysis.evidenceViews} 视角`
-              : '本地降级建议 · 未使用大模型'}
+          <div className="split-result__source-row">
+            <div className={`split-result__source is-${analysis.resultSource ?? 'fallback'}`}>
+              {analysis.resultSource === 'api'
+                ? `AI 分析 · ${analysis.provider === 'aihubmix' ? 'AIHubMix' : 'OpenAI'} · ${analysis.model ?? 'Responses API'} · ${analysis.evidenceViews} 视角`
+                : '本地降级建议 · 未使用大模型'}
+            </div>
+            {telemetry && <span className="split-result__telemetry">{telemetry}</span>}
           </div>
           {analysis.warning && <div className="split-result__warning">{analysis.warning}</div>}
           {resultStale && (
-            <div className="split-result__stale">场景已经改变，以下结果已过期。请重新分析后再做决策。</div>
+            <div className="split-result__stale">场景或打印检查证据已经改变，以下结果已过期。请重新分析后再做决策。</div>
           )}
           <div className="split-result__summary">
             <span className={`split-result__verdict is-${analysis.result.needsSplit}`}>
@@ -241,15 +281,43 @@ export function SplitAnalysisPanel() {
             </div>
           )}
 
+          <div className="split-result__section split-action-center">
+            <div className="split-action-center__heading">
+              <div>
+                <h3>立即可做</h3>
+                <p>以下按钮调用本地确定性功能；不会让 Agent 自动切割模型。</p>
+              </div>
+              <span>{actionableIssues.length} 个可定位问题</span>
+            </div>
+            <div className="split-action-center__buttons">
+              <button
+                type="button"
+                disabled={!firstIssue || resultStale}
+                onClick={() => {
+                  if (!firstIssue) return;
+                  focusIssue(firstIssue);
+                  useUi.getState().setToast(`已定位「${firstIssue.instanceName}」：${firstIssue.message}`);
+                }}
+              >
+                {firstIssue ? `定位：${firstIssue.instanceName}` : '暂无问题对象'}
+              </button>
+              <button type="button" disabled={!onOpenCheck || resultStale} onClick={onOpenCheck}>查看打印检查</button>
+              <button type="button" disabled={check.phase === 'running' || resultStale} onClick={() => runPrintCheck()}>重新检查证据</button>
+              <button type="button" disabled title="M1.7 开放，只生成可丢弃预览">切割预览 · 阶段二</button>
+            </div>
+          </div>
+
           <div className="split-result__section">
             <h3>风险与下一步</h3>
             <div className="split-risk">
               <strong>{analysis.result.risks[0]?.title}</strong>
               <span>{analysis.result.risks[0]?.mitigation}</span>
             </div>
-            <ol className="split-next-steps">
-              {analysis.result.nextSteps.map((step) => <li key={step}>{step}</li>)}
-            </ol>
+            <div className="split-next-steps">
+              {analysis.result.nextSteps.map((step) => (
+                <StepCard key={`${step.order}-${step.action}`} step={step} disabled={resultStale} onOpenCheck={onOpenCheck} />
+              ))}
+            </div>
           </div>
 
           <details className="split-result__limitations">

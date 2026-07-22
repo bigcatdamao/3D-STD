@@ -58,7 +58,7 @@ export function adaptSplitAnalysisOutput(output: SplitAnalysisApiOutput): SplitA
       description: risk.description,
       mitigation: risk.mitigation,
     })),
-    nextSteps: output.nextSteps.sort((a, b) => a.order - b.order).map((step) => step.description),
+    nextSteps: [...output.nextSteps].sort((a, b) => a.order - b.order).map((step) => ({ ...step })),
     limitations: output.limitations,
   };
 }

@@ -129,7 +129,7 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
           : tab === 'check'
             ? <CheckPanel embedded onOpenSplit={() => onTab('split')} />
             : tab === 'split'
-              ? <SplitAnalysisPanel />
+              ? <SplitAnalysisPanel onOpenCheck={() => onTab('check')} />
               : <HistoryPanel />}
       </div>
     </div>
