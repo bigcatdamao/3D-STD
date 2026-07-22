@@ -36,7 +36,9 @@
     "SPLIT_ANALYSIS_PROVIDER": "aihubmix",
     "SPLIT_ANALYSIS_MODEL": "gpt-5.6-sol",
     "SPLIT_ANALYSIS_REASONING_EFFORT": "low",
-    "SPLIT_ANALYSIS_TIMEOUT_MS": "45000",
+    // M1.6.3:AIHubMix 在四视角结构化输出下的实测可能超过 45 秒；服务端留到 75 秒，
+    // 浏览器等待 85 秒，仍低于路由代码的 90 秒硬上限。延迟优化继续由 Gold Set 评测跟踪。
+    "SPLIT_ANALYSIS_TIMEOUT_MS": "75000",
     "SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS": "3200",
     "SPLIT_ANALYSIS_DAILY_LIMIT": "3",
     "SPLIT_ANALYSIS_BREAKER_UNITS": "100",

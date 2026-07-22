@@ -3,7 +3,9 @@ import { apiHeaders } from '../net/visitor';
 import type { SplitAnalysisApiRequest, SplitAnalysisApiSuccess, SplitAnalysisApiOutput } from './split-analysis-api-types';
 import type { SplitAnalysisResult, SplitScheme } from './split-analysis-types';
 
-const CLIENT_TIMEOUT_MS = 50_000;
+// Must remain above the Worker upstream timeout so the browser can receive its
+// structured success/error response instead of aborting first.
+const CLIENT_TIMEOUT_MS = 85_000;
 
 const ASSEMBLY_LABEL: Record<SplitAnalysisApiOutput['schemes'][number]['assemblyApproach'], SplitScheme['assembly']> = {
   none: '无需装配',
@@ -88,7 +90,7 @@ export async function requestSplitAnalysis(
     return { result: adaptSplitAnalysisOutput(body.result), meta: body.meta };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('AI 分析超过 50 秒，已切换到本地降级建议。');
+      throw new Error('AI 分析超过 85 秒，已切换到本地降级建议。');
     }
     if (error instanceof Error) throw error;
     throw new Error('AI 分析暂时不可用，已切换到本地降级建议。');

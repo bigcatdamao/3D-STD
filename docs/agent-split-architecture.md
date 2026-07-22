@@ -405,7 +405,7 @@ Agent run 在 Worker/Agents SDK 暂停并返回 tool_request
 ### 10.0.1 M1.6.2 实现快照
 
 - A3 已完成：前、右、顶、轴测 4 张 384px 离屏 JPEG，固定低细节输入，不截图 UI/Gizmo。
-- A5/A6 已完成：`/api/agent/split-analysis`、Worker Secret、45 秒超时、`store:false`、Structured Output、refusal/incomplete/坏输出分类。
+- A5/A6 已完成：`/api/agent/split-analysis`、Worker Secret、部署配置 75 秒超时（代码默认 45 秒）、`store:false`、Structured Output、refusal/incomplete/坏输出分类。
 - A7/A8 已完成：真实/降级来源标识、4 视角数量、stale 和本地规则降级；仍然不写场景与历史。
 - A9 部分完成：独立单访客日限额、全站熔断和失败退款已实现；快照缓存、usage token 账本和持久幂等尚未实现。
 - A10 工程安全测试已覆盖密钥不进入响应、非法证据前置拒绝、严格请求字段、失败退款和 UI 适配；prompt injection Gold Set 随 M1.6.3 完成。
