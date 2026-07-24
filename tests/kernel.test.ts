@@ -24,6 +24,40 @@ const anyAsset = (name = '齿轮底座', source: 'import' | 'ai' = 'import'): Om
 });
 
 describe('C1 操作原子性', () => {
+  it('平面切割把一件原子替换为两件，撤销/重做恢复资产、实例与层级位置', () => {
+    const doc = makeDoc();
+    const sourceAsset = doc.addAsset(anyAsset('角色'));
+    const source = doc.placeInstance(sourceAsset.id);
+    const sibling = doc.placeInstance(sourceAsset.id);
+    doc.select([source.id]);
+    const historyBefore = doc.history.length;
+
+    const split = doc.splitInstanceWithDerivedParts(source.id, [
+      anyAsset('角色 · A'),
+      anyAsset('角色 · B'),
+    ]);
+
+    expect(doc.history.length).toBe(historyBefore + 1);
+    expect(doc.nodes.has(source.id)).toBe(false);
+    expect(doc.childrenOf(null)).toEqual([split.instances[0].id, split.instances[1].id, sibling.id]);
+    expect([...doc.selection]).toEqual([split.instances[0].id, split.instances[1].id]);
+    expect(split.instances.map((instance) => doc.instance(instance.id).assetId)).toEqual(
+      split.assets.map((asset) => asset.id),
+    );
+    expect(doc.history.list().at(-1)).toMatchObject({ op: 'split', label: '平面切割为 2 个零件' });
+
+    doc.history.undo();
+    expect(doc.nodes.has(source.id)).toBe(true);
+    expect(doc.childrenOf(null)).toEqual([source.id, sibling.id]);
+    expect([...doc.selection]).toEqual([source.id]);
+    expect(split.assets.every((asset) => !doc.assets.has(asset.id))).toBe(true);
+
+    doc.history.redo();
+    expect(doc.nodes.has(source.id)).toBe(false);
+    expect(doc.childrenOf(null)).toEqual([split.instances[0].id, split.instances[1].id, sibling.id]);
+    expect(split.assets.every((asset) => doc.assets.has(asset.id))).toBe(true);
+  });
+
   it('多选批量删除 = 一步;撤销后全部恢复、呈选中、层级位置一致(PRD 6.7 验收样例 2)', () => {
     const doc = makeDoc();
     const a = doc.addAsset(anyAsset());

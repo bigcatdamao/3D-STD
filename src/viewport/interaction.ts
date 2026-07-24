@@ -135,10 +135,11 @@ function currentGizmoPivot(): THREE.Vector3 | null {
   return box ? box.getCenter(new THREE.Vector3()) : null;
 }
 
-export function useViewportInteraction() {
+export function useViewportInteraction(disabled = false) {
   const { gl, camera, size } = useThree();
 
   useEffect(() => {
+    if (disabled) return;
     const el = gl.domElement;
     let drag: Drag | null = null;
 
@@ -527,5 +528,5 @@ export function useViewportInteraction() {
       el.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('keydown', onKey);
     };
-  }, [gl, camera, size]);
+  }, [gl, camera, size, disabled]);
 }

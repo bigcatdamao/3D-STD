@@ -28,10 +28,16 @@ import { RepairPreviewMesh } from '../repair/RepairPreviewMesh';
 import { worldBBoxOfInstance } from './gizmo-math';
 import { interactionState, useViewportInteraction } from './interaction';
 import { PlaneCutPreview } from '../split/PlaneCutPreview';
-import { usePlaneCutPreview } from '../split/plane-cut-state';
+import {
+  cancelManualPlaneSplit,
+  setManualPlaneMode,
+  useManualPlaneSplit,
+} from '../split/manual-plane-split-state';
+import { ManualPlaneCutManipulator } from '../split/ManualPlaneCutManipulator';
 
 function InteractionBridge() {
-  useViewportInteraction();
+  const splitActive = useManualPlaneSplit((state) => state.phase !== 'idle');
+  useViewportInteraction(splitActive);
   return null;
 }
 
@@ -51,7 +57,7 @@ export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
   const bed = useUi((s) => s.bed);
   const setBed = useUi((s) => s.setBed);
   const [custom, setCustom] = useState(false);
-  const splitPhase = usePlaneCutPreview((state) => state.phase);
+  const splitPhase = useManualPlaneSplit((state) => state.phase);
   useUi((state) => state.rev);
   const selectedInstances = expandToInstances(doc.selection);
 
@@ -63,16 +69,16 @@ export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
     <div className="viewport-toolbar">
       <div className="viewport-toolbar__views">
         {/* T10 临时入口:文件选择器与拖放同语义(入库+建实例);T11 资产面板就位后改绑「仅入库」(IMP-02) */}
-        <ImportButton className="viewport-tool" style={{ ...btn, borderColor: '#ffb454', color: '#ffb454' }} />
+        <ImportButton className="viewport-tool" style={{ ...btn, border: '1px solid #ffb454', color: '#ffb454' }} />
         <button
           type="button"
           data-testid="split-tool-entry"
-          className={`viewport-tool viewport-tool--split${splitPhase === 'ready' ? ' is-active' : ''}`}
+          className={`viewport-tool viewport-tool--split${splitPhase !== 'idle' ? ' is-active' : ''}`}
           style={{
             ...btn,
-            background: splitPhase === 'ready' ? '#285f50' : '#ffb454',
-            borderColor: splitPhase === 'ready' ? '#63d3ac' : '#ffb454',
-            color: splitPhase === 'ready' ? '#d9fff2' : '#17191d',
+            background: splitPhase !== 'idle' ? '#285f50' : '#ffb454',
+            border: `1px solid ${splitPhase !== 'idle' ? '#63d3ac' : '#ffb454'}`,
+            color: splitPhase !== 'idle' ? '#d9fff2' : '#17191d',
             fontWeight: 750,
           }}
           onClick={onOpenSplit}
@@ -137,16 +143,21 @@ export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
 /** T6 工具组:W/E/R 三模式切换 + 「沉底」一等按钮(VIEW-05/06) */
 function TransformTools() {
   useUi((s) => s.rev); // 选中集变化 → 沉底可用态刷新
-  const mode = useUi((s) => s.gizmoMode);
+  const objectMode = useUi((s) => s.gizmoMode);
   const setMode = useUi((s) => s.setGizmoMode);
+  const splitPhase = useManualPlaneSplit((state) => state.phase);
+  const splitMode = useManualPlaneSplit((state) => state.mode);
+  const splitActive = splitPhase !== 'idle';
+  const mode = splitActive ? splitMode : objectMode;
   const targets = expandToInstances(doc.selection);
 
   const modeBtn = (active: boolean): React.CSSProperties => ({
     ...btn,
-    ...(active ? { borderColor: '#ffb454', color: '#ffb454', background: '#2e2a22' } : {}),
+    ...(active ? { border: '1px solid #ffb454', color: '#ffb454', background: '#2e2a22' } : {}),
   });
 
   const onDrop = () => {
+    if (splitActive) return;
     const ids = expandToInstances(doc.selection).map((n) => n.id);
     if (!ids.length) return;
     // VIEW-06:底面 Z 归零。zMin 由文档数据推导(资产 bbox × 当前 TRS),不依赖渲染帧
@@ -159,17 +170,17 @@ function TransformTools() {
 
   return (
     <div className="viewport-toolbar__transform">
-      <button style={modeBtn(mode === 'translate')} onClick={() => setMode('translate')} title="快捷键 W">移动</button>
-      <button style={modeBtn(mode === 'rotate')} onClick={() => setMode('rotate')} title="快捷键 E">旋转</button>
-      <button style={modeBtn(mode === 'scale')} onClick={() => setMode('scale')} title="快捷键 R">缩放</button>
+      <button style={modeBtn(mode === 'translate')} onClick={() => splitActive ? setManualPlaneMode('translate') : setMode('translate')} title="快捷键 W">移动</button>
+      <button style={modeBtn(mode === 'rotate')} onClick={() => splitActive ? setManualPlaneMode('rotate') : setMode('rotate')} title="快捷键 E">旋转</button>
+      <button style={modeBtn(mode === 'scale')} onClick={() => splitActive ? setManualPlaneMode('scale') : setMode('scale')} title="快捷键 R">缩放</button>
       <button
         style={{
           ...btn,
-          ...(targets.length
-            ? { background: '#ffb454', borderColor: '#ffb454', color: '#1b1b20', fontWeight: 600 }
+          ...(!splitActive && targets.length
+            ? { background: '#ffb454', border: '1px solid #ffb454', color: '#1b1b20', fontWeight: 600 }
             : { opacity: 0.45, cursor: 'default' }),
         }}
-        disabled={!targets.length}
+        disabled={splitActive || !targets.length}
         onClick={onDrop}
         title="选中对象底面 Z 归零(VIEW-06)"
       >
@@ -230,8 +241,17 @@ function MarqueeOverlay() {
 
 function StatusBar() {
   useUi((s) => s.rev);
+  const splitPhase = useManualPlaneSplit((state) => state.phase);
   const sel = doc.selection.size;
   const h = doc.history;
+  if (splitPhase !== 'idle') {
+    return (
+      <div className="viewport-status-bar is-cutting" title="W 移动 · E 旋转 · R 缩放 · Esc 取消平面切割">
+        <span>✂ 平面切割 · {splitPhase === 'running' ? '正在计算真实网格' : '切割框编辑中'}</span>
+        <span className="viewport-status-bar__shortcuts">W/E/R 切换控件 · Esc 取消</span>
+      </div>
+    );
+  }
   return (
     <div
       className="viewport-status-bar"
@@ -250,6 +270,8 @@ function isTyping(e: KeyboardEvent): boolean {
 
 export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
   const setOrtho = useUi((s) => s.setOrtho);
+  const splitPhase = useManualPlaneSplit((state) => state.phase);
+  const splitActive = splitPhase !== 'idle';
 
   // 全局快捷键(VIEW-03/04)
   useEffect(() => {
@@ -257,6 +279,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
       if (isTyping(e)) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key === 'a' || e.key === 'A')) {
+        if (splitActive) return;
         e.preventDefault();
         dispatch((d) => d.selectAll()); // 跳过锁定(VIEW-04)
         return;
@@ -274,16 +297,16 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
       if (mod) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // TREE-04 删除:多选一步;组 = 组及内容整树(TREE 边界 1);拖拽/交互中不响应
-        if (!interactionState.active && doc.selection.size) {
+        if (!splitActive && !interactionState.active && doc.selection.size) {
           e.preventDefault();
           dispatch((d) => d.removeNodes(d.topMost(d.selection)));
         }
         return;
       }
       switch (e.key) {
-        case 'w': case 'W': useUi.getState().setGizmoMode('translate'); break;
-        case 'e': case 'E': useUi.getState().setGizmoMode('rotate'); break;
-        case 'r': case 'R': useUi.getState().setGizmoMode('scale'); break;
+        case 'w': case 'W': splitActive ? setManualPlaneMode('translate') : useUi.getState().setGizmoMode('translate'); break;
+        case 'e': case 'E': splitActive ? setManualPlaneMode('rotate') : useUi.getState().setGizmoMode('rotate'); break;
+        case 'r': case 'R': splitActive ? setManualPlaneMode('scale') : useUi.getState().setGizmoMode('scale'); break;
         case '1': sendCam({ kind: 'preset', view: 'top' }); break;
         case '2': sendCam({ kind: 'preset', view: 'front' }); break;
         case '3': sendCam({ kind: 'preset', view: 'side' }); break;
@@ -292,6 +315,11 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         case 'f': case 'F': sendCam({ kind: 'focus' }); break;
         case 'Home': sendCam({ kind: 'home' }); break;
         case 'Escape':
+          if (splitActive) {
+            e.preventDefault();
+            cancelManualPlaneSplit();
+            break;
+          }
           // 拖动/框选中的 Esc 归交互层(取消拖动);空闲时才是「清空选中」
           if (!interactionState.active && doc.selection.size) dispatch((d) => d.select([]));
           break;
@@ -299,7 +327,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setOrtho]);
+  }, [setOrtho, splitActive]);
 
   const bed = useUi((s) => s.bed);
   const dropProps = useImportDrop(); // IMP-02:拖入视口 = 入库 + 建实例(床中心 + 自动沉底)
@@ -319,6 +347,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         <SceneInstances />
         <CheckHighlight />
         <PlaneCutPreview />
+        <ManualPlaneCutManipulator />
         <RepairPreviewMesh />
         <GhostPreview />
         <Gizmo />

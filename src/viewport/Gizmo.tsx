@@ -15,6 +15,7 @@ import {
   planeHandleDisabled,
   selectionBBox,
 } from './gizmo-math';
+import { useManualPlaneSplit } from '../split/manual-plane-split-state';
 
 // ---------- 视觉常量 ----------
 
@@ -113,6 +114,7 @@ const tmpView = new THREE.Vector3();
 export function Gizmo() {
   useUi((s) => s.rev); // 任何 command 后重取选中与枢轴
   const mode = useUi((s) => s.gizmoMode);
+  const manualSplitPhase = useManualPlaneSplit((state) => state.phase);
 
   const targets = expandToInstances(doc.selection);
   const box = selectionBBox(
@@ -180,7 +182,7 @@ export function Gizmo() {
     }
   });
 
-  if (!targets.length || !box) return null;
+  if (manualSplitPhase !== 'idle' || !targets.length || !box) return null;
   const k = (kind: GizmoPart['kind'], axis: number) => `${mode}:${kind}:${axis}`;
 
   return (

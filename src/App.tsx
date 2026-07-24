@@ -29,6 +29,12 @@ import {
   useUi,
 } from './state/store';
 import { startPlaneCutPreview, startSurfaceAdaptiveCutPreview } from './split/plane-cut-state';
+import {
+  manualPlaneSplitIsActive,
+  startManualPlaneSplit,
+  useManualPlaneSplit,
+} from './split/manual-plane-split-state';
+import { ManualPlaneSplitPanel } from './split/ManualPlaneSplitPanel';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -88,9 +94,23 @@ function CollapsedRail({ label, onOpen }: { label: string; onOpen: () => void })
 
 function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTab) => void }) {
   useUi((s) => s.rev);
+  const splitPhase = useManualPlaneSplit((state) => state.phase);
   const issues = useCheck((s) => s.issues);
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
   const history = doc.history;
+  if (splitPhase !== 'idle') {
+    return (
+      <div className="inspector-shell">
+        <div className="inspector-tabs" role="tablist" aria-label="平面切割属性">
+          <button className="inspector-tab is-active" role="tab" aria-selected="true">
+            ✂ 平面切割
+          </button>
+          <span className="inspector-mode-note">Esc 取消</span>
+        </div>
+        <div className="inspector-content"><ManualPlaneSplitPanel /></div>
+      </div>
+    );
+  }
   return (
     <div className="inspector-shell">
       <div className="inspector-tabs" role="tablist" aria-label="右侧检查器">
@@ -256,55 +276,26 @@ export function App() {
 
   const patchLayout = (patch: Partial<WorkspaceLayout>) => setLayout((current) => ({ ...current, ...patch }));
   const openCheck = () => patchLayout({ inspectorOpen: true, inspectorTab: 'check' });
-  const revealSplitWorkbench = () => window.setTimeout(() => {
-    document.querySelector<HTMLElement>('[data-split-workbench="true"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, 80);
   const openSplitWorkbench = () => {
-    patchLayout({ inspectorOpen: true, inspectorTab: 'check', creationOpen: false });
+    patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
+    if (manualPlaneSplitIsActive()) {
+      useUi.getState().setToast('平面切割工具已打开：使用 W/E/R 或右侧属性栏调整切割框');
+      return;
+    }
     const targets = expandToInstances(doc.selection);
     if (targets.length === 0) {
-      useUi.getState().setToast('先在画布或场景树选中 1 个对象，再点击「拆件」');
+      useUi.getState().setToast('先在画布或场景树选中 1 个未锁定对象，再点击「拆件」');
       return;
     }
     if (targets.length > 1) {
-      useUi.getState().setToast(`当前选中了 ${targets.length} 个对象；拆件工作台一次只处理 1 个对象`);
+      useUi.getState().setToast(`当前选中了 ${targets.length} 个对象；平面切割一次只处理 1 个对象`);
       return;
     }
-    const instanceId = targets[0].id;
-    const tryOpen = (): boolean => {
-      const check = useCheck.getState();
-      if (check.phase !== 'done' || reportIsStale()) return false;
-      const issue = check.issues.find((candidate) => candidate.code === 'dims' && candidate.instanceId === instanceId);
-      if (!issue?.world) {
-        useUi.getState().setToast('没有取得这个对象的尺寸数据，请确认对象可见且资产已就绪');
-        return true;
-      }
-      if (!startPlaneCutPreview(issue)) {
-        useUi.getState().setToast('该对象暂时无法建立拆件预览，请检查几何是否仍可读取');
-        return true;
-      }
-      useUi.getState().setToast('拆件工作台已打开：先调整引导位置，再生成表面切割预览');
-      revealSplitWorkbench();
-      return true;
-    };
-    if (tryOpen()) return;
-
-    let unsubscribe = () => {};
-    unsubscribe = useCheck.subscribe((state) => {
-      if (state.phase !== 'done') return;
-      unsubscribe();
-      if (!tryOpen()) useUi.getState().setToast('检查结果已经过期，请保持对象不变后重试拆件');
-    });
-    if (useCheck.getState().phase === 'running') {
-      useUi.getState().setToast('正在等待当前打印检查，完成后自动打开拆件工作台');
+    if (!startManualPlaneSplit(targets[0].id)) {
+      useUi.getState().setToast('该对象无法开始平面切割，请确认模型几何可读取且对象未锁定');
       return;
     }
-    if (!runPrintCheck()) {
-      unsubscribe();
-      useUi.getState().setToast('暂时无法启动模型检查，请稍后再试');
-      return;
-    }
-    useUi.getState().setToast('正在准备拆件数据，检查完成后会自动打开工作台');
+    useUi.getState().setToast('平面切割已打开：默认 Z 轴水平切割，可移动、旋转或缩放切割框');
   };
   const toggleCreation = () => {
     if (!hasInstance) {

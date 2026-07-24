@@ -288,6 +288,68 @@ export class SceneDocument {
     return derived;
   }
 
+  /**
+   * 真实拆件落地:把一个实例原子替换为两个派生资产/实例。
+   * 源资产永不改写；撤销恢复原实例、移除两个派生资产，重做再完整恢复。
+   */
+  splitInstanceWithDerivedParts(
+    instanceId: string,
+    parts: readonly [Omit<Asset, 'id'>, Omit<Asset, 'id'>],
+    label = '平面切割为 2 个零件',
+  ): {
+    assets: [Asset, Asset];
+    instances: [InstanceNode, InstanceNode];
+  } {
+    if (this.effectiveLocked(instanceId)) throw new Error('对象已锁定，不能执行平面切割');
+    const current = this.instance(instanceId);
+    const source = clone(current);
+    const assets: [Asset, Asset] = [
+      { ...clone(parts[0]), id: genId('ast') } as Asset,
+      { ...clone(parts[1]), id: genId('ast') } as Asset,
+    ];
+    const names = this.takenNames();
+    names.delete(current.name);
+    const nameA = dedupeName(`${current.name} · A`, names);
+    names.add(nameA);
+    const nameB = dedupeName(`${current.name} · B`, names);
+    const instances: [InstanceNode, InstanceNode] = [
+      {
+        ...clone(source),
+        id: genId('ins'),
+        name: nameA,
+        assetId: assets[0].id,
+      },
+      {
+        ...clone(source),
+        id: genId('ins'),
+        name: nameB,
+        assetId: assets[1].id,
+      },
+    ];
+    const parentKey = current.parentId ?? ROOT;
+
+    this.commit(
+      'split',
+      label,
+      [instanceId, instances[0].id, instances[1].id],
+      () => {
+        const siblings = this.order.get(parentKey);
+        if (!siblings) throw new Error('对象层级已失效，不能执行平面切割');
+        const sourceIndex = siblings.indexOf(instanceId);
+        if (sourceIndex < 0) throw new Error('对象顺序已失效，不能执行平面切割');
+        this.assets.set(assets[0].id, clone(assets[0]));
+        this.assets.set(assets[1].id, clone(assets[1]));
+        this.nodes.delete(instanceId);
+        this.nodes.set(instances[0].id, clone(instances[0]));
+        this.nodes.set(instances[1].id, clone(instances[1]));
+        siblings.splice(sourceIndex, 1, instances[0].id, instances[1].id);
+        this.selection = new Set([instances[0].id, instances[1].id]);
+      },
+      { assetIds: [assets[0].id, assets[1].id] },
+    );
+    return { assets, instances };
+  }
+
   /** AST 边界 6/场景树边界:删除资产 → 级联删除其全部实例,整体一步 */
   removeAssetCascade(assetId: string) {
     const victims = [...this.nodes.values()]
