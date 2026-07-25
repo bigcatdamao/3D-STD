@@ -11,6 +11,7 @@ import {
   confirmManualPlaneSplit,
   confirmManualSurfaceSplit,
   previewManualSurfaceSplit,
+  returnManualSurfaceSplitToGuide,
   setManualPlaneAxis,
   startManualPlaneSplit,
   useManualPlaneSplit,
@@ -241,6 +242,19 @@ describe('manual plane split state', () => {
       cutKind: 'surface',
       durationMs: 7,
     });
+    expect(returnManualSurfaceSplitToGuide()).toBe(true);
+    expect(useManualPlaneSplit.getState()).toMatchObject({
+      phase: 'editing',
+      cutKind: 'surface',
+      surfaceResult: null,
+      durationMs: null,
+    });
+    expect(doc.history.length).toBe(historyBefore);
+    expect(doc.nodes.has(instance.id)).toBe(true);
+
+    expect(previewManualSurfaceSplit()).toBe(true);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(useManualPlaneSplit.getState().phase).toBe('previewReady');
     expect(confirmManualSurfaceSplit()).toBe(true);
     expect(doc.history.length).toBe(historyBefore + 1);
     expect(doc.nodes.has(instance.id)).toBe(false);

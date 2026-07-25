@@ -263,6 +263,23 @@ export function setManualSurfacePreference(surfacePreference: SurfaceCutPreferen
   editablePatch({ surfacePreference });
 }
 
+/** M1.10a:从已验证的表面闭环返回粗定位，不退出拆件，也不写场景或历史。 */
+export function returnManualSurfaceSplitToGuide(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (state.cutKind !== 'surface' || state.phase !== 'previewReady') return false;
+  surfaceRunner?.cancel();
+  useManualPlaneSplit.setState({
+    phase: 'editing',
+    mode: 'translate',
+    progress: '',
+    error: null,
+    errorCode: null,
+    durationMs: null,
+    surfaceResult: null,
+  });
+  return true;
+}
+
 export function setManualPlaneAxis(axis: Exclude<ManualPlaneAxis, 'custom'>): void {
   const rotations: Record<Exclude<ManualPlaneAxis, 'custom'>, Vec3> = {
     x: [0, 90, 0],

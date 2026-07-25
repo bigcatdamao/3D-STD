@@ -109,8 +109,8 @@ export function SceneInstances() {
   const manualSplitKind = useManualPlaneSplit((s) => s.cutKind);
   const manualSplitPhase = useManualPlaneSplit((s) => s.phase);
   const manualSplitInstanceId = useManualPlaneSplit((s) => s.instanceId);
-  const hasFreshSurfacePreview = manualSplitKind === 'surface'
-    && manualSplitPhase === 'previewReady'
+  const hasFreshSurfaceSession = manualSplitKind === 'surface'
+    && manualSplitPhase !== 'idle'
     && !manualPlaneSplitIsStale();
   const nodes = [...doc.nodes.values()].filter(
     (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
@@ -125,7 +125,7 @@ export function SceneInstances() {
           locked={doc.effectiveLocked(n.id)}
           histHl={!!histHover?.includes(n.id)}
           planePreview={(hasFreshPlanePreview && planePreviewInstanceId === n.id)
-            || (hasFreshSurfacePreview && manualSplitInstanceId === n.id)}
+            || (hasFreshSurfaceSession && manualSplitInstanceId === n.id)}
         />
       ))}
     </group>

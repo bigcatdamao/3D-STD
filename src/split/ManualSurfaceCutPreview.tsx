@@ -1,5 +1,9 @@
+import { useThree } from '@react-three/fiber';
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { doc } from '../state/store';
 import { useManualPlaneSplit } from './manual-plane-split-state';
 
@@ -13,25 +17,45 @@ function makeGeometry(positions: Float32Array): THREE.BufferGeometry {
 
 /** Real A/B curved-cut preview. The source instance stays intact until confirmation. */
 export function ManualSurfaceCutPreview() {
+  const viewportSize = useThree((state) => state.size);
   const phase = useManualPlaneSplit((state) => state.phase);
   const cutKind = useManualPlaneSplit((state) => state.cutKind);
   const instanceId = useManualPlaneSplit((state) => state.instanceId);
   const result = useManualPlaneSplit((state) => state.surfaceResult);
   const geometries = useMemo(() => {
     if (!result) return null;
-    const seam = new THREE.BufferGeometry();
-    seam.setAttribute('position', new THREE.BufferAttribute(result.seamPositions, 3));
+    const seamGeometry = new LineSegmentsGeometry();
+    seamGeometry.setPositions(result.seamPositions);
+    const seamMaterial = new LineMaterial({
+      color: '#fff1a8',
+      linewidth: 3.5,
+      worldUnits: false,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 1,
+    });
+    const seam = new LineSegments2(seamGeometry, seamMaterial);
+    seam.computeLineDistances();
+    seam.renderOrder = 995;
     return {
       a: makeGeometry(result.partA.positions),
       b: makeGeometry(result.partB.positions),
       seam,
+      seamGeometry,
+      seamMaterial,
     };
   }, [result]);
+
+  useEffect(() => {
+    geometries?.seamMaterial.resolution.set(viewportSize.width, viewportSize.height);
+  }, [geometries, viewportSize.height, viewportSize.width]);
 
   useEffect(() => () => {
     geometries?.a.dispose();
     geometries?.b.dispose();
-    geometries?.seam.dispose();
+    geometries?.seamGeometry.dispose();
+    geometries?.seamMaterial.dispose();
   }, [geometries]);
 
   if (
@@ -73,9 +97,7 @@ export function ManualSurfaceCutPreview() {
           depthWrite
         />
       </mesh>
-      <lineSegments geometry={geometries.seam} renderOrder={995}>
-        <lineBasicMaterial color="#fff1a8" depthTest={false} transparent opacity={1} />
-      </lineSegments>
+      <primitive object={geometries.seam} />
     </group>
   );
 }

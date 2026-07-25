@@ -6,6 +6,7 @@ import {
   confirmManualSurfaceSplit,
   manualPlaneSplitIsStale,
   previewManualSurfaceSplit,
+  returnManualSurfaceSplitToGuide,
   setManualPlaneAxis,
   setManualPlaneMode,
   setManualPlaneRotation,
@@ -120,12 +121,10 @@ export function ManualPlaneSplitPanel() {
   };
   const primaryText = isSurface
     ? state.phase === 'previewing'
-      ? '计算接缝中…'
-      : state.phase === 'previewReady'
-        ? '确认曲面切割'
-        : state.phase === 'error'
-          ? '调整后重新预览'
-          : '生成接缝预览'
+      ? '正在生成表面闭环…'
+      : state.phase === 'error'
+        ? '调整定位后重新生成'
+        : '生成表面闭合接缝'
     : state.phase === 'running'
       ? '切割中…'
       : state.phase === 'error'
@@ -134,28 +133,106 @@ export function ManualPlaneSplitPanel() {
   const runPrimary = () => {
     if (!isSurface) {
       confirmManualPlaneSplit();
-    } else if (state.phase === 'previewReady') {
-      confirmManualSurfaceSplit();
     } else {
       previewManualSurfaceSplit();
     }
   };
 
+  if (isSurface && state.phase === 'previewReady' && state.surfaceResult) {
+    return (
+      <section
+        className="manual-plane-panel manual-plane-panel--surface-review"
+        data-testid="manual-plane-split-panel"
+      >
+        <header>
+          <div>
+            <span className="manual-plane-panel__eyebrow">第 2 步 · 表面接缝</span>
+            <h3>曲面接缝预览</h3>
+            <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+          </div>
+          <em>2 / 2</em>
+        </header>
+
+        <div className="manual-plane-panel__notice">
+          <strong>平面定位已经结束</strong>
+          <span>画布黄色闭环才是实际切口。蓝色与紫色分别预览切割后的 A/B 两件。</span>
+        </div>
+
+        <div className="manual-plane-panel__surface-legend" aria-label="曲面切割预览图例">
+          <span className="is-a"><i />A 件</span>
+          <span className="is-seam"><i />表面闭合接缝</span>
+          <span className="is-b"><i />B 件</span>
+        </div>
+
+        <div className="manual-plane-panel__surface-result" role="status">
+          <strong>接缝与双侧封口验证通过</strong>
+          <div>
+            <span><b>{state.surfaceResult.metrics.boundaryVertices}</b> 个接缝点</span>
+            <span><b>{state.surfaceResult.metrics.seamLengthMm.toFixed(1)}</b> mm 接缝长度</span>
+            <span><b>{state.surfaceResult.metrics.maxCapDeviationMm.toFixed(2)}</b> mm 封口偏差</span>
+            <span><b>{state.durationMs?.toFixed(0) ?? '—'}</b> ms 计算耗时</span>
+          </div>
+          <small>
+            A/B 开放边：
+            {state.surfaceResult.partA.boundaryEdges}/{state.surfaceResult.partB.boundaryEdges}
+          </small>
+        </div>
+
+        <div className="manual-plane-panel__surface-boundary">
+          <strong>当前可以做什么</strong>
+          <span>接缝不合适：返回重新定位后再次生成。</span>
+          <span>接缝合适：确认后生成两个独立对象，并可一步撤销。</span>
+          <small>M1.10a 暂不提供接缝控制点；整圈沿面移动与局部弯曲将在下一阶段加入。</small>
+        </div>
+
+        {stale && (
+          <div className="manual-plane-panel__error" role="alert">
+            <strong>切割会话已失效</strong>
+            <span>场景在预览期间发生变化，请取消后重新开始。</span>
+          </div>
+        )}
+
+        <footer>
+          <button
+            type="button"
+            disabled={stale}
+            onClick={returnManualSurfaceSplitToGuide}
+          >
+            返回重新定位
+          </button>
+          <button
+            className="primary"
+            type="button"
+            disabled={stale}
+            onClick={confirmManualSurfaceSplit}
+          >
+            确认曲面切割
+          </button>
+        </footer>
+        <small className="manual-plane-panel__hint">
+          黄色闭环是实际切口 · 此阶段不再使用 W/E/R 平面手柄
+        </small>
+      </section>
+    );
+  }
+
   return (
     <section className="manual-plane-panel" data-testid="manual-plane-split-panel">
       <header>
         <div>
-          <span className="manual-plane-panel__eyebrow">真实几何操作</span>
-          <h3>{isSurface ? '曲面切割' : '平面切割'}</h3>
+          <span className="manual-plane-panel__eyebrow">
+            {isSurface ? '第 1 步 · 粗定位' : '真实几何操作'}
+          </span>
+          <h3>{isSurface ? '曲面切割定位' : '平面切割'}</h3>
           <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
         </div>
-        <em>1 → 2</em>
+        <em>{isSurface ? '1 / 2' : '1 → 2'}</em>
       </header>
 
       <div className="manual-plane-panel__notice">
-        <strong>源模型保持不变</strong>
+        <strong>{isSurface ? '平面只负责确定大概位置' : '源模型保持不变'}</strong>
         <span>{isSurface
-          ? '先生成表面闭环预览；验证通过后才能确认写入 A / B，可一步撤销。'
+          ? '这里不会沿平面直接切。下一步程序会根据这个位置，自动寻找贴在模型表面的闭合接缝。'
           : '确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。'}</span>
       </div>
 
@@ -246,46 +323,31 @@ export function ManualPlaneSplitPanel() {
           />
         </div>
         <p className="manual-plane-panel__scope">{isSurface
-          ? '框用于显示引导方向；实际接缝在模型表面的吸附带内搜索。'
+          ? '框只表示起始位置与方向；生成后会隐藏，并切换为模型表面的真实闭环。'
           : '框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。'}</p>
       </details>
 
       {isSurface && (
-        <details open>
-          <summary>接缝搜索宽度 <small>不是切口厚度</small></summary>
-          <div className="manual-plane-panel__band-explainer">
-            <div>
-              <strong>允许接缝偏离中心引导面</strong>
-              <output>
-                ±{state.surfaceBandMm.toFixed(0)}mm
-                <small>总搜索宽度 {(state.surfaceBandMm * 2).toFixed(0)}mm</small>
-              </output>
-            </div>
-            <div className="manual-plane-panel__band-diagram" aria-hidden="true">
-              <span>A 侧</span>
-              <i style={{ width: `${Math.max(18, Math.min(64, 18 + state.surfaceBandMm * 1.15))}%` }}>
-                <b />
-              </i>
-              <span>B 侧</span>
-            </div>
-            <p>透明体积只是“允许程序找接缝的区域”，不会挖掉这层材料，也不会让切口变宽。</p>
-          </div>
-          <div className="manual-plane-panel__fields">
-            <FieldRow
-              axis="偏移"
-              value={state.surfaceBandMm}
-              min={1}
-              max={surfaceRangeMax}
-              step={1}
-              unit="mm"
-              onChange={setManualSurfaceBandMm}
-            />
-          </div>
+        <div className="manual-plane-panel__surface-next">
+          <strong>点击生成后会发生什么？</strong>
+          <span><b>1</b>读取切割框穿过模型的位置</span>
+          <span><b>2</b>沿模型表面自动寻找一条闭合接缝</span>
+          <span><b>3</b>隐藏平面框，切换为蓝/紫 A/B 真实预览</span>
+        </div>
+      )}
+
+      {isSurface && (
+        <details className="manual-plane-panel__surface-advanced">
+          <summary>高级：自动寻缝范围 <small>通常无需修改</small></summary>
+          <p>
+            范围越宽，接缝越可能离开当前平面，沿附近收腰或折痕弯曲。
+            这不是切口厚度，也不会删除材料。
+          </p>
           <div className="manual-plane-panel__range-presets" aria-label="接缝搜索宽度预设">
             {([
-              [5, '精确', '紧贴引导面'],
-              [15, '标准', '推荐起点'],
-              [30, '宽松', '寻找远处收腰'],
+              [5, '紧贴', '±5mm'],
+              [15, '标准', '±15mm'],
+              [30, '宽松', '±30mm'],
             ] as const).map(([value, label, hint]) => (
               <button
                 key={value}
@@ -296,13 +358,13 @@ export function ManualPlaneSplitPanel() {
                 title={`${label}：${hint}`}
               >
                 <strong>{label}</strong>
-                <span>±{value}mm</span>
+                <span>{hint}</span>
               </button>
             ))}
           </div>
           <div className="manual-plane-panel__preference-label">
-            <strong>接缝怎么走</strong>
-            <span>只改变搜索倾向，不会自动理解角色部位</span>
+            <strong>自动接缝偏好</strong>
+            <span>不识别角色语义</span>
           </div>
           <div className="manual-plane-panel__preferences" aria-label="接缝偏好">
             {([
@@ -327,28 +389,7 @@ export function ManualPlaneSplitPanel() {
                 ? '贴折痕：更愿意沿网格转折明显的位置走，适合装甲边或衣物折线。'
                 : '均衡：同时考虑离引导面的距离、接缝长度和折角，建议第一次先用它。'}
           </p>
-          <div className="manual-plane-panel__surface-steps">
-            <strong>怎么用</strong>
-            <span>① 把中心引导面移到腰部/关节附近</span>
-            <span>② 先选“标准 ±15mm”，再生成预览</span>
-            <span>③ 不理想时移动引导面或改变宽度，不要直接确认</span>
-          </div>
         </details>
-      )}
-
-      {isSurface && state.phase === 'previewReady' && state.surfaceResult && (
-        <div className="manual-plane-panel__surface-result" role="status">
-          <strong>闭环与双侧封口已通过</strong>
-          <span>
-            {state.surfaceResult.metrics.boundaryVertices} 点 ·
-            接缝 {state.surfaceResult.metrics.seamLengthMm.toFixed(1)}mm ·
-            封口偏差 {state.surfaceResult.metrics.maxCapDeviationMm.toFixed(2)}mm
-          </span>
-          <span>
-            A/B 开放边 {state.surfaceResult.partA.boundaryEdges}/{state.surfaceResult.partB.boundaryEdges} ·
-            {state.durationMs?.toFixed(0) ?? '—'}ms
-          </span>
-        </div>
       )}
 
       {running && (
@@ -385,7 +426,11 @@ export function ManualPlaneSplitPanel() {
           {primaryText}
         </button>
       </footer>
-      <small className="manual-plane-panel__hint">视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消</small>
+      <small className="manual-plane-panel__hint">
+        {isSurface
+          ? '第 1 步：W/E/R 调整粗定位 · 生成后进入独立表面接缝预览'
+          : '视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消'}
+      </small>
     </section>
   );
 }

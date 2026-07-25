@@ -230,9 +230,9 @@ select:focus-visible {
 }
 .manual-plane-panel > header { display: flex; align-items: flex-start; gap: 8px; padding: 2px 2px 3px; }
 .manual-plane-panel > header > div { min-width: 0; }
-.manual-plane-panel__eyebrow { color: #69d2ae; font-size: 8px; font-weight: 700; letter-spacing: .06em; }
+.manual-plane-panel__eyebrow { color: #69d2ae; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .manual-plane-panel h3 { margin: 2px 0 1px; color: #f0f2f4; font-size: 15px; }
-.manual-plane-panel header p { max-width: 235px; margin: 0; overflow: hidden; color: #8f99a5; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.manual-plane-panel header p { max-width: 235px; margin: 0; overflow: hidden; color: #8f99a5; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .manual-plane-panel header em {
   margin-left: auto;
   padding: 3px 7px;
@@ -240,7 +240,7 @@ select:focus-visible {
   border-radius: 999px;
   background: rgba(105, 210, 174, .08);
   color: #91e0c4;
-  font-size: 9px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 700;
 }
@@ -252,15 +252,15 @@ select:focus-visible {
   border-radius: 7px;
   background: linear-gradient(135deg, rgba(105, 210, 174, .08), rgba(29, 31, 37, .7));
 }
-.manual-plane-panel__notice strong { color: #a8e8d1; font-size: 9px; }
-.manual-plane-panel__notice span { color: #84958f; font-size: 8px; line-height: 1.45; }
+.manual-plane-panel__notice strong { color: #a8e8d1; font-size: 12px; }
+.manual-plane-panel__notice span { color: #9aaba5; font-size: 11px; line-height: 1.55; }
 .manual-plane-panel__axis {
   display: grid;
   grid-template-columns: auto repeat(3, 31px) 1fr;
   gap: 4px;
   align-items: center;
 }
-.manual-plane-panel__axis > span { margin-right: 4px; color: #8f99a3; font-size: 9px; }
+.manual-plane-panel__axis > span { margin-right: 4px; color: #a6afb8; font-size: 11px; }
 .manual-plane-panel__axis button,
 .manual-plane-panel__modes button {
   border: 1px solid #363b44;
@@ -268,7 +268,7 @@ select:focus-visible {
   background: #23262d;
   color: #a6adb7;
   cursor: pointer;
-  font-size: 9px;
+  font-size: 11px;
 }
 .manual-plane-panel__axis button { height: 23px; padding: 0; }
 .manual-plane-panel__axis button[aria-pressed="true"] {
@@ -277,7 +277,7 @@ select:focus-visible {
   color: #ffd39a;
   box-shadow: inset 0 0 0 1px rgba(255, 180, 84, .08);
 }
-.manual-plane-panel__axis small { min-width: 0; overflow: hidden; color: #69737e; font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.manual-plane-panel__axis small { min-width: 0; overflow: hidden; color: #7e8995; font-size: 10px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .manual-plane-panel__modes {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -287,9 +287,9 @@ select:focus-visible {
   border-radius: 7px;
   background: rgba(8, 11, 14, .26);
 }
-.manual-plane-panel__modes button { display: flex; align-items: center; justify-content: center; gap: 5px; height: 27px; }
+.manual-plane-panel__modes button { display: flex; align-items: center; justify-content: center; gap: 5px; height: 32px; }
 .manual-plane-panel__modes button[aria-pressed="true"] { border-color: rgba(255, 180, 84, .55); background: #312a22; color: #ffd39a; }
-.manual-plane-panel__modes kbd { color: #68727e; font-family: inherit; font-size: 7px; }
+.manual-plane-panel__modes kbd { color: #7a8591; font-family: inherit; font-size: 9px; }
 .manual-plane-panel__handle-help {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -299,13 +299,13 @@ select:focus-visible {
   border-radius: 7px;
   background: rgba(255, 180, 84, .055);
 }
-.manual-plane-panel__handle-help strong { color: #ffd39a; font-size: 9px; }
-.manual-plane-panel__handle-help > span { grid-column: 1 / -1; color: #9b8d79; font-size: 8px; line-height: 1.5; }
+.manual-plane-panel__handle-help strong { color: #ffd39a; font-size: 12px; }
+.manual-plane-panel__handle-help > span { grid-column: 1 / -1; color: #ad9e89; font-size: 11px; line-height: 1.55; }
 .manual-plane-panel__handle-help output {
   grid-column: 2;
   grid-row: 1;
   color: #8f99a5;
-  font-size: 8px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 .manual-plane-panel__axis-legend {
@@ -319,7 +319,7 @@ select:focus-visible {
   border: 1px solid currentColor;
   border-radius: 999px;
   background: rgba(255, 255, 255, .025);
-  font-size: 8px;
+  font-size: 10px;
   font-style: normal;
 }
 .manual-plane-panel__axis-legend .is-x { color: #ef7774; }
@@ -336,10 +336,10 @@ select:focus-visible {
   border-bottom: 1px solid rgba(255, 255, 255, .05);
   color: #c5cbd2;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
 }
-.manual-plane-panel summary small { float: right; color: #68727d; font-size: 8px; font-weight: 400; }
+.manual-plane-panel summary small { float: right; color: #7b8691; font-size: 10px; font-weight: 400; }
 .manual-plane-panel__link-size {
   float: right;
   margin: -3px 0 -3px 6px;
@@ -349,7 +349,7 @@ select:focus-visible {
   background: #20242a;
   color: #818b96;
   cursor: pointer;
-  font-size: 8px;
+  font-size: 10px;
 }
 .manual-plane-panel__link-size[aria-pressed='true'] { border-color: rgba(105, 210, 174, .42); color: #8ed8bf; }
 .manual-plane-panel__fields { display: grid; gap: 5px; padding: 7px 8px; }
@@ -359,7 +359,7 @@ select:focus-visible {
   gap: 5px;
   align-items: center;
 }
-.manual-plane-panel__field > span { color: #84909c; font-size: 9px; font-weight: 700; }
+.manual-plane-panel__field > span { color: #9aa6b1; font-size: 11px; font-weight: 700; }
 .manual-plane-panel__field > input[type='range'] { min-width: 0; height: 12px; accent-color: #ffb454; }
 .manual-plane-panel__field label {
   display: grid;
@@ -380,11 +380,11 @@ select:focus-visible {
   outline: 0;
   background: transparent;
   color: #d8dde3;
-  font-size: 9px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.manual-plane-panel__field label small { padding-right: 5px; color: #65707b; font-size: 7px; }
-.manual-plane-panel__scope { margin: -2px 8px 7px; color: #66717d; font-size: 8px; line-height: 1.4; }
+.manual-plane-panel__field label small { padding-right: 5px; color: #77828e; font-size: 9px; }
+.manual-plane-panel__scope { margin: -2px 8px 8px; color: #87929d; font-size: 11px; line-height: 1.5; }
 .manual-plane-panel__band-explainer {
   display: grid;
   gap: 6px;
@@ -446,15 +446,16 @@ select:focus-visible {
 .manual-plane-panel__range-presets button {
   display: grid;
   gap: 1px;
-  padding: 5px 3px;
+  min-height: 42px;
+  padding: 6px 3px;
   border: 1px solid #343944;
   border-radius: 5px;
   background: #20242a;
   color: #8f99a5;
   cursor: pointer;
 }
-.manual-plane-panel__range-presets button strong { font-size: 8px; }
-.manual-plane-panel__range-presets button span { color: #697580; font-size: 7px; }
+.manual-plane-panel__range-presets button strong { font-size: 11px; }
+.manual-plane-panel__range-presets button span { color: #84909c; font-size: 10px; }
 .manual-plane-panel__range-presets button[aria-pressed='true'] {
   border-color: rgba(255, 180, 84, .58);
   background: rgba(255, 180, 84, .08);
@@ -467,8 +468,8 @@ select:focus-visible {
   gap: 8px;
   padding: 0 8px 5px;
 }
-.manual-plane-panel__preference-label strong { color: #aab3bc; font-size: 9px; }
-.manual-plane-panel__preference-label span { color: #626e79; font-size: 7px; text-align: right; }
+.manual-plane-panel__preference-label strong { color: #b8c1ca; font-size: 11px; }
+.manual-plane-panel__preference-label span { color: #7f8a95; font-size: 10px; text-align: right; }
 .manual-plane-panel__preferences {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -477,9 +478,9 @@ select:focus-visible {
 }
 .manual-plane-panel__preference-help {
   margin: -2px 8px 8px;
-  color: #7b8792;
-  font-size: 8px;
-  line-height: 1.45;
+  color: #909ba6;
+  font-size: 11px;
+  line-height: 1.5;
 }
 .manual-plane-panel__surface-steps {
   display: grid;
@@ -493,29 +494,120 @@ select:focus-visible {
 .manual-plane-panel__surface-steps strong { color: #d3b68d; font-size: 8px; }
 .manual-plane-panel__surface-steps span { color: #7d7d78; font-size: 8px; line-height: 1.4; }
 .manual-plane-panel__preferences button {
-  height: 24px;
+  height: 32px;
   border: 1px solid #343944;
   border-radius: 5px;
   background: #20242a;
   color: #8f99a5;
   cursor: pointer;
-  font-size: 8px;
+  font-size: 11px;
 }
 .manual-plane-panel__preferences button[aria-pressed='true'] {
   border-color: rgba(80, 200, 255, .55);
   background: rgba(80, 200, 255, .09);
   color: #a7e5fb;
 }
+.manual-plane-panel__surface-next {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgba(80, 200, 255, .28);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(80, 200, 255, .08), rgba(201, 142, 224, .05));
+}
+.manual-plane-panel__surface-next strong { color: #c9ebf8; font-size: 12px; }
+.manual-plane-panel__surface-next span {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 7px;
+  align-items: center;
+  color: #a1adb7;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.manual-plane-panel__surface-next b {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid rgba(80, 200, 255, .36);
+  border-radius: 50%;
+  background: rgba(80, 200, 255, .09);
+  color: #9fe3fb;
+  font-size: 10px;
+}
+.manual-plane-panel__surface-advanced > p {
+  margin: 0;
+  padding: 10px 9px;
+  color: #96a2ad;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.manual-plane-panel--surface-review { gap: 11px; padding-bottom: 10px; }
+.manual-plane-panel__surface-legend {
+  display: grid;
+  grid-template-columns: .8fr 1.4fr .8fr;
+  gap: 5px;
+}
+.manual-plane-panel__surface-legend span {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .025);
+  color: #aeb8c1;
+  font-size: 10px;
+}
+.manual-plane-panel__surface-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 9px currentColor;
+}
+.manual-plane-panel__surface-legend .is-a i { background: #50c8ff; color: #50c8ff; }
+.manual-plane-panel__surface-legend .is-seam i { background: #fff1a8; color: #fff1a8; }
+.manual-plane-panel__surface-legend .is-b i { background: #c98ee0; color: #c98ee0; }
+.manual-plane-panel__surface-boundary {
+  display: grid;
+  gap: 5px;
+  padding: 10px 11px;
+  border-left: 3px solid rgba(255, 180, 84, .7);
+  border-radius: 0 7px 7px 0;
+  background: rgba(255, 180, 84, .055);
+}
+.manual-plane-panel__surface-boundary strong { color: #e5c79d; font-size: 12px; }
+.manual-plane-panel__surface-boundary span { color: #aea18f; font-size: 11px; line-height: 1.45; }
+.manual-plane-panel__surface-boundary small {
+  margin-top: 3px;
+  color: #83786a;
+  font-size: 10px;
+  line-height: 1.45;
+}
 .manual-plane-panel__surface-result {
   display: grid;
-  gap: 2px;
-  padding: 7px 8px;
+  gap: 8px;
+  padding: 11px;
   border: 1px solid rgba(105, 210, 174, .32);
   border-radius: 7px;
   background: rgba(105, 210, 174, .08);
 }
-.manual-plane-panel__surface-result strong { color: #a8e8d1; font-size: 9px; }
-.manual-plane-panel__surface-result span { color: #7d9b91; font-size: 8px; line-height: 1.4; }
+.manual-plane-panel__surface-result strong { color: #b9f0dd; font-size: 13px; }
+.manual-plane-panel__surface-result > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.manual-plane-panel__surface-result span {
+  display: grid;
+  gap: 1px;
+  padding: 7px;
+  border-radius: 6px;
+  background: rgba(8, 18, 15, .35);
+  color: #93aaa2;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.manual-plane-panel__surface-result span b { color: #e1f6ef; font-size: 14px; font-variant-numeric: tabular-nums; }
+.manual-plane-panel__surface-result small { color: #8aa298; font-size: 10px; }
 .manual-plane-panel__running,
 .manual-plane-panel__error {
   display: flex;
@@ -536,21 +628,21 @@ select:focus-visible {
 }
 .manual-plane-panel__running div,
 .manual-plane-panel__error { display: grid; gap: 2px; }
-.manual-plane-panel__running strong { color: #a4dff5; font-size: 9px; }
-.manual-plane-panel__running span { color: #78919b; font-size: 8px; }
+.manual-plane-panel__running strong { color: #a4dff5; font-size: 11px; }
+.manual-plane-panel__running span { color: #8da4ad; font-size: 10px; }
 .manual-plane-panel__error { border: 1px solid rgba(240, 149, 149, .28); background: rgba(120, 44, 44, .11); }
-.manual-plane-panel__error strong { color: #eca0a0; font-size: 9px; }
-.manual-plane-panel__error span { color: #bd9292; font-size: 8px; line-height: 1.4; }
-.manual-plane-panel__error small { color: #825f63; font-size: 7px; }
+.manual-plane-panel__error strong { color: #eca0a0; font-size: 11px; }
+.manual-plane-panel__error span { color: #c9a0a0; font-size: 10px; line-height: 1.5; }
+.manual-plane-panel__error small { color: #966f73; font-size: 9px; }
 .manual-plane-panel > footer { display: grid; grid-template-columns: 1fr 1.5fr; gap: 6px; padding-top: 2px; }
 .manual-plane-panel > footer button {
-  height: 30px;
+  min-height: 38px;
   border: 1px solid #3a4048;
   border-radius: 6px;
   background: #252930;
   color: #b8c0c9;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
 }
 .manual-plane-panel > footer button.primary {
@@ -559,7 +651,7 @@ select:focus-visible {
   color: #1a1c20;
 }
 .manual-plane-panel > footer button:disabled { cursor: default; opacity: .42; }
-.manual-plane-panel__hint { color: #626d78; font-size: 8px; line-height: 1.4; text-align: center; }
+.manual-plane-panel__hint { color: #7c8792; font-size: 10px; line-height: 1.5; text-align: center; }
 .viewport-status-bar.is-cutting { border-color: rgba(255, 180, 84, .35); color: #ffd39a; background: rgba(42, 34, 25, .9); }
 
 /* M1.7.2 · 自交命中对浏览：局部证据只读定位，不写场景历史。 */

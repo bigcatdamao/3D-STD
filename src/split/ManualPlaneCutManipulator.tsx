@@ -25,8 +25,6 @@ export function ManualPlaneCutManipulator() {
   const sizeLinked = useManualPlaneSplit((state) => state.sizeLinked);
   const mode = useManualPlaneSplit((state) => state.mode);
   const cutKind = useManualPlaneSplit((state) => state.cutKind);
-  const surfaceBandMm = useManualPlaneSplit((state) => state.surfaceBandMm);
-  const showGuide = cutKind !== 'surface' || phase !== 'previewReady';
   const group = useRef<THREE.Group>(null!);
   const materialFront = useMemo(() => new THREE.MeshBasicMaterial({
     color: '#55c9ff',
@@ -51,7 +49,7 @@ export function ManualPlaneCutManipulator() {
     depthTest: false,
   }), []);
 
-  if (phase === 'idle') return null;
+  if (phase === 'idle' || (cutKind === 'surface' && phase === 'previewReady')) return null;
 
   const syncFromObject = () => {
     const object = group.current;
@@ -79,50 +77,23 @@ export function ManualPlaneCutManipulator() {
 
   const guideVisual = (
     <>
-      {showGuide && cutKind === 'surface' && (
-        <>
-          <mesh scale={[1, 1, surfaceBandMm * 2]} renderOrder={987}>
-            <boxGeometry args={[1, 1, 1]} />
-            <meshBasicMaterial
-              color="#4ab7df"
-              transparent
-              opacity={0.035}
-              side={THREE.DoubleSide}
-              depthWrite={false}
-              depthTest={false}
-            />
-          </mesh>
-          <mesh position={[0, 0, surfaceBandMm]} renderOrder={988}>
-            <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial color="#58caee" transparent opacity={0.075} depthWrite={false} depthTest={false} />
-          </mesh>
-          <mesh position={[0, 0, -surfaceBandMm]} renderOrder={988}>
-            <planeGeometry args={[1, 1]} />
-            <meshBasicMaterial color="#ba83df" transparent opacity={0.075} depthWrite={false} depthTest={false} />
-          </mesh>
-        </>
-      )}
-      {showGuide && (
-        <>
-          <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
-          <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
-          <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
-          <lineSegments renderOrder={992}>
-            <bufferGeometry>
-              <bufferAttribute
-                attach="attributes-position"
-                count={4}
-                array={new Float32Array([
-                  -0.5, 0, 0.002, 0.5, 0, 0.002,
-                  0, -0.5, 0.002, 0, 0.5, 0.002,
-                ])}
-                itemSize={3}
-              />
-            </bufferGeometry>
-            <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
-          </lineSegments>
-        </>
-      )}
+      <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
+      <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
+      <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
+      <lineSegments renderOrder={992}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={4}
+            array={new Float32Array([
+              -0.5, 0, 0.002, 0.5, 0, 0.002,
+              0, -0.5, 0.002, 0, 0.5, 0.002,
+            ])}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
+      </lineSegments>
     </>
   );
 

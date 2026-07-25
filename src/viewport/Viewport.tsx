@@ -34,6 +34,7 @@ import {
   useManualPlaneSplit,
 } from '../split/manual-plane-split-state';
 import { ManualPlaneCutManipulator } from '../split/ManualPlaneCutManipulator';
+import { ManualSurfaceGuidePreview } from '../split/ManualSurfaceGuidePreview';
 import { ManualSurfaceCutPreview } from '../split/ManualSurfaceCutPreview';
 
 function InteractionBridge() {
@@ -256,9 +257,18 @@ function StatusBar() {
           ? '接缝预览已通过'
           : '引导框编辑中';
     return (
-      <div className="viewport-status-bar is-cutting" title="W 移动 · E 旋转 · R 缩放 · Esc 取消切割">
+      <div
+        className="viewport-status-bar is-cutting"
+        title={splitKind === 'surface' && splitPhase === 'previewReady'
+          ? '黄色闭环是实际曲面切口；右栏可确认或返回定位'
+          : 'W 移动 · E 旋转 · R 缩放 · Esc 取消切割'}
+      >
         <span>✂ {label} · {phaseText}</span>
-        <span className="viewport-status-bar__shortcuts">W/E/R 切换控件 · Esc 取消</span>
+        <span className="viewport-status-bar__shortcuts">
+          {splitKind === 'surface' && splitPhase === 'previewReady'
+            ? '黄色闭环为实际切口 · 右栏确认或返回定位'
+            : 'W/E/R 切换控件 · Esc 取消'}
+        </span>
       </div>
     );
   }
@@ -357,6 +367,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         <SceneInstances />
         <CheckHighlight />
         <PlaneCutPreview />
+        <ManualSurfaceGuidePreview />
         <ManualPlaneCutManipulator />
         <ManualSurfaceCutPreview />
         <RepairPreviewMesh />
