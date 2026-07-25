@@ -3,12 +3,16 @@ import type { Vec3 } from '../kernel/types';
 import {
   cancelManualPlaneSplit,
   confirmManualPlaneSplit,
+  confirmManualSurfaceSplit,
   manualPlaneSplitIsStale,
+  previewManualSurfaceSplit,
   setManualPlaneAxis,
   setManualPlaneMode,
-  setManualPlanePosition,
   setManualPlaneRotation,
   setManualPlaneSize,
+  setManualPlaneSizeLinked,
+  setManualSurfaceBandMm,
+  setManualSurfacePreference,
   useManualPlaneSplitSnapshot,
   type ManualPlaneMode,
 } from './manual-plane-split-state';
@@ -94,19 +98,46 @@ export function ManualPlaneSplitPanel() {
     bounds.max[1] - bounds.min[1],
     bounds.max[2] - bounds.min[2],
   );
-  const padding = Math.max(diagonal * 0.35, 20);
   const sizeMax = Math.max(diagonal * 3, 100);
-  const running = state.phase === 'running';
-
-  const setPositionAxis = (axis: number, value: number) => {
-    const position = [...state.position] as Vec3;
-    position[axis] = value;
-    setManualPlanePosition(position);
-  };
+  const running = state.phase === 'running' || state.phase === 'previewing';
+  const isSurface = state.cutKind === 'surface';
   const setRotationAxis = (axis: number, value: number) => {
     const rotation = [...state.rotation] as Vec3;
     rotation[axis] = value;
     setManualPlaneRotation(rotation);
+  };
+  const setSizeAxis = (axis: 0 | 1, value: number) => {
+    const next = [...state.size] as [number, number];
+    if (!state.sizeLinked) {
+      next[axis] = value;
+    } else {
+      const factor = value / Math.max(state.size[axis], 1e-9);
+      next[0] = state.size[0] * factor;
+      next[1] = state.size[1] * factor;
+    }
+    setManualPlaneSize(next);
+  };
+  const primaryText = isSurface
+    ? state.phase === 'previewing'
+      ? '计算接缝中…'
+      : state.phase === 'previewReady'
+        ? '确认曲面切割'
+        : state.phase === 'error'
+          ? '调整后重新预览'
+          : '生成接缝预览'
+    : state.phase === 'running'
+      ? '切割中…'
+      : state.phase === 'error'
+        ? '调整后重试'
+        : '确认切割';
+  const runPrimary = () => {
+    if (!isSurface) {
+      confirmManualPlaneSplit();
+    } else if (state.phase === 'previewReady') {
+      confirmManualSurfaceSplit();
+    } else {
+      previewManualSurfaceSplit();
+    }
   };
 
   return (
@@ -114,7 +145,7 @@ export function ManualPlaneSplitPanel() {
       <header>
         <div>
           <span className="manual-plane-panel__eyebrow">真实几何操作</span>
-          <h3>平面切割</h3>
+          <h3>{isSurface ? '曲面切割' : '平面切割'}</h3>
           <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
         </div>
         <em>1 → 2</em>
@@ -122,7 +153,9 @@ export function ManualPlaneSplitPanel() {
 
       <div className="manual-plane-panel__notice">
         <strong>源模型保持不变</strong>
-        <span>确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。</span>
+        <span>{isSurface
+          ? '先生成表面闭环预览；验证通过后才能确认写入 A / B，可一步撤销。'
+          : '确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。'}</span>
       </div>
 
       <div className="manual-plane-panel__axis" aria-label="切割轴预设">
@@ -146,23 +179,11 @@ export function ManualPlaneSplitPanel() {
         <ModeButton mode="scale" active={state.mode === 'scale'} shortcut="R">缩放</ModeButton>
       </div>
 
-      <details open>
-        <summary>位置 <small>mm</small></summary>
-        <div className="manual-plane-panel__fields">
-          {AXES.map((axis, index) => (
-            <FieldRow
-              key={axis}
-              axis={axis}
-              value={state.position[index]}
-              min={bounds.min[index] - padding}
-              max={bounds.max[index] + padding}
-              step={0.5}
-              unit="mm"
-              onChange={(value) => setPositionAxis(index, value)}
-            />
-          ))}
-        </div>
-      </details>
+      <div className="manual-plane-panel__handle-help">
+        <strong>移动使用画布手柄</strong>
+        <span>按 W，直接拖动红 X、绿 Y、蓝 Z 箭头；侧栏不再重复提供位置滑杆。</span>
+        <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
+      </div>
 
       <details open>
         <summary>旋转 <small>XYZ 欧拉角</small></summary>
@@ -183,7 +204,21 @@ export function ManualPlaneSplitPanel() {
       </details>
 
       <details open>
-        <summary>切割框大小 <small>显示范围</small></summary>
+        <summary>
+          切割框大小
+          <button
+            type="button"
+            className="manual-plane-panel__link-size"
+            aria-pressed={state.sizeLinked}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setManualPlaneSizeLinked(!state.sizeLinked);
+            }}
+          >
+            {state.sizeLinked ? '🔗 宽高联动' : '⛓ 独立调整'}
+          </button>
+        </summary>
         <div className="manual-plane-panel__fields">
           <FieldRow
             axis="宽"
@@ -192,7 +227,7 @@ export function ManualPlaneSplitPanel() {
             max={sizeMax}
             step={1}
             unit="mm"
-            onChange={(value) => setManualPlaneSize([value, state.size[1]])}
+            onChange={(value) => setSizeAxis(0, value)}
           />
           <FieldRow
             axis="高"
@@ -201,17 +236,68 @@ export function ManualPlaneSplitPanel() {
             max={sizeMax}
             step={1}
             unit="mm"
-            onChange={(value) => setManualPlaneSize([state.size[0], value])}
+            onChange={(value) => setSizeAxis(1, value)}
           />
         </div>
-        <p className="manual-plane-panel__scope">框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。</p>
+        <p className="manual-plane-panel__scope">{isSurface
+          ? '框用于显示引导方向；实际接缝在模型表面的吸附带内搜索。'
+          : '框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。'}</p>
       </details>
+
+      {isSurface && (
+        <details open>
+          <summary>表面吸附 <small>闭合接缝搜索</small></summary>
+          <div className="manual-plane-panel__fields">
+            <FieldRow
+              axis="范围"
+              value={state.surfaceBandMm}
+              min={1}
+              max={Math.max(10, Math.min(diagonal * 0.45, 200))}
+              step={1}
+              unit="mm"
+              onChange={setManualSurfaceBandMm}
+            />
+          </div>
+          <div className="manual-plane-panel__preferences" aria-label="接缝偏好">
+            {([
+              ['balanced', '均衡'],
+              ['shortest', '最短'],
+              ['crease', '贴折痕'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={state.surfacePreference === value}
+                onClick={() => setManualSurfacePreference(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="manual-plane-panel__scope">引导框只是大致位置；接缝会在 ±{state.surfaceBandMm.toFixed(0)}mm 内寻找较短收腰或折痕。</p>
+        </details>
+      )}
+
+      {isSurface && state.phase === 'previewReady' && state.surfaceResult && (
+        <div className="manual-plane-panel__surface-result" role="status">
+          <strong>闭环与双侧封口已通过</strong>
+          <span>
+            {state.surfaceResult.metrics.boundaryVertices} 点 ·
+            接缝 {state.surfaceResult.metrics.seamLengthMm.toFixed(1)}mm ·
+            封口偏差 {state.surfaceResult.metrics.maxCapDeviationMm.toFixed(2)}mm
+          </span>
+          <span>
+            A/B 开放边 {state.surfaceResult.partA.boundaryEdges}/{state.surfaceResult.partB.boundaryEdges} ·
+            {state.durationMs?.toFixed(0) ?? '—'}ms
+          </span>
+        </div>
+      )}
 
       {running && (
         <div className="manual-plane-panel__running" role="status">
           <i />
           <div>
-            <strong>正在执行真实切割</strong>
+            <strong>{state.phase === 'previewing' ? '正在搜索曲面闭环' : '正在执行真实切割'}</strong>
             <span>{state.progress || '处理中…'}</span>
           </div>
         </div>
@@ -236,12 +322,12 @@ export function ManualPlaneSplitPanel() {
           className="primary"
           type="button"
           disabled={running || stale}
-          onClick={confirmManualPlaneSplit}
+          onClick={runPrimary}
         >
-          {running ? '切割中…' : state.phase === 'error' ? '调整后重试' : '确认切割'}
+          {primaryText}
         </button>
       </footer>
-      <small className="manual-plane-panel__hint">视口：拖动三轴控件 · 右键旋转视角 · 中键平移 · Esc 取消切割</small>
+      <small className="manual-plane-panel__hint">视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消</small>
     </section>
   );
 }

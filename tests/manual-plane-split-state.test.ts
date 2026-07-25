@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PlaneSplitRunner, type PlaneSplitWorkerLike } from '../src/split/plane-split-runner';
 import type { PlaneSplitReply, PlaneSplitRequest } from '../src/split/plane-split-protocol';
+import { SurfaceCutRunner, type SurfaceCutWorkerLike } from '../src/split/surface-cut-runner';
+import type { SurfaceCutReply, SurfaceCutRequest } from '../src/split/surface-cut-protocol';
 import {
   _injectPlaneSplitRunner,
+  _injectSurfaceCutRunner,
   cancelManualPlaneSplit,
   confirmManualPlaneSplit,
+  confirmManualSurfaceSplit,
+  previewManualSurfaceSplit,
   setManualPlaneAxis,
   startManualPlaneSplit,
   useManualPlaneSplit,
@@ -60,9 +65,66 @@ class ImmediateSplitWorker implements PlaneSplitWorkerLike {
   terminate() {}
 }
 
+class ImmediateSurfaceWorker implements SurfaceCutWorkerLike {
+  onmessage: ((event: { data: SurfaceCutReply }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  postMessage(request: SurfaceCutRequest) {
+    const positionsA = new Float32Array([
+      0, 0, 0, 10, 0, 0, 0, 10, 0,
+      0, 0, 0, 0, 10, 0, 0, 0, 10,
+    ]);
+    const positionsB = new Float32Array([
+      0, 0, 0, -10, 0, 0, 0, -10, 0,
+      0, 0, 0, 0, -10, 0, 0, 0, -10,
+    ]);
+    queueMicrotask(() => this.onmessage?.({
+      data: {
+        t: 'result',
+        requestId: request.requestId,
+        durationMs: 7,
+        result: {
+          status: 'ready',
+          partA: {
+            positions: positionsA,
+            sourceFaceCount: 1,
+            capFaceCount: 1,
+            boundaryEdges: 0,
+            dimensionsMm: [10, 10, 10],
+          },
+          partB: {
+            positions: positionsB,
+            sourceFaceCount: 1,
+            capFaceCount: 1,
+            boundaryEdges: 0,
+            dimensionsMm: [10, 10, 10],
+          },
+          seamPositions: new Float32Array([0, 0, 0, 0, 10, 0]),
+          metrics: {
+            sourceFaces: 2,
+            partAFaces: 2,
+            partBFaces: 2,
+            boundaryVertices: 3,
+            seamLengthMm: 30,
+            guideOffsetMm: 1,
+            adaptiveSpanMm: 2,
+            meanCreaseDeg: 20,
+            searchHalfWidthMm: 12,
+            maxCapDeviationMm: 0.2,
+            capWarpRatio: 0.01,
+            preference: 'balanced',
+          },
+          warnings: [],
+        },
+      },
+    }));
+  }
+  terminate() {}
+}
+
 afterEach(() => {
   cancelManualPlaneSplit();
   _injectPlaneSplitRunner(null);
+  _injectSurfaceCutRunner(null);
 });
 
 describe('manual plane split state', () => {
@@ -144,6 +206,50 @@ describe('manual plane split state', () => {
     const splitInstances = [...doc.selection].map((id) => doc.instance(id));
     expect(splitInstances).toHaveLength(2);
     expect(splitInstances.every((part) => geometryRegistry.has(part.assetId))).toBe(true);
+
+    doc.history.undo();
+    expect(doc.nodes.has(instance.id)).toBe(true);
+    expect([...doc.selection]).toEqual([instance.id]);
+  });
+
+  it('previews an arbitrary-guide surface seam, then confirms the exact A/B result into one undo step', async () => {
+    _injectSurfaceCutRunner(new SurfaceCutRunner(() => new ImmediateSurfaceWorker(), 1000));
+    const geometry = new THREE.BoxGeometry(20, 20, 20);
+    const asset = dispatch((scene) => scene.addAsset({
+      name: '曲面源模型',
+      source: 'import',
+      state: 'ready',
+      meta: {
+        faces: 12,
+        vertices: 8,
+        bbox: { min: [-10, -10, -10], max: [10, 10, 10] },
+        unitChoice: 'mm',
+        watertight: true,
+        degenerate: false,
+      },
+    }));
+    geometryRegistry.set(asset.id, geometry);
+    const instance = dispatch((scene) => scene.placeInstance(asset.id));
+    const historyBefore = doc.history.length;
+
+    expect(startManualPlaneSplit(instance.id, 'surface')).toBe(true);
+    setManualPlaneAxis('x');
+    expect(previewManualSurfaceSplit()).toBe(true);
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(useManualPlaneSplit.getState()).toMatchObject({
+      phase: 'previewReady',
+      cutKind: 'surface',
+      durationMs: 7,
+    });
+    expect(confirmManualSurfaceSplit()).toBe(true);
+    expect(doc.history.length).toBe(historyBefore + 1);
+    expect(doc.nodes.has(instance.id)).toBe(false);
+    const parts = [...doc.selection].map((id) => doc.instance(id));
+    expect(parts).toHaveLength(2);
+    expect(parts.every((part) => {
+      const split = doc.assets.get(part.assetId)?.genParams?.split as { kind?: string } | undefined;
+      return split?.kind === 'surface_adaptive_cut';
+    })).toBe(true);
 
     doc.history.undo();
     expect(doc.nodes.has(instance.id)).toBe(true);

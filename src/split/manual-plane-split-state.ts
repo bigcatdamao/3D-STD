@@ -9,18 +9,28 @@ import { worldBBoxOfInstance } from '../viewport/gizmo-math';
 import { closePlaneCutPreview } from './plane-cut-state';
 import type { PlaneEquation, PlaneSplitPart, PlaneSplitResult } from './plane-split-core';
 import { PlaneSplitRunner, type PlaneSplitWorkerLike } from './plane-split-runner';
+import type {
+  SurfaceCutPart,
+  SurfaceCutPreference,
+  SurfaceCutResult,
+} from './surface-cut-core';
+import { SurfaceCutRunner, type SurfaceCutWorkerLike } from './surface-cut-runner';
 
 export type ManualPlaneMode = 'translate' | 'rotate' | 'scale';
 export type ManualPlaneAxis = 'x' | 'y' | 'z' | 'custom';
+export type ManualSplitKind = 'plane' | 'surface';
+export type SurfaceCutReadyResult = Extract<SurfaceCutResult, { status: 'ready' }>;
 
 export interface ManualPlaneSplitState {
-  phase: 'idle' | 'editing' | 'running' | 'error';
+  phase: 'idle' | 'editing' | 'previewing' | 'previewReady' | 'running' | 'error';
+  cutKind: ManualSplitKind;
   instanceId: string | null;
   sourceAssetId: string | null;
   sourceEditVersion: number;
   position: Vec3;
   rotation: Vec3;
   size: [number, number];
+  sizeLinked: boolean;
   bounds: { min: Vec3; max: Vec3 } | null;
   mode: ManualPlaneMode;
   axis: ManualPlaneAxis;
@@ -28,16 +38,21 @@ export interface ManualPlaneSplitState {
   error: string | null;
   errorCode: string | null;
   durationMs: number | null;
+  surfaceBandMm: number;
+  surfacePreference: SurfaceCutPreference;
+  surfaceResult: SurfaceCutReadyResult | null;
 }
 
 const initialState: ManualPlaneSplitState = {
   phase: 'idle',
+  cutKind: 'plane',
   instanceId: null,
   sourceAssetId: null,
   sourceEditVersion: -1,
   position: [0, 0, 0],
   rotation: [0, 0, 0],
   size: [100, 100],
+  sizeLinked: true,
   bounds: null,
   mode: 'translate',
   axis: 'z',
@@ -45,6 +60,9 @@ const initialState: ManualPlaneSplitState = {
   error: null,
   errorCode: null,
   durationMs: null,
+  surfaceBandMm: 12,
+  surfacePreference: 'balanced',
+  surfaceResult: null,
 };
 
 export const useManualPlaneSplit = create<ManualPlaneSplitState>()(() => initialState);
@@ -60,6 +78,7 @@ export function useManualPlaneSplitSnapshot(): ManualPlaneSplitState {
 }
 
 let runner: PlaneSplitRunner | null = null;
+let surfaceRunner: SurfaceCutRunner | null = null;
 
 function getRunner(): PlaneSplitRunner | null {
   if (runner) return runner;
@@ -71,9 +90,24 @@ function getRunner(): PlaneSplitRunner | null {
   return runner;
 }
 
+function getSurfaceRunner(): SurfaceCutRunner | null {
+  if (surfaceRunner) return surfaceRunner;
+  if (typeof Worker === 'undefined') return null;
+  surfaceRunner = new SurfaceCutRunner(() => new Worker(
+    new URL('./surface-cut.worker.ts', import.meta.url),
+    { type: 'module' },
+  ) as unknown as SurfaceCutWorkerLike);
+  return surfaceRunner;
+}
+
 export function _injectPlaneSplitRunner(next: PlaneSplitRunner | null): void {
   runner?.cancel();
   runner = next;
+}
+
+export function _injectSurfaceCutRunner(next: SurfaceCutRunner | null): void {
+  surfaceRunner?.cancel();
+  surfaceRunner = next;
 }
 
 function normalizedDeg(value: number): number {
@@ -100,7 +134,7 @@ export function manualPlaneSplitIsStale(): boolean {
   );
 }
 
-export function startManualPlaneSplit(instanceId: string): boolean {
+export function startManualPlaneSplit(instanceId: string, cutKind: ManualSplitKind = 'plane'): boolean {
   const instance = doc.nodes.get(instanceId);
   if (
     !instance
@@ -109,6 +143,7 @@ export function startManualPlaneSplit(instanceId: string): boolean {
     || !geometryRegistry.has(instance.assetId)
   ) return false;
   runner?.cancel();
+  surfaceRunner?.cancel();
   closePlaneCutPreview();
   const world = worldBBoxOfInstance(instance.transform, doc.assets.get(instance.assetId)!.meta.bbox);
   const center = world.getCenter(new THREE.Vector3());
@@ -117,18 +152,21 @@ export function startManualPlaneSplit(instanceId: string): boolean {
   useManualPlaneSplit.setState({
     ...initialState,
     phase: 'editing',
+    cutKind,
     instanceId,
     sourceAssetId: instance.assetId,
     sourceEditVersion: doc.editVersion,
     position: [center.x, center.y, center.z],
     rotation: [0, 0, 0],
     size: [visualSize, visualSize],
+    sizeLinked: true,
     bounds: {
       min: [world.min.x, world.min.y, world.min.z],
       max: [world.max.x, world.max.y, world.max.z],
     },
     mode: 'translate',
     axis: 'z',
+    surfaceBandMm: Math.max(4, Math.min(40, visualSize * 0.12)),
   }, true);
   dispatch((scene) => scene.select([instanceId]));
   const pad = visualSize * 0.08;
@@ -142,49 +180,87 @@ export function startManualPlaneSplit(instanceId: string): boolean {
 
 export function cancelManualPlaneSplit(): void {
   runner?.cancel();
+  surfaceRunner?.cancel();
   useManualPlaneSplit.setState(initialState, true);
+}
+
+function canEdit(state: ManualPlaneSplitState): boolean {
+  return state.phase === 'editing' || state.phase === 'error' || state.phase === 'previewReady';
+}
+
+function editablePatch(patch: Partial<ManualPlaneSplitState>): void {
+  useManualPlaneSplit.setState({
+    ...patch,
+    phase: 'editing',
+    progress: '',
+    error: null,
+    errorCode: null,
+    durationMs: null,
+    surfaceResult: null,
+  });
+}
+
+export function setManualSplitKind(cutKind: ManualSplitKind): void {
+  const state = useManualPlaneSplit.getState();
+  if (state.phase === 'idle' || state.phase === 'running' || state.phase === 'previewing') return;
+  runner?.cancel();
+  surfaceRunner?.cancel();
+  editablePatch({ cutKind, mode: 'translate' });
 }
 
 export function setManualPlaneMode(mode: ManualPlaneMode): void {
   const state = useManualPlaneSplit.getState();
-  if (state.phase === 'editing' || state.phase === 'error') {
-    useManualPlaneSplit.setState({ mode, phase: 'editing', error: null, errorCode: null });
-  }
+  if (!canEdit(state)) return;
+  useManualPlaneSplit.setState({
+    mode,
+    ...(state.phase === 'error'
+      ? { phase: 'editing' as const, error: null, errorCode: null }
+      : {}),
+  });
 }
 
 export function setManualPlanePosition(position: Vec3): void {
   const state = useManualPlaneSplit.getState();
-  if (state.phase !== 'editing' && state.phase !== 'error') return;
-  useManualPlaneSplit.setState({
+  if (!canEdit(state)) return;
+  editablePatch({
     position: cloneVec3(position),
-    phase: 'editing',
     axis: state.axis,
-    error: null,
-    errorCode: null,
   });
 }
 
 export function setManualPlaneRotation(rotation: Vec3, axis: ManualPlaneAxis = 'custom'): void {
   const state = useManualPlaneSplit.getState();
-  if (state.phase !== 'editing' && state.phase !== 'error') return;
-  useManualPlaneSplit.setState({
+  if (!canEdit(state)) return;
+  editablePatch({
     rotation: rotation.map(normalizedDeg) as Vec3,
-    phase: 'editing',
     axis,
-    error: null,
-    errorCode: null,
   });
 }
 
 export function setManualPlaneSize(size: [number, number]): void {
   const state = useManualPlaneSplit.getState();
-  if (state.phase !== 'editing' && state.phase !== 'error') return;
-  useManualPlaneSplit.setState({
+  if (!canEdit(state)) return;
+  editablePatch({
     size: [Math.max(10, size[0]), Math.max(10, size[1])],
-    phase: 'editing',
-    error: null,
-    errorCode: null,
   });
+}
+
+export function setManualPlaneSizeLinked(sizeLinked: boolean): void {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state)) return;
+  useManualPlaneSplit.setState({ sizeLinked });
+}
+
+export function setManualSurfaceBandMm(surfaceBandMm: number): void {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state)) return;
+  editablePatch({ surfaceBandMm: Math.max(1, Math.min(200, surfaceBandMm)) });
+}
+
+export function setManualSurfacePreference(surfacePreference: SurfaceCutPreference): void {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state)) return;
+  editablePatch({ surfacePreference });
 }
 
 export function setManualPlaneAxis(axis: Exclude<ManualPlaneAxis, 'custom'>): void {
@@ -234,6 +310,23 @@ export function worldPlaneToAssetPlane(
   };
 }
 
+export function manualGuidePlaneWorld(position: Vec3, rotation: Vec3): {
+  origin: Vec3;
+  normal: Vec3;
+} {
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(rotation[0]),
+    THREE.MathUtils.degToRad(rotation[1]),
+    THREE.MathUtils.degToRad(rotation[2]),
+    'XYZ',
+  );
+  const normal = new THREE.Vector3(0, 0, 1).applyEuler(euler).normalize();
+  return {
+    origin: cloneVec3(position),
+    normal: [normal.x, normal.y, normal.z],
+  };
+}
+
 function copyGeometry(assetId: string): { positions: ArrayBuffer; index: ArrayBuffer | null } | null {
   const geometry = geometryRegistry.get(assetId);
   const attribute = geometry?.getAttribute('position');
@@ -260,6 +353,27 @@ function geometryFromPart(part: PlaneSplitPart): THREE.BufferGeometry {
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
+}
+
+function geometryFromSurfacePart(part: SurfaceCutPart): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(part.positions, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function boundsOfPositions(positions: Float32Array): { min: Vec3; max: Vec3 } {
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      min[axis] = Math.min(min[axis], positions[offset + axis]);
+      max[axis] = Math.max(max[axis], positions[offset + axis]);
+    }
+  }
+  return { min, max };
 }
 
 function derivedAsset(
@@ -298,6 +412,52 @@ function derivedAsset(
   };
 }
 
+function derivedSurfaceAsset(
+  source: Asset,
+  part: SurfaceCutPart,
+  suffix: 'A' | 'B',
+  createdAt: number,
+  interfaceId: string,
+  guide: { origin: Vec3; normal: Vec3 },
+  searchHalfWidthMm: number,
+  preference: SurfaceCutPreference,
+  metrics: SurfaceCutReadyResult['metrics'],
+): Omit<Asset, 'id'> {
+  const bounds = boundsOfPositions(part.positions);
+  return {
+    name: `${source.name} · ${suffix}`,
+    source: source.source,
+    state: 'ready',
+    meta: {
+      faces: part.positions.length / 9,
+      vertices: part.positions.length / 3,
+      bbox: bounds,
+      unitChoice: source.meta.unitChoice,
+      watertight: part.boundaryEdges === 0,
+      degenerate: false,
+      createdAt,
+    },
+    genParams: {
+      ...(source.genParams ?? {}),
+      split: {
+        kind: 'surface_adaptive_cut',
+        fromAssetId: source.id,
+        part: suffix,
+        createdAt,
+        sharedInterfaceId: interfaceId,
+        guide,
+        searchHalfWidthMm,
+        preference,
+        boundaryVertices: metrics.boundaryVertices,
+        seamLengthMm: metrics.seamLengthMm,
+        capFaceCount: part.capFaceCount,
+        maxCapDeviationMm: metrics.maxCapDeviationMm,
+        capWarpRatio: metrics.capWarpRatio,
+      },
+    },
+  };
+}
+
 function resultStillCurrent(
   instanceId: string,
   sourceAssetId: string,
@@ -305,6 +465,7 @@ function resultStillCurrent(
 ): boolean {
   const state = useManualPlaneSplit.getState();
   return state.phase === 'running'
+    && state.cutKind === 'plane'
     && state.instanceId === instanceId
     && state.sourceAssetId === sourceAssetId
     && state.sourceEditVersion === sourceEditVersion
@@ -355,10 +516,193 @@ function applySplitResult(
   return true;
 }
 
+function surfacePreviewStillCurrent(
+  instanceId: string,
+  sourceAssetId: string,
+  sourceEditVersion: number,
+): boolean {
+  const state = useManualPlaneSplit.getState();
+  return state.phase === 'previewing'
+    && state.cutKind === 'surface'
+    && state.instanceId === instanceId
+    && state.sourceAssetId === sourceAssetId
+    && state.sourceEditVersion === sourceEditVersion
+    && !manualPlaneSplitIsStale();
+}
+
+export function previewManualSurfaceSplit(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || !state.instanceId
+    || !state.sourceAssetId
+    || manualPlaneSplitIsStale()
+  ) return false;
+  const instance = doc.nodes.get(state.instanceId);
+  const geometry = copyGeometry(state.sourceAssetId);
+  const activeRunner = getSurfaceRunner();
+  if (!instance || instance.kind !== 'instance' || !geometry || !activeRunner) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      surfaceResult: null,
+      error: '当前环境无法启动曲面切割 Worker，源模型保持不变',
+      errorCode: 'worker_unavailable',
+    });
+    return false;
+  }
+  const guide = manualGuidePlaneWorld(state.position, state.rotation);
+  const instanceId = state.instanceId;
+  const sourceAssetId = state.sourceAssetId;
+  const sourceEditVersion = state.sourceEditVersion;
+  useManualPlaneSplit.setState({
+    phase: 'previewing',
+    progress: '构建表面邻接图',
+    error: null,
+    errorCode: null,
+    durationMs: null,
+    surfaceResult: null,
+  });
+  const started = activeRunner.run({
+    assetId: sourceAssetId,
+    transform: instance.transform,
+    guideOriginWorld: guide.origin,
+    guideNormalWorld: guide.normal,
+    searchHalfWidthMm: state.surfaceBandMm,
+    preference: state.surfacePreference,
+  }, () => geometry, {
+    onProgress: (progress) => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({ progress });
+      }
+    },
+    onResult: (result, durationMs) => {
+      if (!surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) return;
+      if (result.status === 'ready') {
+        useManualPlaneSplit.setState({
+          phase: 'previewReady',
+          progress: '',
+          surfaceResult: result,
+          durationMs,
+          error: null,
+          errorCode: null,
+        });
+      } else {
+        useManualPlaneSplit.setState({
+          phase: 'error',
+          progress: '',
+          surfaceResult: null,
+          durationMs,
+          error: result.message,
+          errorCode: result.code,
+        });
+      }
+    },
+    onError: (message) => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({
+          phase: 'error',
+          progress: '',
+          surfaceResult: null,
+          error: message,
+          errorCode: 'worker_failed',
+        });
+      }
+    },
+    onCancelled: () => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({
+          phase: 'editing',
+          progress: '',
+          surfaceResult: null,
+          error: null,
+          errorCode: null,
+        });
+      }
+    },
+  });
+  if (!started) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      progress: '',
+      surfaceResult: null,
+      error: '无法读取当前模型几何，曲面接缝预览未启动',
+      errorCode: 'geometry_missing',
+    });
+  }
+  return started;
+}
+
+export function confirmManualSurfaceSplit(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    state.phase !== 'previewReady'
+    || state.cutKind !== 'surface'
+    || !state.surfaceResult
+    || !state.instanceId
+    || !state.sourceAssetId
+    || manualPlaneSplitIsStale()
+  ) return false;
+  const source = doc.assets.get(state.sourceAssetId);
+  if (!source) return false;
+  const result = state.surfaceResult;
+  const guide = manualGuidePlaneWorld(state.position, state.rotation);
+  const createdAt = Date.now();
+  const interfaceId = `surface_if_${createdAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const geometryA = geometryFromSurfacePart(result.partA);
+  const geometryB = geometryFromSurfacePart(result.partB);
+  const split = dispatch((scene) => scene.splitInstanceWithDerivedParts(
+    state.instanceId!,
+    [
+      derivedSurfaceAsset(
+        source,
+        result.partA,
+        'A',
+        createdAt,
+        interfaceId,
+        guide,
+        state.surfaceBandMm,
+        state.surfacePreference,
+        result.metrics,
+      ),
+      derivedSurfaceAsset(
+        source,
+        result.partB,
+        'B',
+        createdAt,
+        interfaceId,
+        guide,
+        state.surfaceBandMm,
+        state.surfacePreference,
+        result.metrics,
+      ),
+    ],
+    `曲面切割 · ${source.name}`,
+  ));
+  geometryRegistry.set(split.assets[0].id, geometryA);
+  geometryRegistry.set(split.assets[1].id, geometryB);
+  const thumbnailA = renderThumbnail(geometryA);
+  const thumbnailB = renderThumbnail(geometryB);
+  if (thumbnailA) thumbRegistry.set(split.assets[0].id, thumbnailA);
+  if (thumbnailB) thumbRegistry.set(split.assets[1].id, thumbnailB);
+  useManualPlaneSplit.setState(initialState, true);
+  useUi.getState().bump();
+  useUi.getState().setToast(
+    `曲面切割完成：A/B 已生成 · ${result.metrics.boundaryVertices} 点闭合接缝 · ${state.durationMs?.toFixed(0) ?? '—'} ms`,
+    {
+      label: '撤销',
+      run: () => dispatch((scene) => scene.history.undo()),
+    },
+  );
+  if (typeof Worker !== 'undefined') setTimeout(() => runPrintCheck(), 0);
+  return true;
+}
+
 export function confirmManualPlaneSplit(): boolean {
   const state = useManualPlaneSplit.getState();
   if (
     (state.phase !== 'editing' && state.phase !== 'error')
+    || state.cutKind !== 'plane'
     || !state.instanceId
     || !state.sourceAssetId
     || manualPlaneSplitIsStale()

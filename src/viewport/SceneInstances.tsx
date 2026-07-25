@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { InstanceNode } from '../kernel/types';
 import { doc, geometryRegistry, meshRegistry, useUi } from '../state/store';
 import { planeCutPreviewIsStale, usePlaneCutPreview } from '../split/plane-cut-state';
+import { manualPlaneSplitIsStale, useManualPlaneSplit } from '../split/manual-plane-split-state';
 
 const SELECT_OUTLINE = '#ffb454';
 const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#e8a15d'];
@@ -105,6 +106,12 @@ export function SceneInstances() {
   const planePreviewInstanceId = usePlaneCutPreview((s) => s.instanceId);
   const planePreviewPhase = usePlaneCutPreview((s) => s.phase);
   const hasFreshPlanePreview = planePreviewPhase === 'ready' && !planeCutPreviewIsStale();
+  const manualSplitKind = useManualPlaneSplit((s) => s.cutKind);
+  const manualSplitPhase = useManualPlaneSplit((s) => s.phase);
+  const manualSplitInstanceId = useManualPlaneSplit((s) => s.instanceId);
+  const hasFreshSurfacePreview = manualSplitKind === 'surface'
+    && manualSplitPhase === 'previewReady'
+    && !manualPlaneSplitIsStale();
   const nodes = [...doc.nodes.values()].filter(
     (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
   );
@@ -117,7 +124,8 @@ export function SceneInstances() {
           selected={doc.selection.has(n.id)}
           locked={doc.effectiveLocked(n.id)}
           histHl={!!histHover?.includes(n.id)}
-          planePreview={hasFreshPlanePreview && planePreviewInstanceId === n.id}
+          planePreview={(hasFreshPlanePreview && planePreviewInstanceId === n.id)
+            || (hasFreshSurfacePreview && manualSplitInstanceId === n.id)}
         />
       ))}
     </group>

@@ -21,7 +21,11 @@ export function ManualPlaneCutManipulator() {
   const position = useManualPlaneSplit((state) => state.position);
   const rotation = useManualPlaneSplit((state) => state.rotation);
   const size = useManualPlaneSplit((state) => state.size);
+  const sizeLinked = useManualPlaneSplit((state) => state.sizeLinked);
   const mode = useManualPlaneSplit((state) => state.mode);
+  const cutKind = useManualPlaneSplit((state) => state.cutKind);
+  const surfaceBandMm = useManualPlaneSplit((state) => state.surfaceBandMm);
+  const showGuide = cutKind !== 'surface' || phase !== 'previewReady';
   const group = useRef<THREE.Group>(null!);
   const materialFront = useMemo(() => new THREE.MeshBasicMaterial({
     color: '#55c9ff',
@@ -60,7 +64,15 @@ export function ManualPlaneCutManipulator() {
         THREE.MathUtils.radToDeg(object.rotation.z),
       ]);
     } else {
-      setManualPlaneSize([Math.abs(object.scale.x), Math.abs(object.scale.y)]);
+      const next: [number, number] = [Math.abs(object.scale.x), Math.abs(object.scale.y)];
+      if (!sizeLinked) {
+        setManualPlaneSize(next);
+      } else {
+        const ratioX = next[0] / Math.max(size[0], 1e-9);
+        const ratioY = next[1] / Math.max(size[1], 1e-9);
+        const factor = Math.abs(ratioX - 1) >= Math.abs(ratioY - 1) ? ratioX : ratioY;
+        setManualPlaneSize([size[0] * factor, size[1] * factor]);
+      }
     }
   };
 
@@ -85,23 +97,50 @@ export function ManualPlaneCutManipulator() {
         scale={[size[0], size[1], 1]}
         renderOrder={990}
       >
-        <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
-        <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
-        <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
-        <lineSegments renderOrder={992}>
-          <bufferGeometry>
-            <bufferAttribute
-              attach="attributes-position"
-              count={4}
-              array={new Float32Array([
-                -0.5, 0, 0.002, 0.5, 0, 0.002,
-                0, -0.5, 0.002, 0, 0.5, 0.002,
-              ])}
-              itemSize={3}
-            />
-          </bufferGeometry>
-          <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
-        </lineSegments>
+        {showGuide && cutKind === 'surface' && (
+          <>
+            <mesh scale={[1, 1, surfaceBandMm * 2]} renderOrder={987}>
+              <boxGeometry args={[1, 1, 1]} />
+              <meshBasicMaterial
+                color="#4ab7df"
+                transparent
+                opacity={0.035}
+                side={THREE.DoubleSide}
+                depthWrite={false}
+                depthTest={false}
+              />
+            </mesh>
+            <mesh position={[0, 0, surfaceBandMm]} renderOrder={988}>
+              <planeGeometry args={[1, 1]} />
+              <meshBasicMaterial color="#58caee" transparent opacity={0.075} depthWrite={false} depthTest={false} />
+            </mesh>
+            <mesh position={[0, 0, -surfaceBandMm]} renderOrder={988}>
+              <planeGeometry args={[1, 1]} />
+              <meshBasicMaterial color="#ba83df" transparent opacity={0.075} depthWrite={false} depthTest={false} />
+            </mesh>
+          </>
+        )}
+        {showGuide && (
+          <>
+            <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
+            <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
+            <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
+            <lineSegments renderOrder={992}>
+              <bufferGeometry>
+                <bufferAttribute
+                  attach="attributes-position"
+                  count={4}
+                  array={new Float32Array([
+                    -0.5, 0, 0.002, 0.5, 0, 0.002,
+                    0, -0.5, 0.002, 0, 0.5, 0.002,
+                  ])}
+                  itemSize={3}
+                />
+              </bufferGeometry>
+              <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
+            </lineSegments>
+          </>
+        )}
       </group>
     </TransformControls>
   );

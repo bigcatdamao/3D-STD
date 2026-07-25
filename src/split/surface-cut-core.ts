@@ -3,14 +3,21 @@ import type { Transform, Vec3 } from '../kernel/types';
 
 export const SURFACE_CUT_FACE_BUDGET = 80_000;
 export const SURFACE_CUT_BOUNDARY_BUDGET = 12_000;
+export const SURFACE_CUT_CAP_CONTOUR_BUDGET = 4_096;
+export type SurfaceCutPreference = 'balanced' | 'shortest' | 'crease';
 
 export interface SurfaceCutInput {
   positions: ArrayLike<number>;
   index?: ArrayLike<number> | null;
   transform: Transform;
-  axisIndex: 0 | 1 | 2;
-  guidePositionMm: number;
+  /** M1.7.8 兼容入口；新交互使用任意世界引导平面。 */
+  axisIndex?: 0 | 1 | 2;
+  guidePositionMm?: number;
+  guideOriginWorld?: Vec3;
+  guideNormalWorld?: Vec3;
   searchHalfWidthMm: number;
+  preference?: SurfaceCutPreference;
+  maxCapWarpRatio?: number;
   faceBudget?: number;
   boundaryBudget?: number;
 }
@@ -33,6 +40,9 @@ export interface SurfaceCutMetrics {
   adaptiveSpanMm: number;
   meanCreaseDeg: number;
   searchHalfWidthMm: number;
+  maxCapDeviationMm: number;
+  capWarpRatio: number;
+  preference: SurfaceCutPreference;
 }
 
 export type SurfaceCutResult =
@@ -54,6 +64,8 @@ export type SurfaceCutResult =
       | 'branching_seam'
       | 'multiple_seams'
       | 'boundary_budget'
+      | 'self_intersecting_seam'
+      | 'cap_too_warped'
       | 'cap_failed';
     message: string;
     details?: Record<string, number>;
@@ -63,8 +75,19 @@ interface Face {
   original: [number, number, number];
   welded: [number, number, number];
   normalWorld: Vec3;
-  centroidAxis: number;
+  centroidGuide: number;
   areaWorld: number;
+}
+
+interface ResolvedGuide {
+  origin: Vec3;
+  normal: Vec3;
+}
+
+interface CapTriangulation {
+  triangles: [number, number, number][];
+  maxDeviationMm: number;
+  warpRatio: number;
 }
 
 interface EdgeUse {
@@ -276,6 +299,198 @@ function boundaryEdgeCount(positions: Float32Array, epsilon: number): number {
   return [...counts.values()].filter((count) => count !== 2).length;
 }
 
+function finiteVec3(value: Vec3 | undefined): value is Vec3 {
+  return !!value && value.length === 3 && value.every(Number.isFinite);
+}
+
+function resolveGuide(input: SurfaceCutInput): ResolvedGuide | null {
+  if (finiteVec3(input.guideOriginWorld) && finiteVec3(input.guideNormalWorld)) {
+    const normal = normalize(input.guideNormalWorld);
+    return length(normal) > 1e-9
+      ? { origin: [...input.guideOriginWorld] as Vec3, normal }
+      : null;
+  }
+  if (
+    input.axisIndex !== undefined
+    && input.guidePositionMm !== undefined
+    && Number.isFinite(input.guidePositionMm)
+  ) {
+    const origin: Vec3 = [0, 0, 0];
+    const normal: Vec3 = [0, 0, 0];
+    origin[input.axisIndex] = input.guidePositionMm;
+    normal[input.axisIndex] = 1;
+    return { origin, normal };
+  }
+  return null;
+}
+
+function signedGuideDistance(point: Vec3, guide: ResolvedGuide): number {
+  return dot(subtract(point, guide.origin), guide.normal);
+}
+
+function preferencePenalty(preference: SurfaceCutPreference, smoothness: number): number {
+  if (preference === 'shortest') return 0.72 + 0.58 * smoothness;
+  if (preference === 'crease') return 0.08 + 4.92 * Math.pow(smoothness, 4);
+  return 0.18 + 2.82 * Math.pow(smoothness, 3);
+}
+
+function signedArea2(points: THREE.Vector2[]): number {
+  let area2 = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area2 += current.x * next.y - next.x * current.y;
+  }
+  return area2;
+}
+
+function orient2d(a: THREE.Vector2, b: THREE.Vector2, c: THREE.Vector2): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function onSegment2d(a: THREE.Vector2, b: THREE.Vector2, point: THREE.Vector2, epsilon: number): boolean {
+  return Math.abs(orient2d(a, b, point)) <= epsilon
+    && point.x >= Math.min(a.x, b.x) - epsilon
+    && point.x <= Math.max(a.x, b.x) + epsilon
+    && point.y >= Math.min(a.y, b.y) - epsilon
+    && point.y <= Math.max(a.y, b.y) + epsilon;
+}
+
+function segmentsIntersect2d(
+  a: THREE.Vector2,
+  b: THREE.Vector2,
+  c: THREE.Vector2,
+  d: THREE.Vector2,
+  epsilon: number,
+): boolean {
+  const abC = orient2d(a, b, c);
+  const abD = orient2d(a, b, d);
+  const cdA = orient2d(c, d, a);
+  const cdB = orient2d(c, d, b);
+  if (
+    ((abC > epsilon && abD < -epsilon) || (abC < -epsilon && abD > epsilon))
+    && ((cdA > epsilon && cdB < -epsilon) || (cdA < -epsilon && cdB > epsilon))
+  ) return true;
+  return onSegment2d(a, b, c, epsilon)
+    || onSegment2d(a, b, d, epsilon)
+    || onSegment2d(c, d, a, epsilon)
+    || onSegment2d(c, d, b, epsilon);
+}
+
+function polygonSelfIntersects(points: THREE.Vector2[], epsilon: number): boolean {
+  for (let first = 0; first < points.length; first += 1) {
+    const firstNext = (first + 1) % points.length;
+    for (let second = first + 1; second < points.length; second += 1) {
+      const secondNext = (second + 1) % points.length;
+      if (
+        first === second
+        || firstNext === second
+        || secondNext === first
+        || (first === 0 && secondNext === 0)
+      ) continue;
+      if (segmentsIntersect2d(
+        points[first],
+        points[firstNext],
+        points[second],
+        points[secondNext],
+        epsilon,
+      )) return true;
+    }
+  }
+  return false;
+}
+
+function newellNormal(points: Vec3[]): Vec3 {
+  const normal: Vec3 = [0, 0, 0];
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    normal[0] += (current[1] - next[1]) * (current[2] + next[2]);
+    normal[1] += (current[2] - next[2]) * (current[0] + next[0]);
+    normal[2] += (current[0] - next[0]) * (current[1] + next[1]);
+  }
+  return normalize(normal);
+}
+
+function triangulateCap(
+  loop: number[],
+  weldedWorld: Vec3[],
+  maxWarpRatio: number,
+): CapTriangulation | Extract<SurfaceCutResult, { status: 'unsupported' }> {
+  if (loop.length > SURFACE_CUT_CAP_CONTOUR_BUDGET) {
+    return {
+      status: 'unsupported',
+      code: 'boundary_budget',
+      message: `接缝含 ${loop.length.toLocaleString()} 个顶点，超过可靠封口 ${SURFACE_CUT_CAP_CONTOUR_BUDGET.toLocaleString()} 点预算`,
+      details: { boundaryVertices: loop.length, capContourBudget: SURFACE_CUT_CAP_CONTOUR_BUDGET },
+    };
+  }
+  const world = loop.map((vertex) => weldedWorld[vertex]);
+  const center = world.reduce<Vec3>((sum, point) => [
+    sum[0] + point[0],
+    sum[1] + point[1],
+    sum[2] + point[2],
+  ], [0, 0, 0]).map((value) => value / world.length) as Vec3;
+  const planeNormal = newellNormal(world);
+  if (length(planeNormal) <= 1e-9) {
+    return {
+      status: 'unsupported',
+      code: 'cap_failed',
+      message: '接缝无法建立稳定的封口投影平面',
+    };
+  }
+  const helper: Vec3 = Math.abs(planeNormal[2]) < 0.82 ? [0, 0, 1] : [0, 1, 0];
+  const tangent = normalize(cross(helper, planeNormal));
+  const bitangent = normalize(cross(planeNormal, tangent));
+  const contour = world.map((point) => {
+    const relative = subtract(point, center);
+    return new THREE.Vector2(dot(relative, tangent), dot(relative, bitangent));
+  });
+  const area2 = signedArea2(contour);
+  const minX = Math.min(...contour.map((point) => point.x));
+  const maxX = Math.max(...contour.map((point) => point.x));
+  const minY = Math.min(...contour.map((point) => point.y));
+  const maxY = Math.max(...contour.map((point) => point.y));
+  const diagonal = Math.max(Math.hypot(maxX - minX, maxY - minY), 1e-6);
+  const epsilon2d = Math.max(1e-7, diagonal * 1e-8);
+  if (Math.abs(area2) <= epsilon2d * epsilon2d || polygonSelfIntersects(contour, epsilon2d)) {
+    return {
+      status: 'unsupported',
+      code: 'self_intersecting_seam',
+      message: '接缝投影发生自交或面积退化，不能生成可靠封口',
+    };
+  }
+  const maxDeviationMm = Math.max(...world.map((point) => Math.abs(dot(subtract(point, center), planeNormal))));
+  const warpRatio = maxDeviationMm / diagonal;
+  if (warpRatio > maxWarpRatio) {
+    return {
+      status: 'unsupported',
+      code: 'cap_too_warped',
+      message: `接缝扭曲过大（${(warpRatio * 100).toFixed(1)}%），请缩小吸附范围或调整引导方向`,
+      details: { maxDeviationMm, warpRatio, maxWarpRatio },
+    };
+  }
+  const rawTriangles = THREE.ShapeUtils.triangulateShape(
+    contour.map((point) => point.clone()),
+    [],
+  );
+  if (rawTriangles.length !== loop.length - 2) {
+    return {
+      status: 'unsupported',
+      code: 'cap_failed',
+      message: '接缝约束三角化不完整，已拒绝生成可能开裂的封口',
+      details: { expectedFaces: loop.length - 2, actualFaces: rawTriangles.length },
+    };
+  }
+  const polygonSign = Math.sign(area2);
+  const triangles = rawTriangles.map(([a, b, c]) => (
+    Math.sign(orient2d(contour[a], contour[b], contour[c])) === polygonSign
+      ? [a, b, c] as [number, number, number]
+      : [a, c, b] as [number, number, number]
+  ));
+  return { triangles, maxDeviationMm, warpRatio };
+}
+
 function unsupported(
   code: Extract<SurfaceCutResult, { status: 'unsupported' }>['code'],
   message: string,
@@ -285,9 +500,9 @@ function unsupported(
 }
 
 /**
- * 以轴向平面为搜索中心，对封闭流形的三角面双图做 s-t 最小割。
+ * 以任意世界引导平面为搜索中心，对封闭流形的三角面双图做 s-t 最小割。
  * 边界沿现有网格边走，并可在带宽内偏移到更短、折角更明显且网格不过密的位置。
- * 首版只接受单一无分叉闭环；两侧用边界扇形封口并再次做拓扑闭合验证。
+ * 只接受单一无分叉闭环；两侧共享同一约束三角化封口并再次做拓扑闭合验证。
  */
 export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResult {
   const vertexCount = Math.floor(input.positions.length / 3);
@@ -303,6 +518,10 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
   }
   const searchHalfWidthMm = Math.max(0.1, Number(input.searchHalfWidthMm));
   if (!Number.isFinite(searchHalfWidthMm)) return unsupported('invalid_geometry', '表面吸附范围无效');
+  const guide = resolveGuide(input);
+  if (!guide) return unsupported('invalid_geometry', '曲面切割引导平面无效');
+  const preference = input.preference ?? 'balanced';
+  const maxCapWarpRatio = clamp(input.maxCapWarpRatio ?? 0.12, 0.01, 0.25);
 
   const localPoints: Vec3[] = [];
   const localMin: Vec3 = [Infinity, Infinity, Infinity];
@@ -359,7 +578,11 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
       original,
       welded,
       normalWorld: normalize(normalRaw),
-      centroidAxis: (world[0][input.axisIndex] + world[1][input.axisIndex] + world[2][input.axisIndex]) / 3,
+      centroidGuide: (
+        signedGuideDistance(world[0], guide)
+        + signedGuideDistance(world[1], guide)
+        + signedGuideDistance(world[2], guide)
+      ) / 3,
       areaWorld: twiceArea / 2,
     });
     for (const [fromCorner, toCorner] of [[0, 1], [1, 2], [2, 0]] as const) {
@@ -430,13 +653,15 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     const normalDot = clamp(dot(faceA.normalWorld, faceB.normalWorld), -1, 1);
     const creaseDeg = Math.acos(normalDot) * 180 / Math.PI;
     const smoothness = (normalDot + 1) / 2;
-    const midpointAxis = (worldA[input.axisIndex] + worldB[input.axisIndex]) / 2;
-    const guideRatio = Math.abs(midpointAxis - input.guidePositionMm) / searchHalfWidthMm;
+    const midpointGuide = (
+      signedGuideDistance(worldA, guide) + signedGuideDistance(worldB, guide)
+    ) / 2;
+    const guideRatio = Math.abs(midpointGuide) / searchHalfWidthMm;
     const guidePenalty = 1 + Math.pow(guideRatio, 2) * 4;
     const localArea = Math.max(Math.min(faceA.areaWorld, faceB.areaWorld), 1e-9);
     const densityRatio = clamp(medianArea / localArea, 1, 4);
     const densityPenalty = 1 + (densityRatio - 1) * 0.35;
-    const surfacePenalty = 0.18 + 2.82 * Math.pow(smoothness, 3);
+    const surfacePenalty = preferencePenalty(preference, smoothness);
     const capacity = edgeLength * guidePenalty * densityPenalty * surfacePenalty;
     pairs.push({ edge, faceA: useA.face, faceB: useB.face, capacity, creaseDeg });
     capacitySum += capacity;
@@ -450,7 +675,7 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
   let sourceSeeds = 0;
   let sinkSeeds = 0;
   for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
-    const signed = faces[faceIndex].centroidAxis - input.guidePositionMm;
+    const signed = faces[faceIndex].centroidGuide;
     if (signed <= -searchHalfWidthMm) {
       flow.addDirected(source, faceIndex, hardCapacity);
       sourceSeeds += 1;
@@ -522,10 +747,8 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     });
   }
 
-  const centerLocal = loop.reduce<Vec3>((sum, vertex) => {
-    const point = weldedLocal[vertex];
-    return [sum[0] + point[0], sum[1] + point[1], sum[2] + point[2]];
-  }, [0, 0, 0]).map((value) => value / loop.length) as Vec3;
+  const cap = triangulateCap(loop, weldedWorld, maxCapWarpRatio);
+  if ('status' in cap) return cap;
   const partA: number[] = [];
   const partB: number[] = [];
   const appendFace = (target: number[], face: Face) => {
@@ -534,9 +757,12 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
   for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
     appendFace(labels[faceIndex] === 0 ? partA : partB, faces[faceIndex]);
   }
-  for (const [from, to] of directedBoundary) {
-    partA.push(...weldedLocal[to], ...weldedLocal[from], ...centerLocal);
-    partB.push(...weldedLocal[from], ...weldedLocal[to], ...centerLocal);
+  for (const [a, b, c] of cap.triangles) {
+    const pointA = weldedLocal[loop[a]];
+    const pointB = weldedLocal[loop[b]];
+    const pointC = weldedLocal[loop[c]];
+    partA.push(...pointA, ...pointC, ...pointB);
+    partB.push(...pointA, ...pointB, ...pointC);
   }
   const partAPositions = new Float32Array(partA);
   const partBPositions = new Float32Array(partB);
@@ -561,43 +787,48 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     const fromWorld = weldedWorld[from];
     const toWorld = weldedWorld[to];
     seamLengthMm += distance(fromWorld, toWorld);
-    seamAxisMin = Math.min(seamAxisMin, fromWorld[input.axisIndex], toWorld[input.axisIndex]);
-    seamAxisMax = Math.max(seamAxisMax, fromWorld[input.axisIndex], toWorld[input.axisIndex]);
-    seamAxisSum += (fromWorld[input.axisIndex] + toWorld[input.axisIndex]) / 2;
+    const fromGuide = signedGuideDistance(fromWorld, guide);
+    const toGuide = signedGuideDistance(toWorld, guide);
+    seamAxisMin = Math.min(seamAxisMin, fromGuide, toGuide);
+    seamAxisMax = Math.max(seamAxisMax, fromGuide, toGuide);
+    seamAxisSum += (fromGuide + toGuide) / 2;
     creaseSum += boundaryPairs[index]?.creaseDeg ?? 0;
   });
   const seamAxisMean = seamAxisSum / directedBoundary.length;
   const warnings: string[] = [
     '接缝沿现有网格边移动；低面数模型的吸附精度受拓扑分辨率限制',
-    '封口为单中心扇形临时面，只用于能力预览，尚未验证受力、装配公差或自交',
+    '封口已通过投影自交、扭曲阈值与拓扑闭合验证；尚未验证受力、装配公差或全模型自交',
   ];
   return {
     status: 'ready',
     partA: {
       positions: partAPositions,
       sourceFaceCount: facesA,
-      capFaceCount: directedBoundary.length,
+      capFaceCount: cap.triangles.length,
       boundaryEdges: boundaryA,
       dimensionsMm: dimensionsOfWorldTriangles(partAPositions, matrix),
     },
     partB: {
       positions: partBPositions,
       sourceFaceCount: faces.length - facesA,
-      capFaceCount: directedBoundary.length,
+      capFaceCount: cap.triangles.length,
       boundaryEdges: boundaryB,
       dimensionsMm: dimensionsOfWorldTriangles(partBPositions, matrix),
     },
     seamPositions,
     metrics: {
       sourceFaces: faces.length,
-      partAFaces: facesA + directedBoundary.length,
-      partBFaces: faces.length - facesA + directedBoundary.length,
+      partAFaces: facesA + cap.triangles.length,
+      partBFaces: faces.length - facesA + cap.triangles.length,
       boundaryVertices: loop.length,
       seamLengthMm,
-      guideOffsetMm: seamAxisMean - input.guidePositionMm,
+      guideOffsetMm: seamAxisMean,
       adaptiveSpanMm: seamAxisMax - seamAxisMin,
       meanCreaseDeg: creaseSum / directedBoundary.length,
       searchHalfWidthMm,
+      maxCapDeviationMm: cap.maxDeviationMm,
+      capWarpRatio: cap.warpRatio,
+      preference,
     },
     warnings,
   };

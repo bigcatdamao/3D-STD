@@ -61,10 +61,30 @@ describe('M1.7.8 表面自适应真实切割核心', () => {
     expect(result.metrics.seamLengthMm).toBeLessThan(110);
     expect(result.partA.boundaryEdges).toBe(0);
     expect(result.partB.boundaryEdges).toBe(0);
-    expect(result.partA.capFaceCount).toBe(16);
-    expect(result.partB.capFaceCount).toBe(16);
+    expect(result.partA.capFaceCount).toBe(14);
+    expect(result.partB.capFaceCount).toBe(14);
+    expect(result.metrics.maxCapDeviationMm).toBeCloseTo(0, 5);
+    expect(result.metrics.capWarpRatio).toBeCloseTo(0, 5);
     expect(result.partA.positions.length).toBeGreaterThan(0);
     expect(result.partB.positions.length).toBeGreaterThan(0);
+  });
+
+  it('任意世界引导平面会随实例旋转，不再限定世界 X/Y/Z 数值入口', () => {
+    const mesh = makeWaistPrism();
+    const result = createSurfaceAdaptiveCut({
+      ...mesh,
+      transform: { ...transform, rotation: [0, 0, 90] },
+      guideOriginWorld: [0, 0, 0],
+      guideNormalWorld: [0, 1, 0],
+      searchHalfWidthMm: 70,
+      preference: 'crease',
+    });
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.metrics.preference).toBe('crease');
+    expect(result.metrics.guideOffsetMm).toBeGreaterThan(8);
+    expect(result.partA.boundaryEdges).toBe(0);
+    expect(result.partB.boundaryEdges).toBe(0);
   });
 
   it('开口或非流形源模型直接拒绝，不生成看似成功的零件', () => {

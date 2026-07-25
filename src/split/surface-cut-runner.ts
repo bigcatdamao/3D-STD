@@ -1,10 +1,10 @@
-import type { Transform } from '../kernel/types';
+import type { Transform, Vec3 } from '../kernel/types';
 import {
   SURFACE_CUT_TIMEOUT_MS,
   type SurfaceCutReply,
   type SurfaceCutRequest,
 } from './surface-cut-protocol';
-import type { SurfaceCutResult } from './surface-cut-core';
+import type { SurfaceCutPreference, SurfaceCutResult } from './surface-cut-core';
 
 export interface SurfaceCutWorkerLike {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -16,9 +16,12 @@ export interface SurfaceCutWorkerLike {
 export interface SurfaceCutRunInput {
   assetId: string;
   transform: Transform;
-  axisIndex: 0 | 1 | 2;
-  guidePositionMm: number;
+  axisIndex?: 0 | 1 | 2;
+  guidePositionMm?: number;
+  guideOriginWorld?: Vec3;
+  guideNormalWorld?: Vec3;
   searchHalfWidthMm: number;
+  preference?: SurfaceCutPreference;
 }
 
 export interface SurfaceCutRunEvents {
@@ -81,7 +84,10 @@ export class SurfaceCutRunner {
       transform: structuredClone(input.transform),
       axisIndex: input.axisIndex,
       guidePositionMm: input.guidePositionMm,
+      guideOriginWorld: input.guideOriginWorld ? [...input.guideOriginWorld] : undefined,
+      guideNormalWorld: input.guideNormalWorld ? [...input.guideNormalWorld] : undefined,
       searchHalfWidthMm: input.searchHalfWidthMm,
+      preference: input.preference,
     } satisfies SurfaceCutRequest, transfer);
     events.onProgress('准备源网格');
     return true;
@@ -135,4 +141,3 @@ export class SurfaceCutRunner {
     this.sentAssets.clear();
   }
 }
-

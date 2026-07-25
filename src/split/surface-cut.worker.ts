@@ -33,7 +33,10 @@ self.onmessage = (event: MessageEvent<SurfaceCutRequest>) => {
       transform: request.transform,
       axisIndex: request.axisIndex,
       guidePositionMm: request.guidePositionMm,
+      guideOriginWorld: request.guideOriginWorld,
+      guideNormalWorld: request.guideNormalWorld,
       searchHalfWidthMm: request.searchHalfWidthMm,
+      preference: request.preference,
     });
     const transfer: Transferable[] = [];
     if (result.status === 'ready') {
@@ -53,4 +56,3 @@ self.onmessage = (event: MessageEvent<SurfaceCutRequest>) => {
     });
   }
 };
-

@@ -34,6 +34,7 @@ import {
   useManualPlaneSplit,
 } from '../split/manual-plane-split-state';
 import { ManualPlaneCutManipulator } from '../split/ManualPlaneCutManipulator';
+import { ManualSurfaceCutPreview } from '../split/ManualSurfaceCutPreview';
 
 function InteractionBridge() {
   const splitActive = useManualPlaneSplit((state) => state.phase !== 'idle');
@@ -242,12 +243,21 @@ function MarqueeOverlay() {
 function StatusBar() {
   useUi((s) => s.rev);
   const splitPhase = useManualPlaneSplit((state) => state.phase);
+  const splitKind = useManualPlaneSplit((state) => state.cutKind);
   const sel = doc.selection.size;
   const h = doc.history;
   if (splitPhase !== 'idle') {
+    const label = splitKind === 'surface' ? '曲面切割' : '平面切割';
+    const phaseText = splitPhase === 'running'
+      ? '正在计算真实网格'
+      : splitPhase === 'previewing'
+        ? '正在搜索表面闭环'
+        : splitPhase === 'previewReady'
+          ? '接缝预览已通过'
+          : '引导框编辑中';
     return (
-      <div className="viewport-status-bar is-cutting" title="W 移动 · E 旋转 · R 缩放 · Esc 取消平面切割">
-        <span>✂ 平面切割 · {splitPhase === 'running' ? '正在计算真实网格' : '切割框编辑中'}</span>
+      <div className="viewport-status-bar is-cutting" title="W 移动 · E 旋转 · R 缩放 · Esc 取消切割">
+        <span>✂ {label} · {phaseText}</span>
         <span className="viewport-status-bar__shortcuts">W/E/R 切换控件 · Esc 取消</span>
       </div>
     );
@@ -348,6 +358,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         <CheckHighlight />
         <PlaneCutPreview />
         <ManualPlaneCutManipulator />
+        <ManualSurfaceCutPreview />
         <RepairPreviewMesh />
         <GhostPreview />
         <Gizmo />
