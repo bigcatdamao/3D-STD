@@ -99,6 +99,7 @@ export function ManualPlaneSplitPanel() {
     bounds.max[2] - bounds.min[2],
   );
   const sizeMax = Math.max(diagonal * 3, 100);
+  const surfaceRangeMax = Math.max(10, Math.min(diagonal * 0.45, 200));
   const running = state.phase === 'running' || state.phase === 'previewing';
   const isSurface = state.cutKind === 'surface';
   const setRotationAxis = (axis: number, value: number) => {
@@ -180,8 +181,13 @@ export function ManualPlaneSplitPanel() {
       </div>
 
       <div className="manual-plane-panel__handle-help">
-        <strong>移动使用画布手柄</strong>
-        <span>按 W，直接拖动红 X、绿 Y、蓝 Z 箭头；侧栏不再重复提供位置滑杆。</span>
+        <strong>按住画布箭头即可移动</strong>
+        <span>按 W，把鼠标放到箭头上；光标变成手掌后按住拖动。箭头使用加大命中区，并始终显示在模型前方。</span>
+        <div className="manual-plane-panel__axis-legend" aria-label="移动手柄颜色">
+          <i className="is-x">X 左右</i>
+          <i className="is-y">Y 前后</i>
+          <i className="is-z">Z 上下</i>
+        </div>
         <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
       </div>
 
@@ -246,23 +252,63 @@ export function ManualPlaneSplitPanel() {
 
       {isSurface && (
         <details open>
-          <summary>表面吸附 <small>闭合接缝搜索</small></summary>
+          <summary>接缝搜索宽度 <small>不是切口厚度</small></summary>
+          <div className="manual-plane-panel__band-explainer">
+            <div>
+              <strong>允许接缝偏离中心引导面</strong>
+              <output>
+                ±{state.surfaceBandMm.toFixed(0)}mm
+                <small>总搜索宽度 {(state.surfaceBandMm * 2).toFixed(0)}mm</small>
+              </output>
+            </div>
+            <div className="manual-plane-panel__band-diagram" aria-hidden="true">
+              <span>A 侧</span>
+              <i style={{ width: `${Math.max(18, Math.min(64, 18 + state.surfaceBandMm * 1.15))}%` }}>
+                <b />
+              </i>
+              <span>B 侧</span>
+            </div>
+            <p>透明体积只是“允许程序找接缝的区域”，不会挖掉这层材料，也不会让切口变宽。</p>
+          </div>
           <div className="manual-plane-panel__fields">
             <FieldRow
-              axis="范围"
+              axis="偏移"
               value={state.surfaceBandMm}
               min={1}
-              max={Math.max(10, Math.min(diagonal * 0.45, 200))}
+              max={surfaceRangeMax}
               step={1}
               unit="mm"
               onChange={setManualSurfaceBandMm}
             />
           </div>
+          <div className="manual-plane-panel__range-presets" aria-label="接缝搜索宽度预设">
+            {([
+              [5, '精确', '紧贴引导面'],
+              [15, '标准', '推荐起点'],
+              [30, '宽松', '寻找远处收腰'],
+            ] as const).map(([value, label, hint]) => (
+              <button
+                key={value}
+                type="button"
+                disabled={value > surfaceRangeMax}
+                aria-pressed={Math.abs(state.surfaceBandMm - value) < 0.5}
+                onClick={() => setManualSurfaceBandMm(value)}
+                title={`${label}：${hint}`}
+              >
+                <strong>{label}</strong>
+                <span>±{value}mm</span>
+              </button>
+            ))}
+          </div>
+          <div className="manual-plane-panel__preference-label">
+            <strong>接缝怎么走</strong>
+            <span>只改变搜索倾向，不会自动理解角色部位</span>
+          </div>
           <div className="manual-plane-panel__preferences" aria-label="接缝偏好">
             {([
-              ['balanced', '均衡'],
-              ['shortest', '最短'],
-              ['crease', '贴折痕'],
+              ['balanced', '均衡', '兼顾距离、长度与折角'],
+              ['shortest', '最短', '优先更短的闭环'],
+              ['crease', '贴折痕', '更愿意沿明显转折边'],
             ] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -274,7 +320,19 @@ export function ManualPlaneSplitPanel() {
               </button>
             ))}
           </div>
-          <p className="manual-plane-panel__scope">引导框只是大致位置；接缝会在 ±{state.surfaceBandMm.toFixed(0)}mm 内寻找较短收腰或折痕。</p>
+          <p className="manual-plane-panel__preference-help">
+            {state.surfacePreference === 'shortest'
+              ? '最短：更容易选中附近较细的闭环，但可能避开你想保留的造型线。'
+              : state.surfacePreference === 'crease'
+                ? '贴折痕：更愿意沿网格转折明显的位置走，适合装甲边或衣物折线。'
+                : '均衡：同时考虑离引导面的距离、接缝长度和折角，建议第一次先用它。'}
+          </p>
+          <div className="manual-plane-panel__surface-steps">
+            <strong>怎么用</strong>
+            <span>① 把中心引导面移到腰部/关节附近</span>
+            <span>② 先选“标准 ±15mm”，再生成预览</span>
+            <span>③ 不理想时移动引导面或改变宽度，不要直接确认</span>
+          </div>
         </details>
       )}
 

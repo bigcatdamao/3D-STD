@@ -37,8 +37,11 @@ describe('ManualPlaneSplitPanel SSR', () => {
     expect(html).toContain('平面切割');
     expect(html).toContain('源模型保持不变');
     expect(html).toContain('切割轴');
-    expect(html).toContain('移动使用画布手柄');
-    expect(html).toContain('红 X、绿 Y、蓝 Z 箭头');
+    expect(html).toContain('按住画布箭头即可移动');
+    expect(html).toContain('箭头使用加大命中区');
+    expect(html).toContain('X 左右');
+    expect(html).toContain('Y 前后');
+    expect(html).toContain('Z 上下');
     expect(html).toContain('宽高联动');
     expect(html).toContain('切割框大小');
     expect(html).toContain('实际切割按无限平面计算');
@@ -105,7 +108,14 @@ describe('ManualPlaneSplitPanel SSR', () => {
     const html = renderToStaticMarkup(<ManualPlaneSplitPanel />);
 
     expect(html).toContain('曲面切割');
-    expect(html).toContain('表面吸附');
+    expect(html).toContain('接缝搜索宽度');
+    expect(html).toContain('不是切口厚度');
+    expect(html).toContain('总搜索宽度 32mm');
+    expect(html).toContain('不会挖掉这层材料');
+    expect(html).toContain('精确');
+    expect(html).toContain('标准');
+    expect(html).toContain('宽松');
+    expect(html).toContain('怎么用');
     expect(html).toContain('均衡');
     expect(html).toContain('最短');
     expect(html).toContain('贴折痕');

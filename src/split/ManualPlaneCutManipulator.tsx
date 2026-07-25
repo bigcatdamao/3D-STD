@@ -7,6 +7,7 @@ import {
   setManualPlaneSize,
   useManualPlaneSplit,
 } from './manual-plane-split-state';
+import { ManualCutTranslateGizmo } from './ManualCutTranslateGizmo';
 
 const PLANE_GEOMETRY = new THREE.PlaneGeometry(1, 1);
 const FRAME_GEOMETRY = new THREE.EdgesGeometry(PLANE_GEOMETRY);
@@ -76,17 +77,81 @@ export function ManualPlaneCutManipulator() {
     }
   };
 
+  const guideVisual = (
+    <>
+      {showGuide && cutKind === 'surface' && (
+        <>
+          <mesh scale={[1, 1, surfaceBandMm * 2]} renderOrder={987}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshBasicMaterial
+              color="#4ab7df"
+              transparent
+              opacity={0.035}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+          <mesh position={[0, 0, surfaceBandMm]} renderOrder={988}>
+            <planeGeometry args={[1, 1]} />
+            <meshBasicMaterial color="#58caee" transparent opacity={0.075} depthWrite={false} depthTest={false} />
+          </mesh>
+          <mesh position={[0, 0, -surfaceBandMm]} renderOrder={988}>
+            <planeGeometry args={[1, 1]} />
+            <meshBasicMaterial color="#ba83df" transparent opacity={0.075} depthWrite={false} depthTest={false} />
+          </mesh>
+        </>
+      )}
+      {showGuide && (
+        <>
+          <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
+          <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
+          <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
+          <lineSegments renderOrder={992}>
+            <bufferGeometry>
+              <bufferAttribute
+                attach="attributes-position"
+                count={4}
+                array={new Float32Array([
+                  -0.5, 0, 0.002, 0.5, 0, 0.002,
+                  0, -0.5, 0.002, 0, 0.5, 0.002,
+                ])}
+                itemSize={3}
+              />
+            </bufferGeometry>
+            <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
+          </lineSegments>
+        </>
+      )}
+    </>
+  );
+
+  if (mode === 'translate') {
+    return (
+      <>
+        <group
+          position={position}
+          rotation={radians(rotation)}
+          scale={[size[0], size[1], 1]}
+          renderOrder={990}
+        >
+          {guideVisual}
+        </group>
+        <ManualCutTranslateGizmo />
+      </>
+    );
+  }
+
   return (
     <TransformControls
       object={group}
       enabled={phase !== 'running'}
       mode={mode}
-      space={mode === 'translate' ? 'world' : 'local'}
+      space="local"
       size={0.82}
       showX
       showY
       showZ={mode !== 'scale'}
-      translationSnap={0.5}
       rotationSnap={THREE.MathUtils.degToRad(1)}
       onObjectChange={syncFromObject}
     >
@@ -97,50 +162,7 @@ export function ManualPlaneCutManipulator() {
         scale={[size[0], size[1], 1]}
         renderOrder={990}
       >
-        {showGuide && cutKind === 'surface' && (
-          <>
-            <mesh scale={[1, 1, surfaceBandMm * 2]} renderOrder={987}>
-              <boxGeometry args={[1, 1, 1]} />
-              <meshBasicMaterial
-                color="#4ab7df"
-                transparent
-                opacity={0.035}
-                side={THREE.DoubleSide}
-                depthWrite={false}
-                depthTest={false}
-              />
-            </mesh>
-            <mesh position={[0, 0, surfaceBandMm]} renderOrder={988}>
-              <planeGeometry args={[1, 1]} />
-              <meshBasicMaterial color="#58caee" transparent opacity={0.075} depthWrite={false} depthTest={false} />
-            </mesh>
-            <mesh position={[0, 0, -surfaceBandMm]} renderOrder={988}>
-              <planeGeometry args={[1, 1]} />
-              <meshBasicMaterial color="#ba83df" transparent opacity={0.075} depthWrite={false} depthTest={false} />
-            </mesh>
-          </>
-        )}
-        {showGuide && (
-          <>
-            <mesh geometry={PLANE_GEOMETRY} material={materialFront} renderOrder={990} />
-            <mesh geometry={PLANE_GEOMETRY} material={materialBack} renderOrder={990} />
-            <lineSegments geometry={FRAME_GEOMETRY} material={frameMaterial} renderOrder={991} />
-            <lineSegments renderOrder={992}>
-              <bufferGeometry>
-                <bufferAttribute
-                  attach="attributes-position"
-                  count={4}
-                  array={new Float32Array([
-                    -0.5, 0, 0.002, 0.5, 0, 0.002,
-                    0, -0.5, 0.002, 0, 0.5, 0.002,
-                  ])}
-                  itemSize={3}
-                />
-              </bufferGeometry>
-              <lineBasicMaterial color="#ffd498" transparent opacity={0.72} depthTest={false} />
-            </lineSegments>
-          </>
-        )}
+        {guideVisual}
       </group>
     </TransformControls>
   );
