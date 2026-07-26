@@ -77,13 +77,15 @@ describe('ManualPlaneSplitPanel SSR', () => {
 
     expect(html).toContain('第 1 步 · 粗定位');
     expect(html).toContain('曲面切割定位');
-    expect(html).toContain('平面只负责确定大概位置');
-    expect(html).toContain('这里不会沿平面直接切');
-    expect(html).toContain('点击生成后会发生什么');
-    expect(html).toContain('沿模型表面自动寻找一条闭合接缝');
+    expect(html).not.toContain('源对象已失效');
+    expect(html).not.toContain('平面只负责确定大概位置');
+    expect(html).not.toContain('这里不会沿平面直接切');
+    expect(html).not.toContain('按住画布箭头即可移动');
+    expect(html).not.toContain('点击生成后会发生什么');
     expect(html).toContain('高级：自动寻缝范围');
     expect(html).toContain('通常无需修改');
     expect(html).toContain('生成表面闭合接缝');
+    expect(html.indexOf('生成表面闭合接缝')).toBeLessThan(html.indexOf('高级：自动寻缝范围'));
   });
 
   it('replaces plane controls with a readable validated seam review after preview succeeds', () => {

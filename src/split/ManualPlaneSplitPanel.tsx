@@ -224,17 +224,17 @@ export function ManualPlaneSplitPanel() {
             {isSurface ? '第 1 步 · 粗定位' : '真实几何操作'}
           </span>
           <h3>{isSurface ? '曲面切割定位' : '平面切割'}</h3>
-          <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+          {!isSurface && <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>}
         </div>
         <em>{isSurface ? '1 / 2' : '1 → 2'}</em>
       </header>
 
-      <div className="manual-plane-panel__notice">
-        <strong>{isSurface ? '平面只负责确定大概位置' : '源模型保持不变'}</strong>
-        <span>{isSurface
-          ? '这里不会沿平面直接切。下一步程序会根据这个位置，自动寻找贴在模型表面的闭合接缝。'
-          : '确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。'}</span>
-      </div>
+      {!isSurface && (
+        <div className="manual-plane-panel__notice">
+          <strong>源模型保持不变</strong>
+          <span>确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。</span>
+        </div>
+      )}
 
       <div className="manual-plane-panel__axis" aria-label="切割轴预设">
         <span>切割轴</span>
@@ -257,16 +257,18 @@ export function ManualPlaneSplitPanel() {
         <ModeButton mode="scale" active={state.mode === 'scale'} shortcut="R">缩放</ModeButton>
       </div>
 
-      <div className="manual-plane-panel__handle-help">
-        <strong>按住画布箭头即可移动</strong>
-        <span>按 W，把鼠标放到箭头上；光标变成手掌后按住拖动。箭头使用加大命中区，并始终显示在模型前方。</span>
-        <div className="manual-plane-panel__axis-legend" aria-label="移动手柄颜色">
-          <i className="is-x">X 左右</i>
-          <i className="is-y">Y 前后</i>
-          <i className="is-z">Z 上下</i>
+      {!isSurface && (
+        <div className="manual-plane-panel__handle-help">
+          <strong>按住画布箭头即可移动</strong>
+          <span>按 W，把鼠标放到箭头上；光标变成手掌后按住拖动。箭头使用加大命中区，并始终显示在模型前方。</span>
+          <div className="manual-plane-panel__axis-legend" aria-label="移动手柄颜色">
+            <i className="is-x">X 左右</i>
+            <i className="is-y">Y 前后</i>
+            <i className="is-z">Z 上下</i>
+          </div>
+          <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
         </div>
-        <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
-      </div>
+      )}
 
       <details open>
         <summary>旋转 <small>XYZ 欧拉角</small></summary>
@@ -327,14 +329,45 @@ export function ManualPlaneSplitPanel() {
           : '框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。'}</p>
       </details>
 
-      {isSurface && (
-        <div className="manual-plane-panel__surface-next">
-          <strong>点击生成后会发生什么？</strong>
-          <span><b>1</b>读取切割框穿过模型的位置</span>
-          <span><b>2</b>沿模型表面自动寻找一条闭合接缝</span>
-          <span><b>3</b>隐藏平面框，切换为蓝/紫 A/B 真实预览</span>
+      {running && (
+        <div className="manual-plane-panel__running" role="status">
+          <i />
+          <div>
+            <strong>{state.phase === 'previewing' ? '正在搜索曲面闭环' : '正在执行真实切割'}</strong>
+            <span>{state.progress || '处理中…'}</span>
+          </div>
         </div>
       )}
+      {state.phase === 'error' && (
+        <div className="manual-plane-panel__error" role="alert">
+          <strong>未修改源模型</strong>
+          <span>{state.error}</span>
+          {state.errorCode && <small>错误码：{state.errorCode}</small>}
+        </div>
+      )}
+      {stale && (
+        <div className="manual-plane-panel__error" role="alert">
+          <strong>切割会话已失效</strong>
+          <span>场景在编辑期间发生变化，请取消后重新开始。</span>
+        </div>
+      )}
+
+      <footer>
+        <button type="button" disabled={running} onClick={cancelManualPlaneSplit}>取消</button>
+        <button
+          className="primary"
+          type="button"
+          disabled={running || stale}
+          onClick={runPrimary}
+        >
+          {primaryText}
+        </button>
+      </footer>
+      <small className="manual-plane-panel__hint">
+        {isSurface
+          ? '第 1 步：W/E/R 调整粗定位 · 生成后进入独立表面接缝预览'
+          : '视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消'}
+      </small>
 
       {isSurface && (
         <details className="manual-plane-panel__surface-advanced">
@@ -391,46 +424,6 @@ export function ManualPlaneSplitPanel() {
           </p>
         </details>
       )}
-
-      {running && (
-        <div className="manual-plane-panel__running" role="status">
-          <i />
-          <div>
-            <strong>{state.phase === 'previewing' ? '正在搜索曲面闭环' : '正在执行真实切割'}</strong>
-            <span>{state.progress || '处理中…'}</span>
-          </div>
-        </div>
-      )}
-      {state.phase === 'error' && (
-        <div className="manual-plane-panel__error" role="alert">
-          <strong>未修改源模型</strong>
-          <span>{state.error}</span>
-          {state.errorCode && <small>错误码：{state.errorCode}</small>}
-        </div>
-      )}
-      {stale && (
-        <div className="manual-plane-panel__error" role="alert">
-          <strong>切割会话已失效</strong>
-          <span>场景在编辑期间发生变化，请取消后重新开始。</span>
-        </div>
-      )}
-
-      <footer>
-        <button type="button" disabled={running} onClick={cancelManualPlaneSplit}>取消</button>
-        <button
-          className="primary"
-          type="button"
-          disabled={running || stale}
-          onClick={runPrimary}
-        >
-          {primaryText}
-        </button>
-      </footer>
-      <small className="manual-plane-panel__hint">
-        {isSurface
-          ? '第 1 步：W/E/R 调整粗定位 · 生成后进入独立表面接缝预览'
-          : '视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消'}
-      </small>
     </section>
   );
 }
