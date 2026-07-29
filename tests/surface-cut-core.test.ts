@@ -43,6 +43,49 @@ function makeWaistPrism() {
 }
 
 describe('M1.7.8 表面自适应真实切割核心', () => {
+  it('M1.11c 以紫色面组为拆下件 A，并沿唯一闭环为 A/B 生成同一组封口', () => {
+    const mesh = makeWaistPrism();
+    const faceCount = mesh.index.length / 3;
+    const faceLabels = new Uint8Array(faceCount);
+    // 选择左端盖与前三段侧壁，边界正好是第 3/4 个环之间的单一闭环。
+    faceLabels.fill(1, 0, 16 * 2 * 3);
+    const capStart = 16 * 2 * 6;
+    for (let side = 0; side < 16; side += 1) faceLabels[capStart + side * 2] = 1;
+    const result = createSurfaceAdaptiveCut({
+      ...mesh,
+      faceLabels,
+      transform,
+      searchHalfWidthMm: 0.1,
+    });
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.partA.sourceFaceCount).toBe(112);
+    expect(result.partB.sourceFaceCount).toBe(faceCount - 112);
+    expect(result.metrics.boundaryVertices).toBe(16);
+    expect(result.partA.capFaceCount).toBe(14);
+    expect(result.partB.capFaceCount).toBe(14);
+    expect(result.partA.boundaryEdges).toBe(0);
+    expect(result.partB.boundaryEdges).toBe(0);
+    expect(result.metrics.guideOffsetMm).toBe(0);
+    expect(result.metrics.adaptiveSpanMm).toBe(0);
+    expect(result.warnings[0]).toContain('紫色面组');
+  });
+
+  it('M1.11c 面组数量与三角面不一致时 fail-closed', () => {
+    const mesh = makeWaistPrism();
+    const result = createSurfaceAdaptiveCut({
+      ...mesh,
+      faceLabels: new Uint8Array(3),
+      transform,
+      searchHalfWidthMm: 0.1,
+    });
+    expect(result.status).toBe('unsupported');
+    if (result.status === 'unsupported') {
+      expect(result.code).toBe('invalid_geometry');
+      expect(result.message).toContain('面数不一致');
+    }
+  });
+
   it('接缝会离开引导平面，吸附到搜索带内更短的收腰环，并输出两个闭合临时网格', () => {
     const mesh = makeWaistPrism();
     const result = createSurfaceAdaptiveCut({
@@ -83,6 +126,28 @@ describe('M1.7.8 表面自适应真实切割核心', () => {
     if (result.status !== 'ready') return;
     expect(result.metrics.preference).toBe('crease');
     expect(result.metrics.guideOffsetMm).toBeGreaterThan(8);
+    expect(result.partA.boundaryEdges).toBe(0);
+    expect(result.partB.boundaryEdges).toBe(0);
+  });
+
+  it('贴面控制点闭环会把实际接缝约束在手绘线附近，而不是自动跳到远处最细腰线', () => {
+    const mesh = makeWaistPrism();
+    const guidePointsWorld = Array.from({ length: 16 }, (_, side) => {
+      const angle = (side / 16) * Math.PI * 2;
+      return [-40, Math.cos(angle) * 40, Math.sin(angle) * 40] as [number, number, number];
+    });
+    const result = createSurfaceAdaptiveCut({
+      ...mesh,
+      transform,
+      guideOriginWorld: [-40, 0, 0],
+      guideNormalWorld: [1, 0, 0],
+      guidePointsWorld,
+      searchHalfWidthMm: 24,
+    });
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.metrics.guideOffsetMm).toBeLessThan(8);
+    expect(result.metrics.boundaryVertices).toBe(16);
     expect(result.partA.boundaryEdges).toBe(0);
     expect(result.partB.boundaryEdges).toBe(0);
   });

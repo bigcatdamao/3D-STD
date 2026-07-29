@@ -30,11 +30,13 @@ self.onmessage = (event: MessageEvent<SurfaceCutRequest>) => {
     const result = createSurfaceAdaptiveCut({
       positions: geometry.positions,
       index: geometry.index,
+      faceLabels: request.faceLabels ? new Uint8Array(request.faceLabels) : undefined,
       transform: request.transform,
       axisIndex: request.axisIndex,
       guidePositionMm: request.guidePositionMm,
       guideOriginWorld: request.guideOriginWorld,
       guideNormalWorld: request.guideNormalWorld,
+      guidePointsWorld: request.guidePointsWorld,
       searchHalfWidthMm: request.searchHalfWidthMm,
       preference: request.preference,
     });

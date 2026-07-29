@@ -27,8 +27,8 @@ export function ManualSurfaceCutPreview() {
     const seamGeometry = new LineSegmentsGeometry();
     seamGeometry.setPositions(result.seamPositions);
     const seamMaterial = new LineMaterial({
-      color: '#fff1a8',
-      linewidth: 3.5,
+      color: '#79f0cc',
+      linewidth: 4,
       worldUnits: false,
       depthTest: false,
       depthWrite: false,
@@ -77,7 +77,7 @@ export function ManualSurfaceCutPreview() {
     >
       <mesh geometry={geometries.a} renderOrder={981}>
         <meshStandardMaterial
-          color="#50c8ff"
+          color="#a86cff"
           side={THREE.DoubleSide}
           roughness={0.55}
           metalness={0.05}
@@ -88,7 +88,7 @@ export function ManualSurfaceCutPreview() {
       </mesh>
       <mesh geometry={geometries.b} renderOrder={981}>
         <meshStandardMaterial
-          color="#c98ee0"
+          color="#55d0a4"
           side={THREE.DoubleSide}
           roughness={0.55}
           metalness={0.05}

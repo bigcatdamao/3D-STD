@@ -49,7 +49,7 @@ export function ManualPlaneCutManipulator() {
     depthTest: false,
   }), []);
 
-  if (phase === 'idle' || (cutKind === 'surface' && phase === 'previewReady')) return null;
+  if (phase === 'idle' || cutKind === 'surface') return null;
 
   const syncFromObject = () => {
     const object = group.current;

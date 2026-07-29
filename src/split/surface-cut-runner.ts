@@ -20,6 +20,8 @@ export interface SurfaceCutRunInput {
   guidePositionMm?: number;
   guideOriginWorld?: Vec3;
   guideNormalWorld?: Vec3;
+  guidePointsWorld?: Vec3[];
+  faceLabels?: Uint8Array;
   searchHalfWidthMm: number;
   preference?: SurfaceCutPreference;
 }
@@ -59,6 +61,7 @@ export class SurfaceCutRunner {
     if (!this.worker) this.createWorker();
     let positions: ArrayBuffer | null = null;
     let index: ArrayBuffer | null = null;
+    const faceLabels = input.faceLabels ? input.faceLabels.slice().buffer : null;
     const transfer: Transferable[] = [];
     if (!this.sentAssets.has(input.assetId)) {
       const geometry = geometryOf();
@@ -68,6 +71,7 @@ export class SurfaceCutRunner {
       transfer.push(positions);
       if (index) transfer.push(index);
     }
+    if (faceLabels) transfer.push(faceLabels);
     const requestId = `surface_cut_${(++requestSequence).toString(36)}`;
     this.active = {
       requestId,
@@ -81,11 +85,13 @@ export class SurfaceCutRunner {
       assetId: input.assetId,
       positions,
       index,
+      faceLabels,
       transform: structuredClone(input.transform),
       axisIndex: input.axisIndex,
       guidePositionMm: input.guidePositionMm,
       guideOriginWorld: input.guideOriginWorld ? [...input.guideOriginWorld] : undefined,
       guideNormalWorld: input.guideNormalWorld ? [...input.guideNormalWorld] : undefined,
+      guidePointsWorld: input.guidePointsWorld?.map((point) => [...point] as Vec3),
       searchHalfWidthMm: input.searchHalfWidthMm,
       preference: input.preference,
     } satisfies SurfaceCutRequest, transfer);

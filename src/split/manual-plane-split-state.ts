@@ -6,6 +6,11 @@ import type { Asset, Transform, Vec3 } from '../kernel/types';
 import { runPrintCheck } from '../check/check-state';
 import { dispatch, doc, geometryRegistry, sendCam, thumbRegistry, useUi } from '../state/store';
 import { worldBBoxOfInstance } from '../viewport/gizmo-math';
+import {
+  copyFacePaintCutInput,
+  resetFacePaintSession,
+  useFacePaint,
+} from './face-paint-state';
 import { closePlaneCutPreview } from './plane-cut-state';
 import type { PlaneEquation, PlaneSplitPart, PlaneSplitResult } from './plane-split-core';
 import { PlaneSplitRunner, type PlaneSplitWorkerLike } from './plane-split-runner';
@@ -40,6 +45,8 @@ export interface ManualPlaneSplitState {
   durationMs: number | null;
   surfaceBandMm: number;
   surfacePreference: SurfaceCutPreference;
+  surfaceGuidePoints: Vec3[];
+  surfaceGuideClosed: boolean;
   surfaceResult: SurfaceCutReadyResult | null;
 }
 
@@ -62,6 +69,8 @@ const initialState: ManualPlaneSplitState = {
   durationMs: null,
   surfaceBandMm: 12,
   surfacePreference: 'balanced',
+  surfaceGuidePoints: [],
+  surfaceGuideClosed: false,
   surfaceResult: null,
 };
 
@@ -144,6 +153,7 @@ export function startManualPlaneSplit(instanceId: string, cutKind: ManualSplitKi
   ) return false;
   runner?.cancel();
   surfaceRunner?.cancel();
+  resetFacePaintSession();
   closePlaneCutPreview();
   const world = worldBBoxOfInstance(instance.transform, doc.assets.get(instance.assetId)!.meta.bbox);
   const center = world.getCenter(new THREE.Vector3());
@@ -166,7 +176,7 @@ export function startManualPlaneSplit(instanceId: string, cutKind: ManualSplitKi
     },
     mode: 'translate',
     axis: 'z',
-    surfaceBandMm: Math.max(4, Math.min(40, visualSize * 0.12)),
+    surfaceBandMm: Math.max(2, Math.min(20, visualSize * 0.05)),
   }, true);
   dispatch((scene) => scene.select([instanceId]));
   const pad = visualSize * 0.08;
@@ -181,6 +191,7 @@ export function startManualPlaneSplit(instanceId: string, cutKind: ManualSplitKi
 export function cancelManualPlaneSplit(): void {
   runner?.cancel();
   surfaceRunner?.cancel();
+  resetFacePaintSession();
   useManualPlaneSplit.setState(initialState, true);
 }
 
@@ -263,7 +274,80 @@ export function setManualSurfacePreference(surfacePreference: SurfaceCutPreferen
   editablePatch({ surfacePreference });
 }
 
-/** M1.10a:从已验证的表面闭环返回粗定位，不退出拆件，也不写场景或历史。 */
+export function appendManualSurfaceGuidePoint(point: Vec3): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || state.surfaceGuidePoints.length >= 64
+    || !point.every(Number.isFinite)
+  ) return false;
+  editablePatch({
+    surfaceGuidePoints: [...state.surfaceGuidePoints, cloneVec3(point)],
+    surfaceGuideClosed: false,
+  });
+  return true;
+}
+
+export function moveManualSurfaceGuidePoint(index: number, point: Vec3): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || index < 0
+    || index >= state.surfaceGuidePoints.length
+    || !point.every(Number.isFinite)
+  ) return false;
+  const surfaceGuidePoints = state.surfaceGuidePoints.map((current, pointIndex) => (
+    pointIndex === index ? cloneVec3(point) : cloneVec3(current)
+  ));
+  editablePatch({ surfaceGuidePoints, surfaceGuideClosed: false });
+  return true;
+}
+
+export function removeLastManualSurfaceGuidePoint(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state) || state.cutKind !== 'surface' || !state.surfaceGuidePoints.length) return false;
+  editablePatch({
+    surfaceGuidePoints: state.surfaceGuidePoints.slice(0, -1).map(cloneVec3),
+    surfaceGuideClosed: false,
+  });
+  return true;
+}
+
+export function clearManualSurfaceGuidePoints(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state) || state.cutKind !== 'surface' || !state.surfaceGuidePoints.length) return false;
+  editablePatch({ surfaceGuidePoints: [], surfaceGuideClosed: false });
+  return true;
+}
+
+/** 从贴面控制点拟合分区平面；闭环本身继续作为网格寻缝的主引导。 */
+export function manualSurfaceGuideWorld(
+  points: Vec3[],
+  fallbackPosition: Vec3,
+  fallbackRotation: Vec3,
+): { origin: Vec3; normal: Vec3 } {
+  if (points.length < 3) return manualGuidePlaneWorld(fallbackPosition, fallbackRotation);
+  const origin = points.reduce((sum, point) => sum.add(new THREE.Vector3(...point)), new THREE.Vector3())
+    .multiplyScalar(1 / points.length);
+  const normal = new THREE.Vector3();
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    normal.x += (current[1] - next[1]) * (current[2] + next[2]);
+    normal.y += (current[2] - next[2]) * (current[0] + next[0]);
+    normal.z += (current[0] - next[0]) * (current[1] + next[1]);
+  }
+  if (normal.lengthSq() <= 1e-10) return manualGuidePlaneWorld(fallbackPosition, fallbackRotation);
+  normal.normalize();
+  return {
+    origin: [origin.x, origin.y, origin.z],
+    normal: [normal.x, normal.y, normal.z],
+  };
+}
+
+/** 从已验证的表面闭环返回控制点编辑，不退出拆件，也不写场景或历史。 */
 export function returnManualSurfaceSplitToGuide(): boolean {
   const state = useManualPlaneSplit.getState();
   if (state.cutKind !== 'surface' || state.phase !== 'previewReady') return false;
@@ -275,6 +359,7 @@ export function returnManualSurfaceSplitToGuide(): boolean {
     error: null,
     errorCode: null,
     durationMs: null,
+    surfaceGuideClosed: false,
     surfaceResult: null,
   });
   return true;
@@ -433,16 +518,19 @@ function derivedSurfaceAsset(
   source: Asset,
   part: SurfaceCutPart,
   suffix: 'A' | 'B',
+  role: '拆下件' | '保留件' | null,
+  kind: 'surface_adaptive_cut' | 'face_set_surface_cut',
   createdAt: number,
   interfaceId: string,
   guide: { origin: Vec3; normal: Vec3 },
+  guidePointsWorld: Vec3[],
   searchHalfWidthMm: number,
   preference: SurfaceCutPreference,
   metrics: SurfaceCutReadyResult['metrics'],
 ): Omit<Asset, 'id'> {
   const bounds = boundsOfPositions(part.positions);
   return {
-    name: `${source.name} · ${suffix}`,
+    name: `${source.name} · ${suffix}${role ? ` ${role}` : ''}`,
     source: source.source,
     state: 'ready',
     meta: {
@@ -457,12 +545,13 @@ function derivedSurfaceAsset(
     genParams: {
       ...(source.genParams ?? {}),
       split: {
-        kind: 'surface_adaptive_cut',
+        kind,
         fromAssetId: source.id,
         part: suffix,
         createdAt,
         sharedInterfaceId: interfaceId,
         guide,
+        guidePointsWorld: guidePointsWorld.map(cloneVec3),
         searchHalfWidthMm,
         preference,
         boundaryVertices: metrics.boundaryVertices,
@@ -520,6 +609,7 @@ function applySplitResult(
   const thumbnailB = renderThumbnail(geometryB);
   if (thumbnailA) thumbRegistry.set(split.assets[0].id, thumbnailA);
   if (thumbnailB) thumbRegistry.set(split.assets[1].id, thumbnailB);
+  resetFacePaintSession();
   useManualPlaneSplit.setState(initialState, true);
   useUi.getState().bump();
   useUi.getState().setToast(
@@ -556,6 +646,16 @@ export function previewManualSurfaceSplit(): boolean {
     || !state.sourceAssetId
     || manualPlaneSplitIsStale()
   ) return false;
+  if (state.surfaceGuidePoints.length < 3) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      surfaceGuideClosed: false,
+      surfaceResult: null,
+      error: '请先在模型表面添加至少 3 个控制点，再生成闭合接缝预览',
+      errorCode: 'missing_guide_points',
+    });
+    return false;
+  }
   const instance = doc.nodes.get(state.instanceId);
   const geometry = copyGeometry(state.sourceAssetId);
   const activeRunner = getSurfaceRunner();
@@ -568,7 +668,8 @@ export function previewManualSurfaceSplit(): boolean {
     });
     return false;
   }
-  const guide = manualGuidePlaneWorld(state.position, state.rotation);
+  const guidePointsWorld = state.surfaceGuidePoints.map(cloneVec3);
+  const guide = manualSurfaceGuideWorld(guidePointsWorld, state.position, state.rotation);
   const instanceId = state.instanceId;
   const sourceAssetId = state.sourceAssetId;
   const sourceEditVersion = state.sourceEditVersion;
@@ -578,6 +679,7 @@ export function previewManualSurfaceSplit(): boolean {
     error: null,
     errorCode: null,
     durationMs: null,
+    surfaceGuideClosed: true,
     surfaceResult: null,
   });
   const started = activeRunner.run({
@@ -585,6 +687,7 @@ export function previewManualSurfaceSplit(): boolean {
     transform: instance.transform,
     guideOriginWorld: guide.origin,
     guideNormalWorld: guide.normal,
+    guidePointsWorld,
     searchHalfWidthMm: state.surfaceBandMm,
     preference: state.surfacePreference,
   }, () => geometry, {
@@ -599,6 +702,7 @@ export function previewManualSurfaceSplit(): boolean {
         useManualPlaneSplit.setState({
           phase: 'previewReady',
           progress: '',
+          surfaceGuideClosed: true,
           surfaceResult: result,
           durationMs,
           error: null,
@@ -608,6 +712,7 @@ export function previewManualSurfaceSplit(): boolean {
         useManualPlaneSplit.setState({
           phase: 'error',
           progress: '',
+          surfaceGuideClosed: false,
           surfaceResult: null,
           durationMs,
           error: result.message,
@@ -620,6 +725,7 @@ export function previewManualSurfaceSplit(): boolean {
         useManualPlaneSplit.setState({
           phase: 'error',
           progress: '',
+          surfaceGuideClosed: false,
           surfaceResult: null,
           error: message,
           errorCode: 'worker_failed',
@@ -631,6 +737,7 @@ export function previewManualSurfaceSplit(): boolean {
         useManualPlaneSplit.setState({
           phase: 'editing',
           progress: '',
+          surfaceGuideClosed: false,
           surfaceResult: null,
           error: null,
           errorCode: null,
@@ -642,12 +749,154 @@ export function previewManualSurfaceSplit(): boolean {
     useManualPlaneSplit.setState({
       phase: 'error',
       progress: '',
+      surfaceGuideClosed: false,
       surfaceResult: null,
       error: '无法读取当前模型几何，曲面接缝预览未启动',
       errorCode: 'geometry_missing',
     });
   }
   return started;
+}
+
+/**
+ * M1.11c：使用已验证的紫色面组直接生成真实 A/B 网格。
+ * 输入来自 BVH 排序后的画笔网格，保证面标签与三角面索引完全一致。
+ */
+export function previewFacePaintSurfaceSplit(): boolean {
+  const state = useManualPlaneSplit.getState();
+  const paint = useFacePaint.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || paint.seamStatus !== 'ready'
+    || !paint.seamResult
+    || !state.instanceId
+    || !state.sourceAssetId
+    || manualPlaneSplitIsStale()
+  ) return false;
+  const instance = doc.nodes.get(state.instanceId);
+  const cutInput = copyFacePaintCutInput();
+  const activeRunner = getSurfaceRunner();
+  if (!instance || instance.kind !== 'instance' || !cutInput || !activeRunner) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      surfaceResult: null,
+      error: '无法读取当前面组网格或启动切割 Worker，源模型保持不变',
+      errorCode: 'worker_unavailable',
+    });
+    return false;
+  }
+  const instanceId = state.instanceId;
+  const sourceAssetId = state.sourceAssetId;
+  const sourceEditVersion = state.sourceEditVersion;
+  const workerAssetId = `${sourceAssetId}:face-set:${paint.maskRevision}`;
+  useManualPlaneSplit.setState({
+    phase: 'previewing',
+    progress: '读取紫色面组',
+    error: null,
+    errorCode: null,
+    durationMs: null,
+    surfaceGuideClosed: true,
+    surfaceResult: null,
+  });
+  const started = activeRunner.run({
+    assetId: workerAssetId,
+    transform: instance.transform,
+    faceLabels: cutInput.faceLabels,
+    searchHalfWidthMm: 0.1,
+    preference: 'balanced',
+  }, () => ({
+    positions: cutInput.positions,
+    index: cutInput.index,
+  }), {
+    onProgress: (progress) => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({ progress });
+      }
+    },
+    onResult: (result, durationMs) => {
+      if (!surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) return;
+      if (result.status === 'ready') {
+        useManualPlaneSplit.setState({
+          phase: 'previewReady',
+          progress: '',
+          surfaceGuideClosed: true,
+          surfaceResult: result,
+          durationMs,
+          error: null,
+          errorCode: null,
+        });
+      } else {
+        useManualPlaneSplit.setState({
+          phase: 'error',
+          progress: '',
+          surfaceGuideClosed: true,
+          surfaceResult: null,
+          durationMs,
+          error: result.message,
+          errorCode: result.code,
+        });
+      }
+    },
+    onError: (message) => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({
+          phase: 'error',
+          progress: '',
+          surfaceGuideClosed: true,
+          surfaceResult: null,
+          error: message,
+          errorCode: 'worker_failed',
+        });
+      }
+    },
+    onCancelled: () => {
+      if (surfacePreviewStillCurrent(instanceId, sourceAssetId, sourceEditVersion)) {
+        useManualPlaneSplit.setState({
+          phase: 'editing',
+          progress: '',
+          surfaceGuideClosed: true,
+          surfaceResult: null,
+          error: null,
+          errorCode: null,
+        });
+      }
+    },
+  });
+  if (!started) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      progress: '',
+      surfaceGuideClosed: true,
+      surfaceResult: null,
+      error: '真实 A/B 预览未启动，请返回面组后重试',
+      errorCode: 'geometry_missing',
+    });
+  }
+  return started;
+}
+
+/** 从真实 A/B 预览或失败态返回已验证接缝；不会清空紫色面组。 */
+export function returnFacePaintSurfaceSplitToSeam(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    state.cutKind !== 'surface'
+    || !['previewing', 'previewReady', 'error'].includes(state.phase)
+    || useFacePaint.getState().seamStatus !== 'ready'
+  ) return false;
+  if (state.phase === 'previewing') {
+    return surfaceRunner?.cancel() ?? false;
+  }
+  useManualPlaneSplit.setState({
+    phase: 'editing',
+    progress: '',
+    error: null,
+    errorCode: null,
+    durationMs: null,
+    surfaceGuideClosed: true,
+    surfaceResult: null,
+  });
+  return true;
 }
 
 export function confirmManualSurfaceSplit(): boolean {
@@ -663,7 +912,12 @@ export function confirmManualSurfaceSplit(): boolean {
   const source = doc.assets.get(state.sourceAssetId);
   if (!source) return false;
   const result = state.surfaceResult;
-  const guide = manualGuidePlaneWorld(state.position, state.rotation);
+  const faceSetCut = useFacePaint.getState().seamStatus === 'ready';
+  const guide = manualSurfaceGuideWorld(
+    state.surfaceGuidePoints,
+    state.position,
+    state.rotation,
+  );
   const createdAt = Date.now();
   const interfaceId = `surface_if_${createdAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const geometryA = geometryFromSurfacePart(result.partA);
@@ -675,9 +929,12 @@ export function confirmManualSurfaceSplit(): boolean {
         source,
         result.partA,
         'A',
+        faceSetCut ? '拆下件' : null,
+        faceSetCut ? 'face_set_surface_cut' : 'surface_adaptive_cut',
         createdAt,
         interfaceId,
         guide,
+        state.surfaceGuidePoints,
         state.surfaceBandMm,
         state.surfacePreference,
         result.metrics,
@@ -686,15 +943,18 @@ export function confirmManualSurfaceSplit(): boolean {
         source,
         result.partB,
         'B',
+        faceSetCut ? '保留件' : null,
+        faceSetCut ? 'face_set_surface_cut' : 'surface_adaptive_cut',
         createdAt,
         interfaceId,
         guide,
+        state.surfaceGuidePoints,
         state.surfaceBandMm,
         state.surfacePreference,
         result.metrics,
       ),
     ],
-    `曲面切割 · ${source.name}`,
+    `${faceSetCut ? '面组曲面切割' : '曲面切割'} · ${source.name}`,
   ));
   geometryRegistry.set(split.assets[0].id, geometryA);
   geometryRegistry.set(split.assets[1].id, geometryB);
@@ -702,10 +962,11 @@ export function confirmManualSurfaceSplit(): boolean {
   const thumbnailB = renderThumbnail(geometryB);
   if (thumbnailA) thumbRegistry.set(split.assets[0].id, thumbnailA);
   if (thumbnailB) thumbRegistry.set(split.assets[1].id, thumbnailB);
+  resetFacePaintSession();
   useManualPlaneSplit.setState(initialState, true);
   useUi.getState().bump();
   useUi.getState().setToast(
-    `曲面切割完成：A/B 已生成 · ${result.metrics.boundaryVertices} 点闭合接缝 · ${state.durationMs?.toFixed(0) ?? '—'} ms`,
+    `${faceSetCut ? '面组曲面切割' : '曲面切割'}完成：A/B 已生成 · ${result.metrics.boundaryVertices} 点闭合接缝 · ${state.durationMs?.toFixed(0) ?? '—'} ms`,
     {
       label: '撤销',
       run: () => dispatch((scene) => scene.history.undo()),

@@ -9,12 +9,16 @@ export type SurfaceCutPreference = 'balanced' | 'shortest' | 'crease';
 export interface SurfaceCutInput {
   positions: ArrayLike<number>;
   index?: ArrayLike<number> | null;
+  /** M1.11c 面组切割：1 为用户涂出的拆下件 A，0 为保留件 B。 */
+  faceLabels?: ArrayLike<number>;
   transform: Transform;
   /** M1.7.8 兼容入口；新交互使用任意世界引导平面。 */
   axisIndex?: 0 | 1 | 2;
   guidePositionMm?: number;
   guideOriginWorld?: Vec3;
   guideNormalWorld?: Vec3;
+  /** 世界空间贴面闭环；存在时，接缝代价以闭环距离为主，引导平面只负责建立 A/B 种子。 */
+  guidePointsWorld?: Vec3[];
   searchHalfWidthMm: number;
   preference?: SurfaceCutPreference;
   maxCapWarpRatio?: number;
@@ -249,6 +253,31 @@ function length(vector: Vec3): number {
 
 function distance(a: Vec3, b: Vec3): number {
   return length(subtract(a, b));
+}
+
+function pointSegmentDistance(point: Vec3, start: Vec3, end: Vec3): number {
+  const segment = subtract(end, start);
+  const segmentLengthSq = dot(segment, segment);
+  if (segmentLengthSq <= 1e-12) return distance(point, start);
+  const offset = subtract(point, start);
+  const factor = clamp(dot(offset, segment) / segmentLengthSq, 0, 1);
+  return distance(point, [
+    start[0] + segment[0] * factor,
+    start[1] + segment[1] * factor,
+    start[2] + segment[2] * factor,
+  ]);
+}
+
+function closedGuideDistance(point: Vec3, guidePoints: Vec3[]): number {
+  let nearest = Infinity;
+  for (let index = 0; index < guidePoints.length; index += 1) {
+    nearest = Math.min(nearest, pointSegmentDistance(
+      point,
+      guidePoints[index],
+      guidePoints[(index + 1) % guidePoints.length],
+    ));
+  }
+  return nearest;
 }
 
 function normalize(vector: Vec3): Vec3 {
@@ -518,8 +547,23 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
   }
   const searchHalfWidthMm = Math.max(0.1, Number(input.searchHalfWidthMm));
   if (!Number.isFinite(searchHalfWidthMm)) return unsupported('invalid_geometry', '表面吸附范围无效');
+  const usesFaceLabels = input.faceLabels !== undefined;
+  if (usesFaceLabels && input.faceLabels!.length !== facesTotal) {
+    return unsupported('invalid_geometry', '面组数据与当前网格面数不一致，请返回重新涂画', {
+      faceLabels: input.faceLabels!.length,
+      facesTotal,
+    });
+  }
   const guide = resolveGuide(input);
-  if (!guide) return unsupported('invalid_geometry', '曲面切割引导平面无效');
+  if (!guide && !usesFaceLabels) return unsupported('invalid_geometry', '曲面切割引导平面无效');
+  const resolvedGuide = guide ?? { origin: [0, 0, 0] as Vec3, normal: [1, 0, 0] as Vec3 };
+  const guidePoints = input.guidePointsWorld?.filter(finiteVec3).map((point) => [...point] as Vec3) ?? [];
+  if (input.guidePointsWorld && guidePoints.length !== input.guidePointsWorld.length) {
+    return unsupported('invalid_geometry', '贴面曲线含无效控制点');
+  }
+  if (guidePoints.length > 0 && guidePoints.length < 3) {
+    return unsupported('invalid_geometry', '贴面曲线至少需要 3 个控制点');
+  }
   const preference = input.preference ?? 'balanced';
   const maxCapWarpRatio = clamp(input.maxCapWarpRatio ?? 0.12, 0.01, 0.25);
 
@@ -578,10 +622,10 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
       original,
       welded,
       normalWorld: normalize(normalRaw),
-      centroidGuide: (
-        signedGuideDistance(world[0], guide)
-        + signedGuideDistance(world[1], guide)
-        + signedGuideDistance(world[2], guide)
+      centroidGuide: usesFaceLabels ? 0 : (
+        signedGuideDistance(world[0], resolvedGuide)
+        + signedGuideDistance(world[1], resolvedGuide)
+        + signedGuideDistance(world[2], resolvedGuide)
       ) / 3,
       areaWorld: twiceArea / 2,
     });
@@ -653,53 +697,79 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     const normalDot = clamp(dot(faceA.normalWorld, faceB.normalWorld), -1, 1);
     const creaseDeg = Math.acos(normalDot) * 180 / Math.PI;
     const smoothness = (normalDot + 1) / 2;
-    const midpointGuide = (
-      signedGuideDistance(worldA, guide) + signedGuideDistance(worldB, guide)
-    ) / 2;
-    const guideRatio = Math.abs(midpointGuide) / searchHalfWidthMm;
-    const guidePenalty = 1 + Math.pow(guideRatio, 2) * 4;
-    const localArea = Math.max(Math.min(faceA.areaWorld, faceB.areaWorld), 1e-9);
-    const densityRatio = clamp(medianArea / localArea, 1, 4);
-    const densityPenalty = 1 + (densityRatio - 1) * 0.35;
-    const surfacePenalty = preferencePenalty(preference, smoothness);
-    const capacity = edgeLength * guidePenalty * densityPenalty * surfacePenalty;
+    let capacity = edgeLength;
+    if (!usesFaceLabels) {
+      const midpoint: Vec3 = [
+        (worldA[0] + worldB[0]) / 2,
+        (worldA[1] + worldB[1]) / 2,
+        (worldA[2] + worldB[2]) / 2,
+      ];
+      const guideDistance = guidePoints.length >= 3
+        ? closedGuideDistance(midpoint, guidePoints)
+        : Math.abs((
+          signedGuideDistance(worldA, resolvedGuide) + signedGuideDistance(worldB, resolvedGuide)
+        ) / 2);
+      const guideRatio = guideDistance / searchHalfWidthMm;
+      const guidePenalty = 1 + Math.pow(guideRatio, 2) * 4;
+      const localArea = Math.max(Math.min(faceA.areaWorld, faceB.areaWorld), 1e-9);
+      const densityRatio = clamp(medianArea / localArea, 1, 4);
+      const densityPenalty = 1 + (densityRatio - 1) * 0.35;
+      const surfacePenalty = preferencePenalty(preference, smoothness);
+      capacity = edgeLength * guidePenalty * densityPenalty * surfacePenalty;
+    }
     pairs.push({ edge, faceA: useA.face, faceB: useB.face, capacity, creaseDeg });
     capacitySum += capacity;
   }
 
-  const source = faces.length;
-  const sink = faces.length + 1;
-  const flow = new Dinic(faces.length + 2);
-  for (const pair of pairs) flow.addPair(pair.faceA, pair.faceB, pair.capacity);
-  const hardCapacity = Math.max(capacitySum * 4 + 1, 1_000_000);
-  let sourceSeeds = 0;
-  let sinkSeeds = 0;
-  for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
-    const signed = faces[faceIndex].centroidGuide;
-    if (signed <= -searchHalfWidthMm) {
-      flow.addDirected(source, faceIndex, hardCapacity);
-      sourceSeeds += 1;
-    } else if (signed >= searchHalfWidthMm) {
-      flow.addDirected(faceIndex, sink, hardCapacity);
-      sinkSeeds += 1;
-    }
-  }
-  if (!sourceSeeds || !sinkSeeds) {
-    return unsupported('missing_seeds', '吸附范围覆盖了模型一侧，无法建立稳定的 A/B 种子；请减小范围或移动引导位置', {
-      sourceSeeds,
-      sinkSeeds,
-    });
-  }
-  flow.maxFlow(source, sink);
-  const reachable = flow.reachableFrom(source);
   const labels = new Uint8Array(faces.length);
   let facesA = 0;
-  for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
-    labels[faceIndex] = reachable[faceIndex] ? 0 : 1;
-    if (labels[faceIndex] === 0) facesA += 1;
+  if (usesFaceLabels) {
+    for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
+      const value = Number(input.faceLabels![faceIndex]);
+      if (value !== 0 && value !== 1) {
+        return unsupported('invalid_geometry', `面组 #${faceIndex} 的标签无效，请返回重新涂画`);
+      }
+      labels[faceIndex] = value === 1 ? 0 : 1;
+      if (value === 1) facesA += 1;
+    }
+  } else {
+    const source = faces.length;
+    const sink = faces.length + 1;
+    const flow = new Dinic(faces.length + 2);
+    for (const pair of pairs) flow.addPair(pair.faceA, pair.faceB, pair.capacity);
+    const hardCapacity = Math.max(capacitySum * 4 + 1, 1_000_000);
+    let sourceSeeds = 0;
+    let sinkSeeds = 0;
+    for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
+      const signed = faces[faceIndex].centroidGuide;
+      if (signed <= -searchHalfWidthMm) {
+        flow.addDirected(source, faceIndex, hardCapacity);
+        sourceSeeds += 1;
+      } else if (signed >= searchHalfWidthMm) {
+        flow.addDirected(faceIndex, sink, hardCapacity);
+        sinkSeeds += 1;
+      }
+    }
+    if (!sourceSeeds || !sinkSeeds) {
+      return unsupported('missing_seeds', '吸附范围覆盖了模型一侧，无法建立稳定的 A/B 种子；请减小范围或移动引导位置', {
+        sourceSeeds,
+        sinkSeeds,
+      });
+    }
+    flow.maxFlow(source, sink);
+    const reachable = flow.reachableFrom(source);
+    for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
+      labels[faceIndex] = reachable[faceIndex] ? 0 : 1;
+      if (labels[faceIndex] === 0) facesA += 1;
+    }
   }
   if (!facesA || facesA === faces.length) {
-    return unsupported('missing_seeds', '表面分区没有形成两个有效部分，请调整引导位置或吸附范围');
+    return unsupported(
+      'missing_seeds',
+      usesFaceLabels
+        ? '紫色面组必须只覆盖模型的一部分，请返回修改面组'
+        : '表面分区没有形成两个有效部分，请调整引导位置或吸附范围',
+    );
   }
 
   const boundaryPairs = pairs.filter((pair) => labels[pair.faceA] !== labels[pair.faceB]);
@@ -777,9 +847,9 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
 
   const seamPositions = new Float32Array(directedBoundary.length * 6);
   let seamLengthMm = 0;
-  let seamAxisMin = Infinity;
-  let seamAxisMax = -Infinity;
-  let seamAxisSum = 0;
+  let seamGuideMin = Infinity;
+  let seamGuideMax = -Infinity;
+  let seamGuideSum = 0;
   let creaseSum = 0;
   directedBoundary.forEach(([from, to], index) => {
     seamPositions.set(weldedLocal[from], index * 6);
@@ -787,16 +857,26 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     const fromWorld = weldedWorld[from];
     const toWorld = weldedWorld[to];
     seamLengthMm += distance(fromWorld, toWorld);
-    const fromGuide = signedGuideDistance(fromWorld, guide);
-    const toGuide = signedGuideDistance(toWorld, guide);
-    seamAxisMin = Math.min(seamAxisMin, fromGuide, toGuide);
-    seamAxisMax = Math.max(seamAxisMax, fromGuide, toGuide);
-    seamAxisSum += (fromGuide + toGuide) / 2;
+    const fromGuide = usesFaceLabels
+      ? 0
+      : guidePoints.length >= 3
+        ? closedGuideDistance(fromWorld, guidePoints)
+        : signedGuideDistance(fromWorld, resolvedGuide);
+    const toGuide = usesFaceLabels
+      ? 0
+      : guidePoints.length >= 3
+        ? closedGuideDistance(toWorld, guidePoints)
+        : signedGuideDistance(toWorld, resolvedGuide);
+    seamGuideMin = Math.min(seamGuideMin, fromGuide, toGuide);
+    seamGuideMax = Math.max(seamGuideMax, fromGuide, toGuide);
+    seamGuideSum += (fromGuide + toGuide) / 2;
     creaseSum += boundaryPairs[index]?.creaseDeg ?? 0;
   });
-  const seamAxisMean = seamAxisSum / directedBoundary.length;
+  const seamGuideMean = seamGuideSum / directedBoundary.length;
   const warnings: string[] = [
-    '接缝沿现有网格边移动；低面数模型的吸附精度受拓扑分辨率限制',
+    usesFaceLabels
+      ? '紫色面组生成拆下件 A，未涂区域生成保留件 B；接缝严格沿已验证的绿色闭环'
+      : '接缝沿现有网格边移动；低面数模型的吸附精度受拓扑分辨率限制',
     '封口已通过投影自交、扭曲阈值与拓扑闭合验证；尚未验证受力、装配公差或全模型自交',
   ];
   return {
@@ -822,8 +902,8 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
       partBFaces: faces.length - facesA + cap.triangles.length,
       boundaryVertices: loop.length,
       seamLengthMm,
-      guideOffsetMm: seamAxisMean,
-      adaptiveSpanMm: seamAxisMax - seamAxisMin,
+      guideOffsetMm: seamGuideMean,
+      adaptiveSpanMm: seamGuideMax - seamGuideMin,
       meanCreaseDeg: creaseSum / directedBoundary.length,
       searchHalfWidthMm,
       maxCapDeviationMm: cap.maxDeviationMm,

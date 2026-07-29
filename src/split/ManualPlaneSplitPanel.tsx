@@ -1,24 +1,51 @@
+import * as THREE from 'three';
 import { doc } from '../state/store';
 import type { Vec3 } from '../kernel/types';
+import {
+  clearFacePaintMask,
+  generateFacePaintSeamPreview,
+  returnFacePaintToEditing,
+  setFacePaintBrushRadius,
+  setFacePaintMode,
+  undoFacePaintStroke,
+  useFacePaintSnapshot,
+} from './face-paint-state';
 import {
   cancelManualPlaneSplit,
   confirmManualPlaneSplit,
   confirmManualSurfaceSplit,
   manualPlaneSplitIsStale,
-  previewManualSurfaceSplit,
-  returnManualSurfaceSplitToGuide,
+  previewFacePaintSurfaceSplit,
+  returnFacePaintSurfaceSplitToSeam,
   setManualPlaneAxis,
   setManualPlaneMode,
   setManualPlaneRotation,
   setManualPlaneSize,
   setManualPlaneSizeLinked,
-  setManualSurfaceBandMm,
-  setManualSurfacePreference,
   useManualPlaneSplitSnapshot,
   type ManualPlaneMode,
 } from './manual-plane-split-state';
 
 const AXES = ['X', 'Y', 'Z'] as const;
+
+function matrixOfTransform(transform: {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+} | undefined): THREE.Matrix4 {
+  if (!transform) return new THREE.Matrix4();
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(transform.rotation[0]),
+    THREE.MathUtils.degToRad(transform.rotation[1]),
+    THREE.MathUtils.degToRad(transform.rotation[2]),
+    'XYZ',
+  );
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3(...transform.position),
+    new THREE.Quaternion().setFromEuler(euler),
+    new THREE.Vector3(...transform.scale),
+  );
+}
 
 function FieldRow({
   axis,
@@ -90,6 +117,7 @@ function ModeButton({
 
 export function ManualPlaneSplitPanel() {
   const state = useManualPlaneSplitSnapshot();
+  const paint = useFacePaintSnapshot();
   if (state.phase === 'idle') return null;
   const node = state.instanceId ? doc.nodes.get(state.instanceId) : null;
   const stale = manualPlaneSplitIsStale();
@@ -100,9 +128,362 @@ export function ManualPlaneSplitPanel() {
     bounds.max[2] - bounds.min[2],
   );
   const sizeMax = Math.max(diagonal * 3, 100);
-  const surfaceRangeMax = Math.max(10, Math.min(diagonal * 0.45, 200));
   const running = state.phase === 'running' || state.phase === 'previewing';
   const isSurface = state.cutKind === 'surface';
+
+  if (isSurface) {
+    const brushMax = Math.max(8, Math.min(diagonal * 0.28, 160));
+    const brushValue = Math.max(0.5, Math.min(brushMax, paint.brushRadiusMm));
+    const paintedPercent = paint.totalFaceCount > 0
+      ? Math.round((paint.paintedFaceCount / paint.totalFaceCount) * 100)
+      : 0;
+    const instanceTransform = node?.kind === 'instance' ? node.transform : undefined;
+    const generateSeam = () => {
+      generateFacePaintSeamPreview(matrixOfTransform(instanceTransform));
+    };
+
+    if (state.phase === 'previewing') {
+      return (
+        <section
+          className="manual-plane-panel manual-plane-panel--face-paint manual-plane-panel--seam-review"
+          data-testid="manual-plane-split-panel"
+        >
+          <header>
+            <div>
+              <span className="manual-plane-panel__eyebrow">M1.11c · 真实几何</span>
+              <h3>正在生成 A/B 预览</h3>
+              <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+            </div>
+            <em>计算中</em>
+          </header>
+          <div className="face-cut-working" role="status" aria-live="polite">
+            <i />
+            <div>
+              <strong>{state.progress || '构建封闭零件'}</strong>
+              <span>正在复制源网格、沿绿色闭环拆分，并为两侧生成同一组封口。</span>
+            </div>
+          </div>
+          <div className="manual-plane-panel__notice">
+            <strong>源模型仍未修改</strong>
+            <span>只有确认真实 A/B 预览后，才会写入一条可撤销历史。</span>
+          </div>
+          <footer>
+            <button type="button" onClick={returnFacePaintSurfaceSplitToSeam}>停止并返回接缝</button>
+          </footer>
+        </section>
+      );
+    }
+
+    if (state.phase === 'previewReady' && state.surfaceResult) {
+      const result = state.surfaceResult;
+      const dimensions = (value: Vec3) => value.map((item) => item.toFixed(1)).join(' × ');
+      return (
+        <section
+          className="manual-plane-panel manual-plane-panel--face-paint manual-plane-panel--cut-review"
+          data-testid="manual-plane-split-panel"
+        >
+          <header>
+            <div>
+              <span className="manual-plane-panel__eyebrow">M1.11c · 确认前预览</span>
+              <h3>真实 A/B 已生成</h3>
+              <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+            </div>
+            <em>{state.durationMs?.toFixed(0) ?? '—'} ms</em>
+          </header>
+
+          <div className="face-seam-result is-ready" role="status">
+            <strong>✓ 两个零件均已封闭</strong>
+            <span>视口中紫色是拆下件 A，绿色是保留件 B，青色线是两侧共享的封口边界。</span>
+          </div>
+
+          <div className="face-cut-parts" aria-label="真实切割零件">
+            <div className="part-a">
+              <strong><i />拆下件 A · 紫色</strong>
+              <span>{result.partA.sourceFaceCount.toLocaleString()} 原始面 + {result.partA.capFaceCount.toLocaleString()} 封口面</span>
+              <small>{dimensions(result.partA.dimensionsMm)} mm · 开放边 {result.partA.boundaryEdges}</small>
+            </div>
+            <div className="part-b">
+              <strong><i />保留件 B · 绿色</strong>
+              <span>{result.partB.sourceFaceCount.toLocaleString()} 原始面 + {result.partB.capFaceCount.toLocaleString()} 封口面</span>
+              <small>{dimensions(result.partB.dimensionsMm)} mm · 开放边 {result.partB.boundaryEdges}</small>
+            </div>
+          </div>
+
+          <div className="face-seam-metrics" aria-label="真实切割指标">
+            <span>
+              <b>{result.metrics.boundaryVertices.toLocaleString()}</b>
+              <small>接缝顶点</small>
+            </span>
+            <span>
+              <b>{result.metrics.maxCapDeviationMm.toFixed(2)}</b>
+              <small>封口偏差 mm</small>
+            </span>
+            <span>
+              <b>{(result.metrics.capWarpRatio * 100).toFixed(1)}%</b>
+              <small>封口扭曲比</small>
+            </span>
+          </div>
+
+          <div className="manual-plane-panel__notice">
+            <strong>确认前源模型仍保留</strong>
+            <span>确认后才用 A/B 替换当前实例，并写入一条历史；撤销会恢复原实例。</span>
+          </div>
+
+          <footer>
+            <button type="button" onClick={returnFacePaintSurfaceSplitToSeam}>返回接缝</button>
+            <button
+              className="primary"
+              type="button"
+              disabled={stale}
+              onClick={confirmManualSurfaceSplit}
+            >
+              确认创建两个模型
+            </button>
+          </footer>
+          <small className="manual-plane-panel__hint">
+            紫色＝拆下件 · 绿色＝保留件 · 此时仍可安全返回
+          </small>
+        </section>
+      );
+    }
+
+    if (paint.seamStatus === 'ready' && paint.seamResult) {
+      const { metrics, warnings } = paint.seamResult;
+      return (
+        <section
+          className="manual-plane-panel manual-plane-panel--face-paint manual-plane-panel--seam-review"
+          data-testid="manual-plane-split-panel"
+        >
+          <header>
+            <div>
+              <span className="manual-plane-panel__eyebrow">M1.11c · 准备真实切割</span>
+              <h3>接缝预览</h3>
+              <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+            </div>
+            <em>1 个闭环</em>
+          </header>
+
+          <div className="face-seam-result is-ready" role="status">
+            <strong>✓ 接缝拓扑通过</strong>
+            <span>绿色粗线是排序后的唯一闭环。当前禁止涂画，但仍可旋转、平移和缩放视图检查。</span>
+          </div>
+
+          <div className="face-seam-metrics" aria-label="接缝指标">
+            <span>
+              <b>{metrics.boundaryVertices.toLocaleString()}</b>
+              <small>接缝顶点</small>
+            </span>
+            <span>
+              <b>{metrics.seamLengthMm.toFixed(1)}</b>
+              <small>长度 mm</small>
+            </span>
+            <span>
+              <b>{metrics.maxPlanarityDeviationMm.toFixed(2)}</b>
+              <small>平面偏差 mm</small>
+            </span>
+          </div>
+
+          <div className="face-seam-split-ratio">
+            <div>
+              <strong>拆下件（紫）/ 保留件（绿）</strong>
+              <output>
+                {(metrics.paintedRatio * 100).toFixed(1)}% / {((1 - metrics.paintedRatio) * 100).toFixed(1)}%
+              </output>
+            </div>
+            <span>
+              <i style={{ width: `${Math.max(2, Math.min(98, metrics.paintedRatio * 100))}%` }} />
+            </span>
+          </div>
+
+          {warnings.length > 0 ? (
+            <div className="face-seam-messages is-warning" role="status">
+              <strong>切割前仍需处理 {warnings.length} 项风险</strong>
+              {warnings.map((warning) => (
+                <span key={warning.code}>
+                  <b>{warning.title}</b>
+                  <small>{warning.detail}</small>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="face-seam-result is-clean">
+              <strong>未发现明显封口与小件风险</strong>
+              <span>M1.11c 执行前仍会再次检查真实切割结果。</span>
+            </div>
+          )}
+
+          <div className="manual-plane-panel__notice">
+            <strong>此时没有修改模型</strong>
+            <span>没有创建 A / B、没有写入历史记录，也没有覆盖原始模型。</span>
+          </div>
+
+          {state.phase === 'error' && state.error ? (
+            <div className="manual-plane-panel__error" role="alert">
+              <strong>真实 A/B 预览未生成</strong>
+              <span>{state.error}</span>
+              <small>接缝和面组仍保留，可直接重试或返回修改。</small>
+            </div>
+          ) : null}
+
+          <footer>
+            <button type="button" onClick={returnFacePaintToEditing}>返回修改面组</button>
+            <button
+              className="primary"
+              type="button"
+              disabled={stale}
+              onClick={previewFacePaintSurfaceSplit}
+              title="先生成临时 A/B 并检查封口，不修改源模型"
+            >
+              生成真实 A/B 预览
+            </button>
+          </footer>
+          <small className="manual-plane-panel__hint">
+            只读预览 · 右键旋转 · 中键平移 · 滚轮缩放 · Esc 退出
+          </small>
+        </section>
+      );
+    }
+
+    return (
+      <section
+        className="manual-plane-panel manual-plane-panel--face-paint"
+        data-testid="manual-plane-split-panel"
+      >
+        <header>
+          <div>
+            <span className="manual-plane-panel__eyebrow">M1.11b · 接缝验证</span>
+            <h3>涂出要拆下的部分</h3>
+            <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
+          </div>
+          <em>{paintedPercent}%</em>
+        </header>
+
+        <div className="manual-plane-panel__paint-notice">
+          <strong>像涂画一样定义一个面组</strong>
+          <span>左键连续涂紫色面组；按住 Ctrl 可临时擦除。右键旋转、滚轮缩放不受影响。</span>
+        </div>
+
+        <div className="manual-plane-panel__paint-modes" aria-label="面组画笔模式">
+          <button
+            type="button"
+            aria-pressed={paint.mode === 'add'}
+            onClick={() => setFacePaintMode('add')}
+          >
+            <i className="is-add" />
+            添加到面组
+            <kbd>B</kbd>
+          </button>
+          <button
+            type="button"
+            aria-pressed={paint.mode === 'erase'}
+            onClick={() => setFacePaintMode('erase')}
+          >
+            <i className="is-erase" />
+            擦除
+            <kbd>X</kbd>
+          </button>
+        </div>
+
+        <div className="manual-plane-panel__brush">
+          <div>
+            <strong>画笔大小</strong>
+            <output>{brushValue.toFixed(1)} mm</output>
+          </div>
+          <input
+            aria-label="画笔大小 mm"
+            type="range"
+            min={0.5}
+            max={brushMax}
+            step={0.5}
+            value={brushValue}
+            onChange={(event) => setFacePaintBrushRadius(Number(event.target.value))}
+          />
+          <small>[ / ] 调整</small>
+        </div>
+
+        <div className="manual-plane-panel__paint-stats" role="status">
+          <span>
+            <b>{paint.paintedFaceCount.toLocaleString()}</b>
+            <small>已涂面</small>
+          </span>
+          <span>
+            <b>{paint.strokeCount}</b>
+            <small>画笔笔划</small>
+          </span>
+          <span>
+            <b>{paint.boundaryStatus === 'budget' ? '高面数' : paint.boundarySegmentCount.toLocaleString()}</b>
+            <small>{paint.boundaryStatus === 'budget' ? '仅显示色块' : '边界线段'}</small>
+          </span>
+        </div>
+
+        <div className="manual-plane-panel__paint-actions">
+          <button
+            type="button"
+            disabled={paint.strokeCount === 0}
+            onClick={undoFacePaintStroke}
+          >
+            撤销上一笔 <kbd>Ctrl Z</kbd>
+          </button>
+          <button
+            type="button"
+            disabled={paint.paintedFaceCount === 0}
+            onClick={clearFacePaintMask}
+          >
+            清空面组
+          </button>
+        </div>
+
+        {paint.boundaryStatus === 'budget' && (
+          <div className="manual-plane-panel__paint-performance" role="status">
+            <strong>高面数流畅模式</strong>
+            <span>继续实时显示紫色面组；为避免卡顿，暂不计算黄色边界和闭环接缝。</span>
+          </div>
+        )}
+        {paint.seamStatus === 'invalid' && paint.seamResult && (
+          <div className="face-seam-messages is-error" role="alert">
+            <strong>暂时不能生成单闭环接缝</strong>
+            {paint.seamResult.issues.map((issue) => (
+              <span key={issue.code}>
+                <b>{issue.title}</b>
+                <small>{issue.detail}</small>
+              </span>
+            ))}
+          </div>
+        )}
+        {stale && (
+          <div className="manual-plane-panel__error" role="alert">
+            <strong>面组会话已失效</strong>
+            <span>场景在涂画期间发生变化，请退出后重新开始。</span>
+          </div>
+        )}
+
+        <footer>
+          <button type="button" onClick={cancelManualPlaneSplit}>退出面组</button>
+          <button
+            className="primary"
+            type="button"
+            disabled={
+              stale
+              || paint.paintedFaceCount === 0
+              || paint.boundaryStatus !== 'ready'
+              || paint.boundarySegmentCount === 0
+            }
+            title={paint.boundaryStatus === 'budget'
+              ? '当前高面数模式不生成接缝，请先减面'
+              : '把黄色边界排序为一条可检查的闭环'}
+            onClick={generateSeam}
+          >
+            生成接缝预览
+          </button>
+        </footer>
+
+        <small className="manual-plane-panel__hint">
+          先生成只读接缝并检查风险，不执行切割 · Esc 退出
+        </small>
+      </section>
+    );
+  }
+
   const setRotationAxis = (axis: number, value: number) => {
     const rotation = [...state.rotation] as Vec3;
     rotation[axis] = value;
@@ -119,122 +500,27 @@ export function ManualPlaneSplitPanel() {
     }
     setManualPlaneSize(next);
   };
-  const primaryText = isSurface
-    ? state.phase === 'previewing'
-      ? '正在生成表面闭环…'
-      : state.phase === 'error'
-        ? '调整定位后重新生成'
-        : '生成表面闭合接缝'
-    : state.phase === 'running'
-      ? '切割中…'
-      : state.phase === 'error'
-        ? '调整后重试'
-        : '确认切割';
-  const runPrimary = () => {
-    if (!isSurface) {
-      confirmManualPlaneSplit();
-    } else {
-      previewManualSurfaceSplit();
-    }
-  };
-
-  if (isSurface && state.phase === 'previewReady' && state.surfaceResult) {
-    return (
-      <section
-        className="manual-plane-panel manual-plane-panel--surface-review"
-        data-testid="manual-plane-split-panel"
-      >
-        <header>
-          <div>
-            <span className="manual-plane-panel__eyebrow">第 2 步 · 表面接缝</span>
-            <h3>曲面接缝预览</h3>
-            <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
-          </div>
-          <em>2 / 2</em>
-        </header>
-
-        <div className="manual-plane-panel__notice">
-          <strong>平面定位已经结束</strong>
-          <span>画布黄色闭环才是实际切口。蓝色与紫色分别预览切割后的 A/B 两件。</span>
-        </div>
-
-        <div className="manual-plane-panel__surface-legend" aria-label="曲面切割预览图例">
-          <span className="is-a"><i />A 件</span>
-          <span className="is-seam"><i />表面闭合接缝</span>
-          <span className="is-b"><i />B 件</span>
-        </div>
-
-        <div className="manual-plane-panel__surface-result" role="status">
-          <strong>接缝与双侧封口验证通过</strong>
-          <div>
-            <span><b>{state.surfaceResult.metrics.boundaryVertices}</b> 个接缝点</span>
-            <span><b>{state.surfaceResult.metrics.seamLengthMm.toFixed(1)}</b> mm 接缝长度</span>
-            <span><b>{state.surfaceResult.metrics.maxCapDeviationMm.toFixed(2)}</b> mm 封口偏差</span>
-            <span><b>{state.durationMs?.toFixed(0) ?? '—'}</b> ms 计算耗时</span>
-          </div>
-          <small>
-            A/B 开放边：
-            {state.surfaceResult.partA.boundaryEdges}/{state.surfaceResult.partB.boundaryEdges}
-          </small>
-        </div>
-
-        <div className="manual-plane-panel__surface-boundary">
-          <strong>当前可以做什么</strong>
-          <span>接缝不合适：返回重新定位后再次生成。</span>
-          <span>接缝合适：确认后生成两个独立对象，并可一步撤销。</span>
-          <small>M1.10a 暂不提供接缝控制点；整圈沿面移动与局部弯曲将在下一阶段加入。</small>
-        </div>
-
-        {stale && (
-          <div className="manual-plane-panel__error" role="alert">
-            <strong>切割会话已失效</strong>
-            <span>场景在预览期间发生变化，请取消后重新开始。</span>
-          </div>
-        )}
-
-        <footer>
-          <button
-            type="button"
-            disabled={stale}
-            onClick={returnManualSurfaceSplitToGuide}
-          >
-            返回重新定位
-          </button>
-          <button
-            className="primary"
-            type="button"
-            disabled={stale}
-            onClick={confirmManualSurfaceSplit}
-          >
-            确认曲面切割
-          </button>
-        </footer>
-        <small className="manual-plane-panel__hint">
-          黄色闭环是实际切口 · 此阶段不再使用 W/E/R 平面手柄
-        </small>
-      </section>
-    );
-  }
+  const primaryText = state.phase === 'running'
+    ? '切割中…'
+    : state.phase === 'error'
+      ? '调整后重试'
+      : '确认切割';
 
   return (
     <section className="manual-plane-panel" data-testid="manual-plane-split-panel">
       <header>
         <div>
-          <span className="manual-plane-panel__eyebrow">
-            {isSurface ? '第 1 步 · 粗定位' : '真实几何操作'}
-          </span>
-          <h3>{isSurface ? '曲面切割定位' : '平面切割'}</h3>
-          {!isSurface && <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>}
+          <span className="manual-plane-panel__eyebrow">真实几何操作</span>
+          <h3>平面切割</h3>
+          <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
         </div>
-        <em>{isSurface ? '1 / 2' : '1 → 2'}</em>
+        <em>1 → 2</em>
       </header>
 
-      {!isSurface && (
-        <div className="manual-plane-panel__notice">
-          <strong>源模型保持不变</strong>
-          <span>确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。</span>
-        </div>
-      )}
+      <div className="manual-plane-panel__notice">
+        <strong>源模型保持不变</strong>
+        <span>确认后生成 A / B 两个独立派生模型，可在历史记录中一步撤销。</span>
+      </div>
 
       <div className="manual-plane-panel__axis" aria-label="切割轴预设">
         <span>切割轴</span>
@@ -257,18 +543,16 @@ export function ManualPlaneSplitPanel() {
         <ModeButton mode="scale" active={state.mode === 'scale'} shortcut="R">缩放</ModeButton>
       </div>
 
-      {!isSurface && (
-        <div className="manual-plane-panel__handle-help">
-          <strong>按住画布箭头即可移动</strong>
-          <span>按 W，把鼠标放到箭头上；光标变成手掌后按住拖动。箭头使用加大命中区，并始终显示在模型前方。</span>
-          <div className="manual-plane-panel__axis-legend" aria-label="移动手柄颜色">
-            <i className="is-x">X 左右</i>
-            <i className="is-y">Y 前后</i>
-            <i className="is-z">Z 上下</i>
-          </div>
-          <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
+      <div className="manual-plane-panel__handle-help">
+        <strong>按住画布箭头即可移动</strong>
+        <span>按 W，把鼠标放到箭头上；光标变成手掌后按住拖动。箭头使用加大命中区，并始终显示在模型前方。</span>
+        <div className="manual-plane-panel__axis-legend" aria-label="移动手柄颜色">
+          <i className="is-x">X 左右</i>
+          <i className="is-y">Y 前后</i>
+          <i className="is-z">Z 上下</i>
         </div>
-      )}
+        <output>{state.position.map((value) => value.toFixed(1)).join(' / ')} mm</output>
+      </div>
 
       <details open>
         <summary>旋转 <small>XYZ 欧拉角</small></summary>
@@ -324,16 +608,16 @@ export function ManualPlaneSplitPanel() {
             onChange={(value) => setSizeAxis(1, value)}
           />
         </div>
-        <p className="manual-plane-panel__scope">{isSurface
-          ? '框只表示起始位置与方向；生成后会隐藏，并切换为模型表面的真实闭环。'
-          : '框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。'}</p>
+        <p className="manual-plane-panel__scope">
+          框大小只控制视口显示；实际切割按无限平面计算，避免模型边缘漏切。
+        </p>
       </details>
 
       {running && (
         <div className="manual-plane-panel__running" role="status">
           <i />
           <div>
-            <strong>{state.phase === 'previewing' ? '正在搜索曲面闭环' : '正在执行真实切割'}</strong>
+            <strong>正在执行真实切割</strong>
             <span>{state.progress || '处理中…'}</span>
           </div>
         </div>
@@ -358,72 +642,14 @@ export function ManualPlaneSplitPanel() {
           className="primary"
           type="button"
           disabled={running || stale}
-          onClick={runPrimary}
+          onClick={confirmManualPlaneSplit}
         >
           {primaryText}
         </button>
       </footer>
       <small className="manual-plane-panel__hint">
-        {isSurface
-          ? '第 1 步：W/E/R 调整粗定位 · 生成后进入独立表面接缝预览'
-          : '视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消'}
+        视口：W/E/R 切换手柄 · 拖动 XYZ · 右键旋转视角 · Esc 取消
       </small>
-
-      {isSurface && (
-        <details className="manual-plane-panel__surface-advanced">
-          <summary>高级：自动寻缝范围 <small>通常无需修改</small></summary>
-          <p>
-            范围越宽，接缝越可能离开当前平面，沿附近收腰或折痕弯曲。
-            这不是切口厚度，也不会删除材料。
-          </p>
-          <div className="manual-plane-panel__range-presets" aria-label="接缝搜索宽度预设">
-            {([
-              [5, '紧贴', '±5mm'],
-              [15, '标准', '±15mm'],
-              [30, '宽松', '±30mm'],
-            ] as const).map(([value, label, hint]) => (
-              <button
-                key={value}
-                type="button"
-                disabled={value > surfaceRangeMax}
-                aria-pressed={Math.abs(state.surfaceBandMm - value) < 0.5}
-                onClick={() => setManualSurfaceBandMm(value)}
-                title={`${label}：${hint}`}
-              >
-                <strong>{label}</strong>
-                <span>{hint}</span>
-              </button>
-            ))}
-          </div>
-          <div className="manual-plane-panel__preference-label">
-            <strong>自动接缝偏好</strong>
-            <span>不识别角色语义</span>
-          </div>
-          <div className="manual-plane-panel__preferences" aria-label="接缝偏好">
-            {([
-              ['balanced', '均衡', '兼顾距离、长度与折角'],
-              ['shortest', '最短', '优先更短的闭环'],
-              ['crease', '贴折痕', '更愿意沿明显转折边'],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={state.surfacePreference === value}
-                onClick={() => setManualSurfacePreference(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="manual-plane-panel__preference-help">
-            {state.surfacePreference === 'shortest'
-              ? '最短：更容易选中附近较细的闭环，但可能避开你想保留的造型线。'
-              : state.surfacePreference === 'crease'
-                ? '贴折痕：更愿意沿网格转折明显的位置走，适合装甲边或衣物折线。'
-                : '均衡：同时考虑离引导面的距离、接缝长度和折角，建议第一次先用它。'}
-          </p>
-        </details>
-      )}
     </section>
   );
 }

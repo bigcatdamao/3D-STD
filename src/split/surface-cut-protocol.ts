@@ -9,11 +9,13 @@ export interface SurfaceCutRequest {
   assetId: string;
   positions: ArrayBuffer | null;
   index: ArrayBuffer | null;
+  faceLabels: ArrayBuffer | null;
   transform: Transform;
   axisIndex?: 0 | 1 | 2;
   guidePositionMm?: number;
   guideOriginWorld?: Vec3;
   guideNormalWorld?: Vec3;
+  guidePointsWorld?: Vec3[];
   searchHalfWidthMm: number;
   preference?: SurfaceCutPreference;
 }

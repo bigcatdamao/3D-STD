@@ -107,6 +107,15 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
       <div className="inspector-shell">
         <div className="inspector-tabs" role="tablist" aria-label="拆件方式">
           <button
+            className={`inspector-tab${splitKind === 'surface' ? ' is-active' : ''}`}
+            role="tab"
+            aria-selected={splitKind === 'surface'}
+            disabled={splitPhase === 'running' || splitPhase === 'previewing'}
+            onClick={() => setManualSplitKind('surface')}
+          >
+            绘制面组
+          </button>
+          <button
             className={`inspector-tab${splitKind === 'plane' ? ' is-active' : ''}`}
             role="tab"
             aria-selected={splitKind === 'plane'}
@@ -114,15 +123,6 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
             onClick={() => setManualSplitKind('plane')}
           >
             平面切割
-          </button>
-          <button
-            className={`inspector-tab${splitKind === 'surface' ? ' is-active' : ''}`}
-            role="tab"
-            aria-selected={splitKind === 'surface'}
-            disabled={splitPhase === 'running' || splitPhase === 'previewing'}
-            onClick={() => setManualSplitKind('surface')}
-          >
-            曲面切割
           </button>
           <span className="inspector-mode-note">Esc 取消</span>
         </div>
@@ -313,8 +313,10 @@ export function App() {
   const openSplitWorkbench = () => {
     patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
     if (manualPlaneSplitIsActive()) {
-      const kind = useManualPlaneSplit.getState().cutKind === 'surface' ? '曲面切割' : '平面切割';
-      useUi.getState().setToast(`${kind}工具已打开：移动请直接拖动画布 XYZ 手柄`);
+      const isSurface = useManualPlaneSplit.getState().cutKind === 'surface';
+      useUi.getState().setToast(isSurface
+        ? '绘制面组已打开：左键连续涂画，Ctrl+左键擦除，右键旋转视角'
+        : '平面切割工具已打开：移动请直接拖动画布 XYZ 手柄');
       return;
     }
     const targets = expandToInstances(doc.selection);
@@ -323,14 +325,14 @@ export function App() {
       return;
     }
     if (targets.length > 1) {
-      useUi.getState().setToast(`当前选中了 ${targets.length} 个对象；平面切割一次只处理 1 个对象`);
+      useUi.getState().setToast(`当前选中了 ${targets.length} 个对象；拆件工具一次只处理 1 个对象`);
       return;
     }
-    if (!startManualPlaneSplit(targets[0].id)) {
-      useUi.getState().setToast('该对象无法开始平面切割，请确认模型几何可读取且对象未锁定');
+    if (!startManualPlaneSplit(targets[0].id, 'surface')) {
+      useUi.getState().setToast('该对象无法开始拆件，请确认模型几何可读取且对象未锁定');
       return;
     }
-    useUi.getState().setToast('拆件工具已打开：默认平面切割；右侧可切换曲面切割，移动请拖动画布 XYZ 手柄');
+    useUi.getState().setToast('绘制面组已开启：左键涂出要拆下的部分；Ctrl+左键擦除，右侧可切换平面切割');
   };
   const toggleCreation = () => {
     if (!hasInstance) {

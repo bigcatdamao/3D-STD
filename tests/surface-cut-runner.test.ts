@@ -37,6 +37,12 @@ const input = {
   transform,
   axisIndex: 0 as const,
   guidePositionMm: 0,
+  guidePointsWorld: [
+    [0, -10, -10],
+    [0, 10, -10],
+    [0, 10, 10],
+    [0, -10, 10],
+  ] as [number, number, number][],
   searchHalfWidthMm: 40,
 };
 const geometry = () => ({
@@ -74,12 +80,25 @@ describe('M1.7.8 真实表面切割 Worker 运行器', () => {
     expect(first.getResult()).toEqual(result);
     expect(first.phases).toContain('构建表面邻接图');
     expect(worker.received[0].positions).not.toBeNull();
+    expect(worker.received[0].guidePointsWorld).toEqual(input.guidePointsWorld);
 
     const second = events();
     expect(runner.run(input, geometry, second.handlers)).toBe(true);
     await flush();
     expect(worker.received[1].positions).toBeNull();
     expect(worker.received[1].index).toBeNull();
+  });
+
+  it('M1.11c 每轮复制并传输面组标签，不会 detach 编辑会话中的原数组', async () => {
+    const worker = new FakeWorker();
+    const runner = new SurfaceCutRunner(() => worker, 1000);
+    const faceLabels = new Uint8Array([1, 1, 0, 0]);
+    const state = events();
+    expect(runner.run({ ...input, faceLabels }, geometry, state.handlers)).toBe(true);
+    await flush();
+    expect([...faceLabels]).toEqual([1, 1, 0, 0]);
+    expect(worker.received[0].faceLabels).not.toBeNull();
+    expect([...new Uint8Array(worker.received[0].faceLabels!)]).toEqual([1, 1, 0, 0]);
   });
 
   it('取消会终止 Worker、忽略迟到结果，并允许下一轮重建', () => {
