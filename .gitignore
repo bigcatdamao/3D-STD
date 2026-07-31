@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 .wrangler/
+.dev.vars
+.dev.vars.*

@@ -15,6 +15,7 @@ import {
 import {
   applyFacePaintFaces,
   beginFacePaintStroke,
+  cancelFacePaintSeamAnchorPlacement,
   cancelFacePaintStroke,
   commitFacePaintStroke,
   getFacePaintLastChangedFaces,
@@ -22,10 +23,13 @@ import {
   initializeFacePaintSession,
   registerFacePaintGeometry,
   registerFacePaintTopology,
+  registerFacePaintViewPositionLocal,
+  setFacePaintSeamAnchorLocal,
   setFacePaintBoundaryInfo,
   useFacePaint,
 } from './face-paint-state';
 import { manualPlaneSplitIsStale, useManualPlaneSplit } from './manual-plane-split-state';
+import { useSurfaceWorkflow } from './surface-workflow-state';
 
 const CURSOR_COLOR = '#ffd073';
 const PATCH_COLOR = new THREE.Color('#bd7cff');
@@ -92,6 +96,8 @@ function FacePaintSessionEditor({
   const paintedFaceCount = useFacePaint((state) => state.paintedFaceCount);
   const seamStatus = useFacePaint((state) => state.seamStatus);
   const seamResult = useFacePaint((state) => state.seamResult);
+  const seamAnchorPlacement = useFacePaint((state) => state.seamAnchorPlacement);
+  const seamAnchorLocal = useFacePaint((state) => state.seamAnchorLocal);
   const instance = doc.nodes.get(instanceId);
   const sourceGeometry = geometryRegistry.get(assetId);
   const cursorRef = useRef<THREE.Mesh>(null);
@@ -118,6 +124,10 @@ function FacePaintSessionEditor({
     if (!transform) return 1;
     return Math.max(1e-4, Math.min(...transform.scale.map((value) => Math.abs(value))));
   }, [transform]);
+  const anchorMarkerRadius = Math.max(
+    0.015,
+    Math.min(0.12, (brushRadiusMm / minimumScale) * 0.12),
+  );
   const pickGeometry = useMemo(() => {
     if (!sourceGeometry) return null;
     const geometry = sourceGeometry.clone();
@@ -237,6 +247,7 @@ function FacePaintSessionEditor({
     const localPoint = new THREE.Vector3();
     const closest = new THREE.Vector3();
     const normal = new THREE.Vector3();
+    const cameraLocal = new THREE.Vector3();
     const localRadius = () => radiusRef.current / minimumScale;
 
     const toNdc = (clientX: number, clientY: number): THREE.Vector2 => {
@@ -276,6 +287,12 @@ function FacePaintSessionEditor({
       const hit = hitAt(clientX, clientY);
       updateCursor(hit);
       if (!shouldPaint || !hit?.point) return;
+      cameraLocal.copy(camera.position).applyMatrix4(inverseWorldMatrix);
+      registerFacePaintViewPositionLocal([
+        cameraLocal.x,
+        cameraLocal.y,
+        cameraLocal.z,
+      ]);
       localPoint.copy(hit.point);
       const radius = localRadius();
       const radiusSq = radius * radius;
@@ -335,6 +352,13 @@ function FacePaintSessionEditor({
     const onDown = (event: PointerEvent) => {
       if (event.button !== 0 || activePointerRef.current != null) return;
       const hit = hitAt(event.clientX, event.clientY);
+      if (seamAnchorPlacement) {
+        if (!hit?.point) return;
+        setFacePaintSeamAnchorLocal([hit.point.x, hit.point.y, hit.point.z]);
+        updateCursor(hit);
+        event.preventDefault();
+        return;
+      }
       if (!hit?.point || !beginFacePaintStroke()) return;
       activePointerRef.current = event.pointerId;
       interactionState.active = true;
@@ -372,13 +396,20 @@ function FacePaintSessionEditor({
       if (activePointerRef.current == null && cursorRef.current) cursorRef.current.visible = false;
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || activePointerRef.current == null) return;
+      if (event.key !== 'Escape') return;
+      if (seamAnchorPlacement && activePointerRef.current == null) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cancelFacePaintSeamAnchorPlacement();
+        return;
+      }
+      if (activePointerRef.current == null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       finishStroke(true);
     };
 
-    canvas.style.cursor = 'crosshair';
+    canvas.style.cursor = seamAnchorPlacement ? 'cell' : 'crosshair';
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
@@ -406,6 +437,7 @@ function FacePaintSessionEditor({
     overlayGeometry,
     pickGeometry,
     seamStatus,
+    seamAnchorPlacement,
     transform,
   ]);
 
@@ -452,10 +484,26 @@ function FacePaintSessionEditor({
           renderOrder={1006}
         />
       )}
+      {seamAnchorLocal && (
+        <mesh
+          position={seamAnchorLocal}
+          scale={[anchorMarkerRadius, anchorMarkerRadius, anchorMarkerRadius]}
+          renderOrder={1007}
+        >
+          <ringGeometry args={[0.62, 1, 32]} />
+          <meshBasicMaterial
+            color="#72f0c1"
+            depthTest={false}
+            depthWrite={false}
+            transparent
+            opacity={0.95}
+          />
+        </mesh>
+      )}
       <mesh ref={cursorRef} visible={false} renderOrder={1005}>
         <ringGeometry args={[0.93, 1, 48]} />
         <meshBasicMaterial
-          color={CURSOR_COLOR}
+          color={seamAnchorPlacement ? '#72f0c1' : CURSOR_COLOR}
           depthTest={false}
           depthWrite={false}
           transparent
@@ -476,8 +524,10 @@ export function ManualFacePaintEditor() {
   const cutKind = useManualPlaneSplit((state) => state.cutKind);
   const instanceId = useManualPlaneSplit((state) => state.instanceId);
   const assetId = useManualPlaneSplit((state) => state.sourceAssetId);
+  const workflowMode = useSurfaceWorkflow((state) => state.mode);
   if (
-    cutKind !== 'surface'
+    workflowMode !== 'facePaint'
+    || cutKind !== 'surface'
     || (phase !== 'editing' && phase !== 'error')
     || !instanceId
     || !assetId

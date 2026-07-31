@@ -189,6 +189,43 @@ function collectMeshGeometries(root: THREE.Object3D): THREE.BufferGeometry[] {
   return out;
 }
 
+export interface DecodedGlbPart {
+  name: string;
+  positions: Float32Array;
+  normals: Float32Array | null;
+}
+
+/**
+ * 自动拆件结果专用解析：保留 GLB 中的 Mesh 节点边界，不再像普通导入那样合并。
+ * Hi3D 的语义拆件结果以多个 Mesh 节点表达独立零件；这里仍执行统一的
+ * Y-up 米 → Z-up 毫米烘焙，后续再按源资产包围盒做稳健尺寸归一。
+ */
+export async function decodeGlbParts(buffer: ArrayBuffer): Promise<DecodedGlbPart[]> {
+  if (buffer.byteLength === 0) throw new ParseFailure('empty');
+  const gltf = await gltfParse(stripGlb(buffer));
+  gltf.scene.updateMatrixWorld(true);
+  const parts: DecodedGlbPart[] = [];
+  let ordinal = 0;
+  gltf.scene.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    const src = mesh.geometry as THREE.BufferGeometry;
+    if (!src.getAttribute('position') || src.getAttribute('position').count === 0) return;
+    const geometry = src.index ? src.toNonIndexed() : src.clone();
+    geometry.applyMatrix4(mesh.matrixWorld);
+    geometry.applyMatrix4(GLTF_BAKE);
+    const position = geometry.getAttribute('position');
+    const normal = geometry.getAttribute('normal');
+    parts.push({
+      name: mesh.name?.trim() || `零件 ${++ordinal}`,
+      positions: attrToF32(position as THREE.BufferAttribute),
+      normals: normal ? attrToF32(normal as THREE.BufferAttribute) : null,
+    });
+  });
+  if (parts.length === 0) throw new ParseFailure('empty');
+  return parts;
+}
+
 function mergeToArrays(geos: THREE.BufferGeometry[]): {
   positions: Float32Array;
   normals: Float32Array | null;

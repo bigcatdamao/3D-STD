@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import type { Transform, Vec3 } from '../kernel/types';
+import { projectSeamLoop } from './seam-projection-core';
 
 export const SURFACE_CUT_FACE_BUDGET = 80_000;
 export const SURFACE_CUT_BOUNDARY_BUDGET = 12_000;
-export const SURFACE_CUT_CAP_CONTOUR_BUDGET = 4_096;
+export const SURFACE_CUT_CAP_CONTOUR_BUDGET = 12_000;
+export const FACE_SET_CUT_FACE_BUDGET = 2_000_000;
+export const FACE_SET_CUT_SELECTED_FACE_BUDGET = 500_000;
 export type SurfaceCutPreference = 'balanced' | 'shortest' | 'crease';
 
 export interface SurfaceCutInput {
@@ -23,6 +26,7 @@ export interface SurfaceCutInput {
   preference?: SurfaceCutPreference;
   maxCapWarpRatio?: number;
   faceBudget?: number;
+  selectedFaceBudget?: number;
   boundaryBudget?: number;
 }
 
@@ -363,82 +367,8 @@ function preferencePenalty(preference: SurfaceCutPreference, smoothness: number)
   return 0.18 + 2.82 * Math.pow(smoothness, 3);
 }
 
-function signedArea2(points: THREE.Vector2[]): number {
-  let area2 = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    area2 += current.x * next.y - next.x * current.y;
-  }
-  return area2;
-}
-
 function orient2d(a: THREE.Vector2, b: THREE.Vector2, c: THREE.Vector2): number {
   return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function onSegment2d(a: THREE.Vector2, b: THREE.Vector2, point: THREE.Vector2, epsilon: number): boolean {
-  return Math.abs(orient2d(a, b, point)) <= epsilon
-    && point.x >= Math.min(a.x, b.x) - epsilon
-    && point.x <= Math.max(a.x, b.x) + epsilon
-    && point.y >= Math.min(a.y, b.y) - epsilon
-    && point.y <= Math.max(a.y, b.y) + epsilon;
-}
-
-function segmentsIntersect2d(
-  a: THREE.Vector2,
-  b: THREE.Vector2,
-  c: THREE.Vector2,
-  d: THREE.Vector2,
-  epsilon: number,
-): boolean {
-  const abC = orient2d(a, b, c);
-  const abD = orient2d(a, b, d);
-  const cdA = orient2d(c, d, a);
-  const cdB = orient2d(c, d, b);
-  if (
-    ((abC > epsilon && abD < -epsilon) || (abC < -epsilon && abD > epsilon))
-    && ((cdA > epsilon && cdB < -epsilon) || (cdA < -epsilon && cdB > epsilon))
-  ) return true;
-  return onSegment2d(a, b, c, epsilon)
-    || onSegment2d(a, b, d, epsilon)
-    || onSegment2d(c, d, a, epsilon)
-    || onSegment2d(c, d, b, epsilon);
-}
-
-function polygonSelfIntersects(points: THREE.Vector2[], epsilon: number): boolean {
-  for (let first = 0; first < points.length; first += 1) {
-    const firstNext = (first + 1) % points.length;
-    for (let second = first + 1; second < points.length; second += 1) {
-      const secondNext = (second + 1) % points.length;
-      if (
-        first === second
-        || firstNext === second
-        || secondNext === first
-        || (first === 0 && secondNext === 0)
-      ) continue;
-      if (segmentsIntersect2d(
-        points[first],
-        points[firstNext],
-        points[second],
-        points[secondNext],
-        epsilon,
-      )) return true;
-    }
-  }
-  return false;
-}
-
-function newellNormal(points: Vec3[]): Vec3 {
-  const normal: Vec3 = [0, 0, 0];
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    normal[0] += (current[1] - next[1]) * (current[2] + next[2]);
-    normal[1] += (current[2] - next[2]) * (current[0] + next[0]);
-    normal[2] += (current[0] - next[0]) * (current[1] + next[1]);
-  }
-  return normalize(normal);
 }
 
 function triangulateCap(
@@ -455,42 +385,25 @@ function triangulateCap(
     };
   }
   const world = loop.map((vertex) => weldedWorld[vertex]);
-  const center = world.reduce<Vec3>((sum, point) => [
-    sum[0] + point[0],
-    sum[1] + point[1],
-    sum[2] + point[2],
-  ], [0, 0, 0]).map((value) => value / world.length) as Vec3;
-  const planeNormal = newellNormal(world);
-  if (length(planeNormal) <= 1e-9) {
+  const projection = projectSeamLoop(world);
+  if (projection.status === 'degenerate') {
     return {
       status: 'unsupported',
       code: 'cap_failed',
       message: '接缝无法建立稳定的封口投影平面',
     };
   }
-  const helper: Vec3 = Math.abs(planeNormal[2]) < 0.82 ? [0, 0, 1] : [0, 1, 0];
-  const tangent = normalize(cross(helper, planeNormal));
-  const bitangent = normalize(cross(planeNormal, tangent));
-  const contour = world.map((point) => {
-    const relative = subtract(point, center);
-    return new THREE.Vector2(dot(relative, tangent), dot(relative, bitangent));
-  });
-  const area2 = signedArea2(contour);
-  const minX = Math.min(...contour.map((point) => point.x));
-  const maxX = Math.max(...contour.map((point) => point.x));
-  const minY = Math.min(...contour.map((point) => point.y));
-  const maxY = Math.max(...contour.map((point) => point.y));
-  const diagonal = Math.max(Math.hypot(maxX - minX, maxY - minY), 1e-6);
-  const epsilon2d = Math.max(1e-7, diagonal * 1e-8);
-  if (Math.abs(area2) <= epsilon2d * epsilon2d || polygonSelfIntersects(contour, epsilon2d)) {
+  if (projection.status === 'self_intersection') {
     return {
       status: 'unsupported',
       code: 'self_intersecting_seam',
       message: '接缝投影发生自交或面积退化，不能生成可靠封口',
     };
   }
-  const maxDeviationMm = Math.max(...world.map((point) => Math.abs(dot(subtract(point, center), planeNormal))));
-  const warpRatio = maxDeviationMm / diagonal;
+  const contour = projection.contour.map(([x, y]) => new THREE.Vector2(x, y));
+  const area2 = projection.signedArea2;
+  const maxDeviationMm = projection.maxDeviation;
+  const warpRatio = projection.warpRatio;
   if (warpRatio > maxWarpRatio) {
     return {
       status: 'unsupported',
@@ -529,6 +442,361 @@ function unsupported(
 }
 
 /**
+ * M1.11d high-poly face-set path.
+ *
+ * The user's purple mask already decides A/B, so this path does not build the
+ * global face dual graph or run min-cut. It keeps only edges touched by the
+ * painted joint patch, scans the source once for their opposite face, validates
+ * one local closed seam, and then streams triangles into the two derived parts.
+ */
+function createFaceSetSurfaceCut(
+  input: SurfaceCutInput,
+  facesTotal: number,
+  vertexCount: number,
+  faceBudget: number,
+  boundaryBudget: number,
+  maxCapWarpRatio: number,
+): SurfaceCutResult {
+  const faceLabels = input.faceLabels!;
+  if (faceLabels.length !== facesTotal) {
+    return unsupported('invalid_geometry', '面组数据与当前网格面数不一致，请返回重新涂画', {
+      faceLabels: faceLabels.length,
+      facesTotal,
+    });
+  }
+  if (facesTotal > faceBudget) {
+    return unsupported('budget', `模型共 ${facesTotal.toLocaleString()} 面，超过局部面组切割 ${faceBudget.toLocaleString()} 面预算`, {
+      facesTotal,
+      faceBudget,
+    });
+  }
+
+  let selectedFaces = 0;
+  for (let faceIndex = 0; faceIndex < facesTotal; faceIndex += 1) {
+    const value = Number(faceLabels[faceIndex]);
+    if (value !== 0 && value !== 1) {
+      return unsupported('invalid_geometry', `面组 #${faceIndex} 的标签无效，请返回重新涂画`);
+    }
+    selectedFaces += value;
+  }
+  if (!selectedFaces || selectedFaces === facesTotal) {
+    return unsupported('missing_seeds', '紫色面组必须只覆盖模型的一部分，请返回修改面组');
+  }
+  const selectedFaceBudget = Math.max(
+    1,
+    Math.floor(input.selectedFaceBudget ?? FACE_SET_CUT_SELECTED_FACE_BUDGET),
+  );
+  if (selectedFaces > selectedFaceBudget) {
+    return unsupported(
+      'budget',
+      `紫色局部面组共 ${selectedFaces.toLocaleString()} 面，超过关节精细拆件 ${selectedFaceBudget.toLocaleString()} 面预算`,
+      { selectedFaces, selectedFaceBudget },
+    );
+  }
+
+  const localMin: Vec3 = [Infinity, Infinity, Infinity];
+  const localMax: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    const point = localVertex(input.positions, vertex);
+    if (!point) return unsupported('invalid_geometry', `顶点 #${vertex} 含无效坐标`);
+    for (let axis = 0; axis < 3; axis += 1) {
+      localMin[axis] = Math.min(localMin[axis], point[axis]);
+      localMax[axis] = Math.max(localMax[axis], point[axis]);
+    }
+  }
+  const localDiagonal = Math.max(distance(localMin, localMax), 1);
+  const weldEpsilon = Math.max(1e-6, localDiagonal * 1e-7);
+  const inverse = 1 / weldEpsilon;
+  const matrix = transformMatrix(input.transform);
+  const localVertexById: Vec3[] = [];
+  const worldVertexById: Vec3[] = [];
+  const vertexIdByKey = new Map<string, number>();
+  const localEdges = new Map<string, MeshEdge>();
+
+  const originalIndex = (face: number, corner: number): number => Number(
+    input.index ? input.index[face * 3 + corner] : face * 3 + corner,
+  );
+  const validOriginalIndex = (value: number) => (
+    Number.isInteger(value) && value >= 0 && value < vertexCount
+  );
+  const positionKey = (original: number) => {
+    const offset = original * 3;
+    return `${Math.round(Number(input.positions[offset]) * inverse)},${Math.round(Number(input.positions[offset + 1]) * inverse)},${Math.round(Number(input.positions[offset + 2]) * inverse)}`;
+  };
+  const localId = (key: string, original: number): number => {
+    const current = vertexIdByKey.get(key);
+    if (current !== undefined) return current;
+    const point = localVertex(input.positions, original)!;
+    const next = localVertexById.length;
+    vertexIdByKey.set(key, next);
+    localVertexById.push(point);
+    worldVertexById.push(applyMatrix(point, matrix));
+    return next;
+  };
+  const keyOfKeys = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+  for (let face = 0; face < facesTotal; face += 1) {
+    if (Number(faceLabels[face]) !== 1) continue;
+    const originals: [number, number, number] = [
+      originalIndex(face, 0),
+      originalIndex(face, 1),
+      originalIndex(face, 2),
+    ];
+    if (originals.some((value) => !validOriginalIndex(value))) {
+      return unsupported('invalid_geometry', `三角面 #${face} 的顶点索引无效`);
+    }
+    const keys = originals.map(positionKey) as [string, string, string];
+    if (new Set(keys).size < 3) {
+      return unsupported('invalid_geometry', `紫色面组含退化三角面 #${face}，请先修复网格`);
+    }
+    const ids = keys.map((key, corner) => localId(key, originals[corner])) as [number, number, number];
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+      const next = (edgeIndex + 1) % 3;
+      const key = keyOfKeys(keys[edgeIndex], keys[next]);
+      const use: EdgeUse = { face, from: ids[edgeIndex], to: ids[next] };
+      const edge = localEdges.get(key);
+      if (edge) edge.uses.push(use);
+      else {
+        localEdges.set(key, {
+          a: Math.min(ids[edgeIndex], ids[next]),
+          b: Math.max(ids[edgeIndex], ids[next]),
+          uses: [use],
+        });
+      }
+    }
+  }
+
+  // Only compare unpainted edges with keys already created by the joint patch.
+  for (let face = 0; face < facesTotal; face += 1) {
+    if (Number(faceLabels[face]) === 1) continue;
+    const originals: [number, number, number] = [
+      originalIndex(face, 0),
+      originalIndex(face, 1),
+      originalIndex(face, 2),
+    ];
+    if (originals.some((value) => !validOriginalIndex(value))) {
+      return unsupported('invalid_geometry', `三角面 #${face} 的顶点索引无效`);
+    }
+    const keys = originals.map(positionKey) as [string, string, string];
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+      const next = (edgeIndex + 1) % 3;
+      const edge = localEdges.get(keyOfKeys(keys[edgeIndex], keys[next]));
+      if (!edge) continue;
+      edge.uses.push({
+        face,
+        from: vertexIdByKey.get(keys[edgeIndex])!,
+        to: vertexIdByKey.get(keys[next])!,
+      });
+    }
+  }
+
+  const invalidEdges = [...localEdges.values()].filter((edge) => edge.uses.length !== 2);
+  if (invalidEdges.length) {
+    const boundaryEdges = invalidEdges.filter((edge) => edge.uses.length === 1).length;
+    const nonManifoldEdges = invalidEdges.filter((edge) => edge.uses.length > 2).length;
+    return unsupported(
+      'non_manifold_source',
+      '紫色关节区域接触到开放边或非流形边，请先修复接缝附近网格',
+      { boundaryEdges, nonManifoldEdges },
+    );
+  }
+
+  const boundaryEdges = [...localEdges.values()].filter((edge) => {
+    const [a, b] = edge.uses;
+    return Number(faceLabels[a.face]) !== Number(faceLabels[b.face]);
+  });
+  if (boundaryEdges.length > boundaryBudget) {
+    return unsupported('boundary_budget', `局部接缝超过 ${boundaryBudget.toLocaleString()} 条边预算`, {
+      boundaryEdges: boundaryEdges.length,
+      boundaryBudget,
+    });
+  }
+  if (!boundaryEdges.length) {
+    const partA = new Float32Array(selectedFaces * 9);
+    const partB = new Float32Array((facesTotal - selectedFaces) * 9);
+    let offsetA = 0;
+    let offsetB = 0;
+    for (let face = 0; face < facesTotal; face += 1) {
+      const selected = Number(faceLabels[face]) === 1;
+      const target = selected ? partA : partB;
+      let offset = selected ? offsetA : offsetB;
+      for (let corner = 0; corner < 3; corner += 1) {
+        const original = originalIndex(face, corner);
+        const pointOffset = original * 3;
+        target[offset++] = Number(input.positions[pointOffset]);
+        target[offset++] = Number(input.positions[pointOffset + 1]);
+        target[offset++] = Number(input.positions[pointOffset + 2]);
+      }
+      if (selected) offsetA = offset;
+      else offsetB = offset;
+    }
+    return {
+      status: 'ready',
+      partA: {
+        positions: partA,
+        sourceFaceCount: selectedFaces,
+        capFaceCount: 0,
+        boundaryEdges: 0,
+        dimensionsMm: dimensionsOfWorldTriangles(partA, matrix),
+      },
+      partB: {
+        positions: partB,
+        sourceFaceCount: facesTotal - selectedFaces,
+        capFaceCount: 0,
+        boundaryEdges: 0,
+        dimensionsMm: dimensionsOfWorldTriangles(partB, matrix),
+      },
+      seamPositions: new Float32Array(0),
+      metrics: {
+        sourceFaces: facesTotal,
+        partAFaces: selectedFaces,
+        partBFaces: facesTotal - selectedFaces,
+        boundaryVertices: 0,
+        seamLengthMm: 0,
+        guideOffsetMm: 0,
+        adaptiveSpanMm: 0,
+        meanCreaseDeg: 0,
+        searchHalfWidthMm: 0,
+        maxCapDeviationMm: 0,
+        capWarpRatio: 0,
+        preference: input.preference ?? 'balanced',
+      },
+      warnings: [
+        '紫色区域已经由独立闭合壳体组成，本次只执行壳体分组，不新增切口或封口',
+        '源模型其他区域的水密、非流形和自交仍以打印检查结果为准',
+      ],
+    };
+  }
+
+  const outgoing = new Map<number, number[]>();
+  const incoming = new Map<number, number>();
+  const directedBoundary: [number, number][] = [];
+  for (const edge of boundaryEdges) {
+    const selectedUse = edge.uses.find((use) => Number(faceLabels[use.face]) === 1)!;
+    directedBoundary.push([selectedUse.from, selectedUse.to]);
+    const next = outgoing.get(selectedUse.from) ?? [];
+    next.push(selectedUse.to);
+    outgoing.set(selectedUse.from, next);
+    incoming.set(selectedUse.to, (incoming.get(selectedUse.to) ?? 0) + 1);
+  }
+  const boundaryVertices = new Set(directedBoundary.flat());
+  const branching = [...boundaryVertices].filter((vertex) => (
+    (outgoing.get(vertex)?.length ?? 0) !== 1 || (incoming.get(vertex) ?? 0) !== 1
+  ));
+  if (branching.length) {
+    return unsupported('branching_seam', '局部接缝出现分叉或断点，请补涂或擦除后重试', {
+      branchPoints: branching.length,
+      boundaryEdges: directedBoundary.length,
+    });
+  }
+
+  const first = directedBoundary[0][0];
+  const loop: number[] = [first];
+  let current = first;
+  for (let step = 0; step <= directedBoundary.length; step += 1) {
+    const next = outgoing.get(current)?.[0];
+    if (next === undefined) {
+      return unsupported('branching_seam', '局部接缝没有形成连续闭环');
+    }
+    if (next === first) break;
+    loop.push(next);
+    current = next;
+  }
+  if (loop.length !== directedBoundary.length) {
+    return unsupported('multiple_seams', '当前紫色面组形成多个独立接缝环；每次只处理一个关节', {
+      visitedEdges: loop.length,
+      boundaryEdges: directedBoundary.length,
+    });
+  }
+
+  const cap = triangulateCap(loop, worldVertexById, maxCapWarpRatio);
+  if ('status' in cap) return cap;
+  const partA = new Float32Array((selectedFaces + cap.triangles.length) * 9);
+  const partB = new Float32Array((facesTotal - selectedFaces + cap.triangles.length) * 9);
+  let offsetA = 0;
+  let offsetB = 0;
+  for (let face = 0; face < facesTotal; face += 1) {
+    const target = Number(faceLabels[face]) === 1 ? partA : partB;
+    let offset = Number(faceLabels[face]) === 1 ? offsetA : offsetB;
+    for (let corner = 0; corner < 3; corner += 1) {
+      const original = originalIndex(face, corner);
+      const pointOffset = original * 3;
+      target[offset++] = Number(input.positions[pointOffset]);
+      target[offset++] = Number(input.positions[pointOffset + 1]);
+      target[offset++] = Number(input.positions[pointOffset + 2]);
+    }
+    if (target === partA) offsetA = offset;
+    else offsetB = offset;
+  }
+  for (const [a, b, c] of cap.triangles) {
+    const pointA = localVertexById[loop[a]];
+    const pointB = localVertexById[loop[b]];
+    const pointC = localVertexById[loop[c]];
+    partA.set([...pointA, ...pointC, ...pointB], offsetA);
+    offsetA += 9;
+    partB.set([...pointA, ...pointB, ...pointC], offsetB);
+    offsetB += 9;
+  }
+
+  const seamPositions = new Float32Array(directedBoundary.length * 6);
+  let seamLengthMm = 0;
+  directedBoundary.forEach(([from, to], index) => {
+    seamPositions.set(localVertexById[from], index * 6);
+    seamPositions.set(localVertexById[to], index * 6 + 3);
+    seamLengthMm += distance(worldVertexById[from], worldVertexById[to]);
+  });
+  const faceWorldNormal = (face: number): Vec3 => {
+    const points = [0, 1, 2].map((corner) => (
+      applyMatrix(localVertex(input.positions, originalIndex(face, corner))!, matrix)
+    )) as [Vec3, Vec3, Vec3];
+    return normalize(cross(subtract(points[1], points[0]), subtract(points[2], points[0])));
+  };
+  let creaseSum = 0;
+  for (const edge of boundaryEdges) {
+    const normalA = faceWorldNormal(edge.uses[0].face);
+    const normalB = faceWorldNormal(edge.uses[1].face);
+    creaseSum += Math.acos(clamp(dot(normalA, normalB), -1, 1)) * 180 / Math.PI;
+  }
+
+  return {
+    status: 'ready',
+    partA: {
+      positions: partA,
+      sourceFaceCount: selectedFaces,
+      capFaceCount: cap.triangles.length,
+      boundaryEdges: 0,
+      dimensionsMm: dimensionsOfWorldTriangles(partA, matrix),
+    },
+    partB: {
+      positions: partB,
+      sourceFaceCount: facesTotal - selectedFaces,
+      capFaceCount: cap.triangles.length,
+      boundaryEdges: 0,
+      dimensionsMm: dimensionsOfWorldTriangles(partB, matrix),
+    },
+    seamPositions,
+    metrics: {
+      sourceFaces: facesTotal,
+      partAFaces: selectedFaces + cap.triangles.length,
+      partBFaces: facesTotal - selectedFaces + cap.triangles.length,
+      boundaryVertices: loop.length,
+      seamLengthMm,
+      guideOffsetMm: 0,
+      adaptiveSpanMm: 0,
+      meanCreaseDeg: creaseSum / boundaryEdges.length,
+      searchHalfWidthMm: 0,
+      maxCapDeviationMm: cap.maxDeviationMm,
+      capWarpRatio: cap.warpRatio,
+      preference: input.preference ?? 'balanced',
+    },
+    warnings: [
+      '紫色面组生成拆下件 A，未涂区域生成保留件 B；高面数模式只构建关节局部接缝',
+      '接缝与两侧封口已验证；源模型其他区域的水密、非流形和自交仍以打印检查结果为准',
+    ],
+  };
+}
+
+/**
  * 以任意世界引导平面为搜索中心，对封闭流形的三角面双图做 s-t 最小割。
  * 边界沿现有网格边走，并可在带宽内偏移到更短、折角更明显且网格不过密的位置。
  * 只接受单一无分叉闭环；两侧共享同一约束三角化封口并再次做拓扑闭合验证。
@@ -536,9 +804,23 @@ function unsupported(
 export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResult {
   const vertexCount = Math.floor(input.positions.length / 3);
   const facesTotal = input.index ? Math.floor(input.index.length / 3) : Math.floor(vertexCount / 3);
-  const faceBudget = Math.max(1, Math.floor(input.faceBudget ?? SURFACE_CUT_FACE_BUDGET));
+  const usesFaceLabels = input.faceLabels !== undefined;
+  const faceBudget = Math.max(1, Math.floor(
+    input.faceBudget ?? (usesFaceLabels ? FACE_SET_CUT_FACE_BUDGET : SURFACE_CUT_FACE_BUDGET),
+  ));
   const boundaryBudget = Math.max(3, Math.floor(input.boundaryBudget ?? SURFACE_CUT_BOUNDARY_BUDGET));
   if (!vertexCount || !facesTotal) return unsupported('invalid_geometry', '模型没有可切割的三角网格');
+  const maxCapWarpRatio = clamp(input.maxCapWarpRatio ?? 0.12, 0.01, 0.25);
+  if (usesFaceLabels) {
+    return createFaceSetSurfaceCut(
+      input,
+      facesTotal,
+      vertexCount,
+      faceBudget,
+      boundaryBudget,
+      maxCapWarpRatio,
+    );
+  }
   if (facesTotal > faceBudget) {
     return unsupported('budget', `模型共 ${facesTotal.toLocaleString()} 面，超过表面切割 ${faceBudget.toLocaleString()} 面预算`, {
       facesTotal,
@@ -547,13 +829,6 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
   }
   const searchHalfWidthMm = Math.max(0.1, Number(input.searchHalfWidthMm));
   if (!Number.isFinite(searchHalfWidthMm)) return unsupported('invalid_geometry', '表面吸附范围无效');
-  const usesFaceLabels = input.faceLabels !== undefined;
-  if (usesFaceLabels && input.faceLabels!.length !== facesTotal) {
-    return unsupported('invalid_geometry', '面组数据与当前网格面数不一致，请返回重新涂画', {
-      faceLabels: input.faceLabels!.length,
-      facesTotal,
-    });
-  }
   const guide = resolveGuide(input);
   if (!guide && !usesFaceLabels) return unsupported('invalid_geometry', '曲面切割引导平面无效');
   const resolvedGuide = guide ?? { origin: [0, 0, 0] as Vec3, normal: [1, 0, 0] as Vec3 };
@@ -565,7 +840,6 @@ export function createSurfaceAdaptiveCut(input: SurfaceCutInput): SurfaceCutResu
     return unsupported('invalid_geometry', '贴面曲线至少需要 3 个控制点');
   }
   const preference = input.preference ?? 'balanced';
-  const maxCapWarpRatio = clamp(input.maxCapWarpRatio ?? 0.12, 0.01, 0.25);
 
   const localPoints: Vec3[] = [];
   const localMin: Vec3 = [Infinity, Infinity, Infinity];

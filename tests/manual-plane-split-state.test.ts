@@ -10,6 +10,7 @@ import {
   appendManualSurfaceGuidePoint,
   cancelManualPlaneSplit,
   clearManualSurfaceGuidePoints,
+  closeManualSurfaceGuidePoints,
   confirmManualPlaneSplit,
   confirmManualSurfaceSplit,
   manualSurfaceGuideWorld,
@@ -19,7 +20,9 @@ import {
   removeLastManualSurfaceGuidePoint,
   returnManualSurfaceSplitToGuide,
   setManualPlaneAxis,
+  setManualSurfaceWorkflowMode,
   startManualPlaneSplit,
+  undoManualSurfaceStrokeSegment,
   useManualPlaneSplit,
   worldPlaneToAssetPlane,
 } from '../src/split/manual-plane-split-state';
@@ -32,6 +35,10 @@ import {
   registerFacePaintGeometry,
   useFacePaint,
 } from '../src/split/face-paint-state';
+import {
+  recordSurfaceStrokeSegment,
+  useSurfaceWorkflow,
+} from '../src/split/surface-workflow-state';
 import { dispatch, doc, geometryRegistry } from '../src/state/store';
 
 class ImmediateSplitWorker implements PlaneSplitWorkerLike {
@@ -233,6 +240,85 @@ describe('manual plane split state', () => {
     expect(doc.history.length).toBe(historyBefore);
   });
 
+  it('starts surface cutting in stroke mode and preserves the legacy face-set workflow as a switch', () => {
+    const geometry = new THREE.BoxGeometry(20, 20, 20);
+    const asset = dispatch((scene) => scene.addAsset({
+      name: '曲面工作流切换',
+      source: 'import',
+      state: 'ready',
+      meta: {
+        faces: 12,
+        vertices: 8,
+        bbox: { min: [-10, -10, -10], max: [10, 10, 10] },
+        unitChoice: 'mm',
+        watertight: true,
+        degenerate: false,
+      },
+    }));
+    geometryRegistry.set(asset.id, geometry);
+    const instance = dispatch((scene) => scene.placeInstance(asset.id));
+
+    expect(startManualPlaneSplit(instance.id, 'surface')).toBe(true);
+    expect(useSurfaceWorkflow.getState().mode).toBe('stroke');
+    expect(appendManualSurfaceGuidePoint([10, -4, 0])).toBe(true);
+    expect(appendManualSurfaceGuidePoint([10, 4, 0])).toBe(true);
+    expect(useManualPlaneSplit.getState().surfaceGuidePoints).toHaveLength(2);
+
+    expect(setManualSurfaceWorkflowMode('facePaint')).toBe(true);
+    expect(useSurfaceWorkflow.getState().mode).toBe('facePaint');
+    expect(useManualPlaneSplit.getState().surfaceGuidePoints).toEqual([]);
+
+    expect(setManualSurfaceWorkflowMode('stroke')).toBe(true);
+    expect(useSurfaceWorkflow.getState().mode).toBe('stroke');
+  });
+
+  it('requires an explicit closed guide and undoes the closure before the latest input segment', () => {
+    const geometry = new THREE.BoxGeometry(20, 20, 20);
+    const asset = dispatch((scene) => scene.addAsset({
+      name: '多视角切割笔测试',
+      source: 'import',
+      state: 'ready',
+      meta: {
+        faces: 12,
+        vertices: 8,
+        bbox: { min: [-10, -10, -10], max: [10, 10, 10] },
+        unitChoice: 'mm',
+        watertight: true,
+        degenerate: false,
+      },
+    }));
+    geometryRegistry.set(asset.id, geometry);
+    const instance = dispatch((scene) => scene.placeInstance(asset.id));
+
+    expect(startManualPlaneSplit(instance.id, 'surface')).toBe(true);
+    expect(appendManualSurfaceGuidePoint([10, -6, -6])).toBe(true);
+    expect(appendManualSurfaceGuidePoint([10, 6, -6])).toBe(true);
+    expect(appendManualSurfaceGuidePoint([10, 6, 6])).toBe(true);
+    recordSurfaceStrokeSegment(3, 'click');
+
+    expect(previewManualSurfaceSplit()).toBe(false);
+    expect(useManualPlaneSplit.getState()).toMatchObject({
+      surfaceGuideClosed: false,
+      errorCode: 'open_surface_guide',
+    });
+
+    expect(closeManualSurfaceGuidePoints()).toBe(true);
+    expect(useManualPlaneSplit.getState().surfaceGuideClosed).toBe(true);
+
+    expect(undoManualSurfaceStrokeSegment()).toBe(true);
+    expect(useManualPlaneSplit.getState()).toMatchObject({
+      surfaceGuideClosed: false,
+      surfaceGuidePoints: [
+        [10, -6, -6],
+        [10, 6, -6],
+        [10, 6, 6],
+      ],
+    });
+
+    expect(undoManualSurfaceStrokeSegment()).toBe(true);
+    expect(useManualPlaneSplit.getState().surfaceGuidePoints).toEqual([]);
+  });
+
   it('confirms into two derived assets and one undo restores the source instance', async () => {
     _injectPlaneSplitRunner(new PlaneSplitRunner(() => new ImmediateSplitWorker(), 1000));
     const geometry = new THREE.BoxGeometry(20, 20, 20);
@@ -295,6 +381,7 @@ describe('manual plane split state', () => {
     expect(appendManualSurfaceGuidePoint([10, 6, -6])).toBe(true);
     expect(appendManualSurfaceGuidePoint([10, 6, 6])).toBe(true);
     expect(appendManualSurfaceGuidePoint([10, -6, 6])).toBe(true);
+    expect(closeManualSurfaceGuidePoints()).toBe(true);
     expect(previewManualSurfaceSplit()).toBe(true);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(surfaceWorker.received[0].guidePointsWorld).toEqual([
@@ -318,6 +405,7 @@ describe('manual plane split state', () => {
     expect(doc.history.length).toBe(historyBefore);
     expect(doc.nodes.has(instance.id)).toBe(true);
 
+    expect(closeManualSurfaceGuidePoints()).toBe(true);
     expect(previewManualSurfaceSplit()).toBe(true);
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     expect(useManualPlaneSplit.getState().phase).toBe('previewReady');

@@ -20,6 +20,14 @@ import type {
   SurfaceCutResult,
 } from './surface-cut-core';
 import { SurfaceCutRunner, type SurfaceCutWorkerLike } from './surface-cut-runner';
+import {
+  popSurfaceStrokeSegment,
+  resetSurfaceWorkflowMode,
+  resetSurfaceStrokeSession,
+  setSurfaceWorkflowMode,
+  useSurfaceWorkflow,
+  type SurfaceWorkflowMode,
+} from './surface-workflow-state';
 
 export type ManualPlaneMode = 'translate' | 'rotate' | 'scale';
 export type ManualPlaneAxis = 'x' | 'y' | 'z' | 'custom';
@@ -154,6 +162,7 @@ export function startManualPlaneSplit(instanceId: string, cutKind: ManualSplitKi
   runner?.cancel();
   surfaceRunner?.cancel();
   resetFacePaintSession();
+  resetSurfaceWorkflowMode();
   closePlaneCutPreview();
   const world = worldBBoxOfInstance(instance.transform, doc.assets.get(instance.assetId)!.meta.bbox);
   const center = world.getCenter(new THREE.Vector3());
@@ -192,6 +201,7 @@ export function cancelManualPlaneSplit(): void {
   runner?.cancel();
   surfaceRunner?.cancel();
   resetFacePaintSession();
+  resetSurfaceWorkflowMode();
   useManualPlaneSplit.setState(initialState, true);
 }
 
@@ -279,11 +289,43 @@ export function appendManualSurfaceGuidePoint(point: Vec3): boolean {
   if (
     !canEdit(state)
     || state.cutKind !== 'surface'
-    || state.surfaceGuidePoints.length >= 64
+    || state.surfaceGuidePoints.length >= 256
     || !point.every(Number.isFinite)
   ) return false;
   editablePatch({
     surfaceGuidePoints: [...state.surfaceGuidePoints, cloneVec3(point)],
+    surfaceGuideClosed: false,
+  });
+  return true;
+}
+
+export function replaceManualSurfaceGuidePoints(points: readonly Vec3[]): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || points.length > 256
+    || points.some((point) => point.length !== 3 || !point.every(Number.isFinite))
+  ) return false;
+  editablePatch({
+    surfaceGuidePoints: points.map(cloneVec3),
+    surfaceGuideClosed: false,
+  });
+  return true;
+}
+
+export function setManualSurfaceWorkflowMode(mode: SurfaceWorkflowMode): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || state.phase === 'previewReady'
+  ) return false;
+  surfaceRunner?.cancel();
+  resetFacePaintSession();
+  setSurfaceWorkflowMode(mode);
+  editablePatch({
+    surfaceGuidePoints: [],
     surfaceGuideClosed: false,
   });
   return true;
@@ -318,7 +360,52 @@ export function removeLastManualSurfaceGuidePoint(): boolean {
 export function clearManualSurfaceGuidePoints(): boolean {
   const state = useManualPlaneSplit.getState();
   if (!canEdit(state) || state.cutKind !== 'surface' || !state.surfaceGuidePoints.length) return false;
+  resetSurfaceStrokeSession();
   editablePatch({ surfaceGuidePoints: [], surfaceGuideClosed: false });
+  return true;
+}
+
+/** M1.12b：只有用户明确点击起点后才把开放笔迹标记为闭环。 */
+export function closeManualSurfaceGuidePoints(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || state.surfaceGuideClosed
+    || state.surfaceGuidePoints.length < 3
+  ) return false;
+  editablePatch({ surfaceGuideClosed: true });
+  return true;
+}
+
+/** 从已闭合状态返回续画；不删除任何已画点。 */
+export function reopenManualSurfaceGuidePoints(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (
+    !canEdit(state)
+    || state.cutKind !== 'surface'
+    || !state.surfaceGuideClosed
+  ) return false;
+  editablePatch({ surfaceGuideClosed: false });
+  return true;
+}
+
+/** 先取消闭合，再按一次输入手势为单位撤销。 */
+export function undoManualSurfaceStrokeSegment(): boolean {
+  const state = useManualPlaneSplit.getState();
+  if (!canEdit(state) || state.cutKind !== 'surface') return false;
+  if (state.surfaceGuideClosed) {
+    editablePatch({ surfaceGuideClosed: false });
+    return true;
+  }
+  if (!state.surfaceGuidePoints.length) return false;
+  const keepPointCount = popSurfaceStrokeSegment() ?? 0;
+  editablePatch({
+    surfaceGuidePoints: state.surfaceGuidePoints
+      .slice(0, keepPointCount)
+      .map(cloneVec3),
+    surfaceGuideClosed: false,
+  });
   return true;
 }
 
@@ -350,7 +437,10 @@ export function manualSurfaceGuideWorld(
 /** 从已验证的表面闭环返回控制点编辑，不退出拆件，也不写场景或历史。 */
 export function returnManualSurfaceSplitToGuide(): boolean {
   const state = useManualPlaneSplit.getState();
-  if (state.cutKind !== 'surface' || state.phase !== 'previewReady') return false;
+  if (
+    state.cutKind !== 'surface'
+    || !['previewing', 'previewReady', 'error'].includes(state.phase)
+  ) return false;
   surfaceRunner?.cancel();
   useManualPlaneSplit.setState({
     phase: 'editing',
@@ -610,6 +700,7 @@ function applySplitResult(
   if (thumbnailA) thumbRegistry.set(split.assets[0].id, thumbnailA);
   if (thumbnailB) thumbRegistry.set(split.assets[1].id, thumbnailB);
   resetFacePaintSession();
+  resetSurfaceWorkflowMode();
   useManualPlaneSplit.setState(initialState, true);
   useUi.getState().bump();
   useUi.getState().setToast(
@@ -653,6 +744,18 @@ export function previewManualSurfaceSplit(): boolean {
       surfaceResult: null,
       error: '请先在模型表面添加至少 3 个控制点，再生成闭合接缝预览',
       errorCode: 'missing_guide_points',
+    });
+    return false;
+  }
+  if (
+    useSurfaceWorkflow.getState().mode === 'stroke'
+    && !state.surfaceGuideClosed
+  ) {
+    useManualPlaneSplit.setState({
+      phase: 'error',
+      surfaceResult: null,
+      error: '切口仍是开放笔迹。请旋转模型继续绘制，并点击黄色起点完成闭合',
+      errorCode: 'open_surface_guide',
     });
     return false;
   }
@@ -963,6 +1066,7 @@ export function confirmManualSurfaceSplit(): boolean {
   if (thumbnailA) thumbRegistry.set(split.assets[0].id, thumbnailA);
   if (thumbnailB) thumbRegistry.set(split.assets[1].id, thumbnailB);
   resetFacePaintSession();
+  resetSurfaceWorkflowMode();
   useManualPlaneSplit.setState(initialState, true);
   useUi.getState().bump();
   useUi.getState().setToast(

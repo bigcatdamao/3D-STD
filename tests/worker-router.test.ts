@@ -110,7 +110,14 @@ describe('router · 基础路由', () => {
     const res = await handleRequest(new Request('https://x.dev/api/health'), makeEnv({ DEMO_CODES: 'a,b:5' }));
     const j = (await res.json()) as HealthResponse;
     expect(j.ok).toBe(true);
-    expect(j.config).toEqual({ turnstile: true, engine: false, engineName: null, promptMax: 2000, demoCodes: 2 }); // 无引擎:兜底 2000
+    expect(j.config).toEqual({
+      turnstile: true,
+      engine: false,
+      engineName: null,
+      generationTypes: ['text', 'image', 'multiview'],
+      promptMax: 2000,
+      demoCodes: 2,
+    }); // 无引擎:兜底 2000
   });
 
   it('非 /api 路径回退静态资产', async () => {

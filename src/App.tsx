@@ -38,6 +38,8 @@ import {
   useManualPlaneSplit,
 } from './split/manual-plane-split-state';
 import { ManualPlaneSplitPanel } from './split/ManualPlaneSplitPanel';
+import { AutoSplitPanel } from './split/AutoSplitPanel';
+import { autoSplitIsActive, startAutoSplit, useAutoSplit } from './split/auto-split-state';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
 
@@ -102,6 +104,18 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
   const issues = useCheck((s) => s.issues);
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
   const history = doc.history;
+  const autoSplitPhase = useAutoSplit((state) => state.phase);
+  if (autoSplitPhase !== 'idle') {
+    return (
+      <div className="inspector-shell">
+        <div className="inspector-tabs" role="tablist" aria-label="自动拆件">
+          <button className="inspector-tab is-active" role="tab" aria-selected="true">自动拆件</button>
+          <span className="inspector-mode-note">Hi3D</span>
+        </div>
+        <div className="inspector-content"><AutoSplitPanel /></div>
+      </div>
+    );
+  }
   if (splitPhase !== 'idle') {
     return (
       <div className="inspector-shell">
@@ -334,6 +348,26 @@ export function App() {
     }
     useUi.getState().setToast('绘制面组已开启：左键涂出要拆下的部分；Ctrl+左键擦除，右侧可切换平面切割');
   };
+  const openAutoSplitWorkbench = () => {
+    patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
+    if (autoSplitIsActive()) return;
+    if (manualPlaneSplitIsActive()) {
+      useUi.getState().setToast('请先退出当前手动拆件，再启动自动拆件');
+      return;
+    }
+    const targets = expandToInstances(doc.selection);
+    if (targets.length !== 1) {
+      useUi.getState().setToast(targets.length === 0
+        ? '先选中 1 个未锁定对象，再点击「自动拆件」'
+        : `自动拆件一次只处理 1 个对象；当前选中 ${targets.length} 个`);
+      return;
+    }
+    if (!startAutoSplit(targets[0].id)) {
+      useUi.getState().setToast('该对象无法启动自动拆件，请确认几何可读取且对象未锁定');
+      return;
+    }
+    useUi.getState().setToast('自动拆件已准备：选择粒度并确认上传后开始');
+  };
   const toggleCreation = () => {
     if (!hasInstance) {
       document.querySelector<HTMLTextAreaElement>('[data-testid="gen-panel"] textarea')?.focus();
@@ -409,7 +443,7 @@ export function App() {
       </aside>
 
       <main className="viewport-frame" aria-label="3D 视口">
-        <Viewport onOpenSplit={openSplitWorkbench} />
+        <Viewport onOpenSplit={openSplitWorkbench} onOpenAutoSplit={openAutoSplitWorkbench} />
         {creationVisible && (
           <CreationPanel
             dismissible={hasInstance}

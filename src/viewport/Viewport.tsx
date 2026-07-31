@@ -32,6 +32,7 @@ import {
   cancelManualPlaneSplit,
   returnFacePaintSurfaceSplitToSeam,
   setManualPlaneMode,
+  undoManualSurfaceStrokeSegment,
   useManualPlaneSplit,
 } from '../split/manual-plane-split-state';
 import {
@@ -44,10 +45,14 @@ import {
 import { ManualPlaneCutManipulator } from '../split/ManualPlaneCutManipulator';
 import { ManualSurfaceCutPreview } from '../split/ManualSurfaceCutPreview';
 import { ManualFacePaintEditor } from '../split/ManualFacePaintEditor';
+import { ManualSurfaceStrokeEditor } from '../split/ManualSurfaceStrokeEditor';
+import { useSurfaceWorkflow } from '../split/surface-workflow-state';
+import { useAutoSplit } from '../split/auto-split-state';
 
 function InteractionBridge() {
   const splitActive = useManualPlaneSplit((state) => state.phase !== 'idle');
-  useViewportInteraction(splitActive);
+  const autoSplitActive = useAutoSplit((state) => state.phase !== 'idle');
+  useViewportInteraction(splitActive || autoSplitActive);
   return null;
 }
 
@@ -61,7 +66,7 @@ const btn: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
+export function Toolbar({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => void; onOpenAutoSplit: () => void }) {
   const ortho = useUi((s) => s.ortho);
   const setOrtho = useUi((s) => s.setOrtho);
   const bed = useUi((s) => s.bed);
@@ -96,7 +101,19 @@ export function Toolbar({ onOpenSplit }: { onOpenSplit: () => void }) {
             ? '打开所选对象的拆件工作台'
             : '先选中一个对象，再打开拆件工作台'}
         >
-          ✂ 拆件
+          ✂ 手动拆件
+        </button>
+        <button
+          type="button"
+          data-testid="auto-split-tool-entry"
+          className="viewport-tool viewport-tool--auto-split"
+          style={{ ...btn, border: '1px solid #63d3ac', color: '#bff7df', background: '#19332d', fontWeight: 750 }}
+          onClick={onOpenAutoSplit}
+          title={selectedInstances.length === 1
+            ? '把所选模型上传至 Hi3D 并拆成独立零件'
+            : '先选中一个对象，再启动自动拆件'}
+        >
+          ✦ 自动拆件
         </button>
         <button style={btn} onClick={() => setOrtho(!ortho)} title="快捷键 5">
           {ortho ? '正交' : '透视'}
@@ -158,9 +175,11 @@ function TransformTools() {
   const splitPhase = useManualPlaneSplit((state) => state.phase);
   const splitMode = useManualPlaneSplit((state) => state.mode);
   const splitKind = useManualPlaneSplit((state) => state.cutKind);
+  const surfaceClosed = useManualPlaneSplit((state) => state.surfaceGuideClosed);
   const facePaintMode = useFacePaint((state) => state.mode);
   const paintedFaceCount = useFacePaint((state) => state.paintedFaceCount);
   const seamStatus = useFacePaint((state) => state.seamStatus);
+  const surfaceWorkflowMode = useSurfaceWorkflow((state) => state.mode);
   const splitActive = splitPhase !== 'idle';
   const mode = splitActive ? splitMode : objectMode;
   const targets = expandToInstances(doc.selection);
@@ -187,12 +206,16 @@ function TransformTools() {
       ? '正在生成 A/B'
       : splitPhase === 'previewReady'
         ? '真实切割预览'
-        : seamStatus === 'ready' ? '接缝预览' : '面组画笔';
+        : surfaceWorkflowMode === 'stroke'
+          ? '多视角切割笔'
+          : seamStatus === 'ready' ? '接缝预览' : '面组画笔';
     const state = splitPhase === 'previewing'
       ? '计算中'
       : splitPhase === 'previewReady'
         ? '待确认'
-        : seamStatus === 'ready' ? '只读' : facePaintMode === 'add' ? '添加' : '擦除';
+        : surfaceWorkflowMode === 'stroke'
+          ? surfaceClosed ? '已闭合' : '开放路径'
+          : seamStatus === 'ready' ? '只读' : facePaintMode === 'add' ? '添加' : '擦除';
     return (
       <div className="viewport-toolbar__surface-curve" role="status">
         <span>{title}</span>
@@ -202,7 +225,11 @@ function TransformTools() {
             ? '源模型保持不变'
             : splitPhase === 'previewReady'
               ? '紫 A 拆下 · 绿 B 保留'
-              : seamStatus === 'ready'
+              : surfaceWorkflowMode === 'stroke'
+                ? surfaceClosed
+                  ? '闭环完成 · 等待生成 A/B'
+                  : '单击放点 · 拖动绘制 · 右键旋转'
+                : seamStatus === 'ready'
             ? '绿色闭环 · 右栏返回修改'
             : `${paintedFaceCount.toLocaleString()} 面 · 右键旋转`}
         </small>
@@ -285,10 +312,12 @@ function StatusBar() {
   useUi((s) => s.rev);
   const splitPhase = useManualPlaneSplit((state) => state.phase);
   const splitKind = useManualPlaneSplit((state) => state.cutKind);
+  const surfaceClosed = useManualPlaneSplit((state) => state.surfaceGuideClosed);
   const facePaintMode = useFacePaint((state) => state.mode);
   const paintedFaceCount = useFacePaint((state) => state.paintedFaceCount);
   const brushRadiusMm = useFacePaint((state) => state.brushRadiusMm);
   const seamStatus = useFacePaint((state) => state.seamStatus);
+  const surfaceWorkflowMode = useSurfaceWorkflow((state) => state.mode);
   const sel = doc.selection.size;
   const h = doc.history;
   if (splitPhase !== 'idle') {
@@ -297,7 +326,9 @@ function StatusBar() {
         ? '生成真实 A/B'
         : splitPhase === 'previewReady'
           ? '真实切割预览'
-          : seamStatus === 'ready' ? '接缝预览' : '绘制面组'
+          : surfaceWorkflowMode === 'stroke'
+            ? '多视角切割笔'
+            : seamStatus === 'ready' ? '接缝预览' : '绘制面组'
       : '平面切割';
     const phaseText = splitPhase === 'running'
       ? '正在计算真实网格'
@@ -305,6 +336,10 @@ function StatusBar() {
         ? '正在拆分并验证两侧封口'
         : splitPhase === 'previewReady'
           ? '紫色拆下件 A · 绿色保留件 B · 等待确认'
+          : splitKind === 'surface' && surfaceWorkflowMode === 'stroke'
+            ? surfaceClosed
+              ? '闭环完成 · 可以生成真实 A/B 预览'
+              : '开放笔迹 · 松手暂停 · 旋转模型后可继续'
           : splitKind === 'surface' && seamStatus === 'ready'
             ? '唯一闭环 · 只读检查中'
           : splitKind === 'surface'
@@ -314,7 +349,9 @@ function StatusBar() {
       <div
         className="viewport-status-bar is-cutting"
         title={splitKind === 'surface'
-          ? seamStatus === 'ready'
+          ? surfaceWorkflowMode === 'stroke'
+            ? '单击放点 · 左键拖动自由绘制 · 右键旋转 · 点击黄色起点闭合'
+            : seamStatus === 'ready'
             ? '只读接缝预览 · 右键旋转 · 中键平移 · 滚轮缩放 · 右栏返回修改'
             : '左键连续涂画 · Ctrl+左键临时擦除 · 右键旋转 · 中键平移 · 滚轮缩放 · [ / ] 调画笔'
             : 'W 移动 · E 旋转 · R 缩放 · Esc 取消切割'}
@@ -322,7 +359,9 @@ function StatusBar() {
         <span>✂ {label} · {phaseText}</span>
         <span className="viewport-status-bar__shortcuts">
           {splitKind === 'surface'
-              ? seamStatus === 'ready'
+              ? surfaceWorkflowMode === 'stroke'
+                ? '单击/拖动画切口 · 右键旋转 · 点击起点闭合'
+                : seamStatus === 'ready'
                 ? '只读检查 · 右栏返回修改 · Esc 退出'
                 : '左键涂画 · Ctrl 擦除 · 右键旋转 · [/] 画笔'
               : 'W/E/R 切换控件 · Esc 取消'}
@@ -346,7 +385,7 @@ function isTyping(e: KeyboardEvent): boolean {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
-export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
+export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => void; onOpenAutoSplit: () => void }) {
   const setOrtho = useUi((s) => s.setOrtho);
   const splitPhase = useManualPlaneSplit((state) => state.phase);
   const splitKind = useManualPlaneSplit((state) => state.cutKind);
@@ -367,6 +406,10 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (splitActive && splitKind === 'surface' && !e.shiftKey) {
+          if (useSurfaceWorkflow.getState().mode === 'stroke') {
+            undoManualSurfaceStrokeSegment();
+            return;
+          }
           if (
             seamStatus === 'ready'
             && (splitPhase === 'previewing' || splitPhase === 'previewReady' || splitPhase === 'error')
@@ -394,25 +437,45 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
       }
       switch (e.key) {
         case 'b': case 'B':
-          if (splitActive && splitKind === 'surface' && seamStatus !== 'ready') {
+          if (
+            splitActive
+            && splitKind === 'surface'
+            && useSurfaceWorkflow.getState().mode === 'facePaint'
+            && seamStatus !== 'ready'
+          ) {
             e.preventDefault();
             setFacePaintMode('add');
           }
           break;
         case 'x': case 'X':
-          if (splitActive && splitKind === 'surface' && seamStatus !== 'ready') {
+          if (
+            splitActive
+            && splitKind === 'surface'
+            && useSurfaceWorkflow.getState().mode === 'facePaint'
+            && seamStatus !== 'ready'
+          ) {
             e.preventDefault();
             setFacePaintMode('erase');
           }
           break;
         case '[':
-          if (splitActive && splitKind === 'surface' && seamStatus !== 'ready') {
+          if (
+            splitActive
+            && splitKind === 'surface'
+            && useSurfaceWorkflow.getState().mode === 'facePaint'
+            && seamStatus !== 'ready'
+          ) {
             e.preventDefault();
             adjustFacePaintBrushRadius(0.84);
           }
           break;
         case ']':
-          if (splitActive && splitKind === 'surface' && seamStatus !== 'ready') {
+          if (
+            splitActive
+            && splitKind === 'surface'
+            && useSurfaceWorkflow.getState().mode === 'facePaint'
+            && seamStatus !== 'ready'
+          ) {
             e.preventDefault();
             adjustFacePaintBrushRadius(1.19);
           }
@@ -461,6 +524,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         <CheckHighlight />
         <PlaneCutPreview />
         <ManualFacePaintEditor />
+        <ManualSurfaceStrokeEditor />
         <ManualPlaneCutManipulator />
         <ManualSurfaceCutPreview />
         <RepairPreviewMesh />
@@ -468,7 +532,7 @@ export function Viewport({ onOpenSplit }: { onOpenSplit: () => void }) {
         <Gizmo />
         <InteractionBridge />
       </Canvas>
-      <Toolbar onOpenSplit={onOpenSplit} />
+      <Toolbar onOpenSplit={onOpenSplit} onOpenAutoSplit={onOpenAutoSplit} />
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />

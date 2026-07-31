@@ -27,6 +27,8 @@ export type FacePaintBoundaryResult =
   | { status: 'budget'; positions: Float32Array; segmentCount: 0 };
 
 export const FACE_PAINT_BOUNDARY_FACE_BUDGET = 100_000;
+export const FACE_PAINT_LOCAL_SOURCE_FACE_BUDGET = 2_000_000;
+export const FACE_PAINT_LOCAL_SELECTED_FACE_BUDGET = 500_000;
 
 export function faceCountOfGeometry(geometry: THREE.BufferGeometry): number {
   const count = geometry.index?.count ?? geometry.getAttribute('position')?.count ?? 0;
@@ -221,6 +223,111 @@ export function buildFacePaintTopology(
     geometry,
     faceCount,
     vertexPositions: welded.positions,
+    edges: [...edges.values()],
+  };
+}
+
+/**
+ * High-poly seam analysis only retains edges touched by the painted patch.
+ *
+ * The realtime painter deliberately skips the full welded adjacency graph above
+ * 100k faces. When the user explicitly asks for a seam preview, a worker can
+ * call this local builder instead: memory grows with the joint patch, while the
+ * source mesh is scanned once to find the unpainted face on the other side of
+ * each candidate edge.
+ */
+export function buildLocalFacePaintTopology(
+  geometry: THREE.BufferGeometry,
+  mask: Uint8Array,
+  sourceFaceBudget = FACE_PAINT_LOCAL_SOURCE_FACE_BUDGET,
+  selectedFaceBudget = FACE_PAINT_LOCAL_SELECTED_FACE_BUDGET,
+): FacePaintTopology | null {
+  const faceCount = faceCountOfGeometry(geometry);
+  const position = geometry.getAttribute('position');
+  if (
+    !position
+    || faceCount === 0
+    || mask.length !== faceCount
+    || faceCount > sourceFaceBudget
+  ) return null;
+
+  const selectedFaces = paintedFaceCount(mask);
+  if (selectedFaces === 0 || selectedFaces > selectedFaceBudget) return null;
+
+  geometry.computeBoundingBox();
+  const diagonal = geometry.boundingBox?.getSize(new THREE.Vector3()).length() ?? 1;
+  const epsilon = Math.max(diagonal * 1e-6, 1e-7);
+  const inverse = 1 / epsilon;
+  const vertexIds = new Map<string, number>();
+  const vertexPositions: number[] = [];
+  const edges = new Map<string, FacePaintEdge>();
+
+  const vertexKey = (positionIndex: number) => (
+    `${Math.round(position.getX(positionIndex) * inverse)},${Math.round(position.getY(positionIndex) * inverse)},${Math.round(position.getZ(positionIndex) * inverse)}`
+  );
+  const localVertexId = (key: string, positionIndex: number) => {
+    const current = vertexIds.get(key);
+    if (current !== undefined) return current;
+    const next = vertexIds.size;
+    vertexIds.set(key, next);
+    vertexPositions.push(
+      position.getX(positionIndex),
+      position.getY(positionIndex),
+      position.getZ(positionIndex),
+    );
+    return next;
+  };
+  const edgeKey = (keyA: string, keyB: string) => (
+    keyA < keyB ? `${keyA}|${keyB}` : `${keyB}|${keyA}`
+  );
+
+  for (let faceIndex = 0; faceIndex < faceCount; faceIndex += 1) {
+    if (!mask[faceIndex]) continue;
+    const corners = [
+      positionIndexAt(geometry, faceIndex * 3),
+      positionIndexAt(geometry, faceIndex * 3 + 1),
+      positionIndexAt(geometry, faceIndex * 3 + 2),
+    ];
+    const keys = corners.map(vertexKey);
+    const ids = keys.map((key, index) => localVertexId(key, corners[index]));
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+      const next = (edgeIndex + 1) % 3;
+      const key = edgeKey(keys[edgeIndex], keys[next]);
+      const current = edges.get(key);
+      if (current) {
+        current.faces.push(faceIndex);
+      } else {
+        edges.set(key, {
+          a: corners[edgeIndex],
+          b: corners[next],
+          idA: ids[edgeIndex],
+          idB: ids[next],
+          faces: [faceIndex],
+        });
+      }
+    }
+  }
+
+  // Find only the unpainted neighbor of an edge already touched by the patch.
+  // This is an O(source faces) scan without an O(source faces) adjacency graph.
+  for (let faceIndex = 0; faceIndex < faceCount; faceIndex += 1) {
+    if (mask[faceIndex]) continue;
+    const corners = [
+      positionIndexAt(geometry, faceIndex * 3),
+      positionIndexAt(geometry, faceIndex * 3 + 1),
+      positionIndexAt(geometry, faceIndex * 3 + 2),
+    ];
+    const keys = corners.map(vertexKey);
+    for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+      const next = (edgeIndex + 1) % 3;
+      edges.get(edgeKey(keys[edgeIndex], keys[next]))?.faces.push(faceIndex);
+    }
+  }
+
+  return {
+    geometry,
+    faceCount,
+    vertexPositions: new Float32Array(vertexPositions),
     edges: [...edges.values()],
   };
 }

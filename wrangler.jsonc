@@ -25,7 +25,16 @@
     "BREAKER_DAILY_CREDITS": "3000",
     // T13a:真实引擎上线('tripo')。回退演示/降级通道:改回 "mock" 后 push(@mock 指令随之可用);
     // 置空即回到「未接入 → 扣减立返」的 T3 行为。成本护栏:访客配额 3 次/日 + 全局熔断 3000 credits/日。
-    "ENGINE_MODE": "tripo",
+    "ENGINE_MODE": "hi3d",
+    // M1.13a: Hi3D 图生3D。AK/SK 必须使用 Workers Secrets，禁止写入 vars/Git。
+    "HI3D_MODEL": "hitem3dv2.1",
+    "HI3D_RESOLUTION": "1536fast",
+    "HI3D_FACE_COUNT": "500000",
+    "HI3D_TIMEOUT_MS": "900000",
+    // Hi3D 真实语义拆件：默认每访客 2 次/日，按官方单次 20 credits 记账。
+    "HI3D_SPLIT_DAILY_LIMIT": "2",
+    "HI3D_SPLIT_BREAKER_CREDITS": "200",
+    "HI3D_SPLIT_COST_CREDITS": "20",
     // T13a:文生模型版本(v2.5-20250123 = 20 credits 档,与 api-types 的 CREDITS_BY_TYPE 对齐;
     // 升 v3.x 时须同步核对计费常量,consumed_credit 对账日志会暴露价差)
     "TRIPO_MODEL_VERSION": "v2.5-20250123",

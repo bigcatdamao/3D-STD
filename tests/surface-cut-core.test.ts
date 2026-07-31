@@ -42,7 +42,116 @@ function makeWaistPrism() {
   };
 }
 
+function makeDenseJointPrism(rings = 52, sides = 1024) {
+  const positions: number[] = [];
+  for (let ring = 0; ring < rings; ring += 1) {
+    const x = -120 + (240 * ring) / (rings - 1);
+    const radius = 36 + Math.sin((ring / (rings - 1)) * Math.PI) * 4;
+    for (let side = 0; side < sides; side += 1) {
+      const angle = (side / sides) * Math.PI * 2;
+      positions.push(x, Math.cos(angle) * radius, Math.sin(angle) * radius);
+    }
+  }
+  const leftCenter = positions.length / 3;
+  positions.push(-120, 0, 0);
+  const rightCenter = positions.length / 3;
+  positions.push(120, 0, 0);
+  const indices: number[] = [];
+  for (let ring = 0; ring < rings - 1; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const next = (side + 1) % sides;
+      const a = ring * sides + side;
+      const d = ring * sides + next;
+      const b = (ring + 1) * sides + side;
+      const c = (ring + 1) * sides + next;
+      indices.push(a, d, b, d, c, b);
+    }
+  }
+  for (let side = 0; side < sides; side += 1) {
+    const next = (side + 1) % sides;
+    indices.push(leftCenter, next, side);
+    const base = (rings - 1) * sides;
+    indices.push(rightCenter, base + side, base + next);
+  }
+  return {
+    positions: new Float32Array(positions),
+    index: new Uint32Array(indices),
+    rings,
+    sides,
+  };
+}
+
 describe('M1.7.8 表面自适应真实切割核心', () => {
+  it('M1.11f 对完整独立壳体只做 A/B 分组，不生成伪切口或封口', () => {
+    const first = makeWaistPrism();
+    const second = makeWaistPrism();
+    const firstVertexCount = first.positions.length / 3;
+    const firstFaceCount = first.index.length / 3;
+    const secondFaceCount = second.index.length / 3;
+    const secondPositions = Array.from(second.positions);
+    for (let index = 1; index < secondPositions.length; index += 3) secondPositions[index] += 120;
+    const faceLabels = new Uint8Array(firstFaceCount + secondFaceCount);
+    faceLabels.fill(1, firstFaceCount);
+
+    const result = createSurfaceAdaptiveCut({
+      positions: new Float32Array([...first.positions, ...secondPositions]),
+      index: new Uint32Array([
+        ...first.index,
+        ...Array.from(second.index, (vertex) => vertex + firstVertexCount),
+      ]),
+      faceLabels,
+      transform,
+      searchHalfWidthMm: 0.1,
+    });
+
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.partA.sourceFaceCount).toBe(secondFaceCount);
+    expect(result.partB.sourceFaceCount).toBe(firstFaceCount);
+    expect(result.partA.capFaceCount).toBe(0);
+    expect(result.partB.capFaceCount).toBe(0);
+    expect(result.metrics.boundaryVertices).toBe(0);
+    expect(result.seamPositions.length).toBe(0);
+    expect(result.warnings[0]).toContain('壳体分组');
+    expect(result.warnings[0]).toContain('不新增切口或封口');
+  });
+
+  it('M1.11f 合并完整壳体与一个桥接壳体接缝，生成统一 A/B 结果', () => {
+    const bridge = makeWaistPrism();
+    const accessory = makeWaistPrism();
+    const bridgeVertexCount = bridge.positions.length / 3;
+    const bridgeFaceCount = bridge.index.length / 3;
+    const accessoryFaceCount = accessory.index.length / 3;
+    const accessoryPositions = Array.from(accessory.positions);
+    for (let index = 1; index < accessoryPositions.length; index += 3) accessoryPositions[index] += 120;
+    const faceLabels = new Uint8Array(bridgeFaceCount + accessoryFaceCount);
+    faceLabels.fill(1, 0, 16 * 2 * 3);
+    const capStart = 16 * 2 * 6;
+    for (let side = 0; side < 16; side += 1) faceLabels[capStart + side * 2] = 1;
+    faceLabels.fill(1, bridgeFaceCount);
+
+    const result = createSurfaceAdaptiveCut({
+      positions: new Float32Array([...bridge.positions, ...accessoryPositions]),
+      index: new Uint32Array([
+        ...bridge.index,
+        ...Array.from(accessory.index, (vertex) => vertex + bridgeVertexCount),
+      ]),
+      faceLabels,
+      transform,
+      searchHalfWidthMm: 0.1,
+    });
+
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.partA.sourceFaceCount).toBe(112 + accessoryFaceCount);
+    expect(result.partB.sourceFaceCount).toBe(bridgeFaceCount - 112);
+    expect(result.metrics.boundaryVertices).toBe(16);
+    expect(result.partA.capFaceCount).toBe(14);
+    expect(result.partB.capFaceCount).toBe(14);
+    expect(result.partA.boundaryEdges).toBe(0);
+    expect(result.partB.boundaryEdges).toBe(0);
+  });
+
   it('M1.11c 以紫色面组为拆下件 A，并沿唯一闭环为 A/B 生成同一组封口', () => {
     const mesh = makeWaistPrism();
     const faceCount = mesh.index.length / 3;
@@ -84,6 +193,54 @@ describe('M1.7.8 表面自适应真实切割核心', () => {
       expect(result.code).toBe('invalid_geometry');
       expect(result.message).toContain('面数不一致');
     }
+  });
+
+  it('M1.11d 面组通道使用独立的局部面数预算，不再受自动寻路 8 万面预算控制', () => {
+    const mesh = makeWaistPrism();
+    const faceCount = mesh.index.length / 3;
+    const faceLabels = new Uint8Array(faceCount);
+    faceLabels.fill(1, 0, 16 * 2 * 3);
+    const capStart = 16 * 2 * 6;
+    for (let side = 0; side < 16; side += 1) faceLabels[capStart + side * 2] = 1;
+    const result = createSurfaceAdaptiveCut({
+      ...mesh,
+      faceLabels,
+      transform,
+      searchHalfWidthMm: 0.1,
+      selectedFaceBudget: 20,
+    });
+    expect(result.status).toBe('unsupported');
+    if (result.status !== 'unsupported') return;
+    expect(result.code).toBe('budget');
+    expect(result.message).toContain('关节精细拆件');
+    expect(result.details?.selectedFaces).toBe(112);
+  });
+
+  it('M1.11d 对超过旧版 8 万面限制的模型执行局部关节切割', () => {
+    const mesh = makeDenseJointPrism();
+    const faceCount = mesh.index.length / 3;
+    expect(faceCount).toBeGreaterThan(80_000);
+    const faceLabels = new Uint8Array(faceCount);
+    const selectedBands = 3;
+    faceLabels.fill(1, 0, selectedBands * mesh.sides * 2);
+    const capStart = (mesh.rings - 1) * mesh.sides * 2;
+    for (let side = 0; side < mesh.sides; side += 1) {
+      faceLabels[capStart + side * 2] = 1;
+    }
+    const result = createSurfaceAdaptiveCut({
+      positions: mesh.positions,
+      index: mesh.index,
+      faceLabels,
+      transform,
+      searchHalfWidthMm: 0.1,
+    });
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    expect(result.metrics.sourceFaces).toBe(faceCount);
+    expect(result.metrics.boundaryVertices).toBe(mesh.sides);
+    expect(result.partA.sourceFaceCount).toBe(selectedBands * mesh.sides * 2 + mesh.sides);
+    expect(result.partA.boundaryEdges).toBe(0);
+    expect(result.partB.boundaryEdges).toBe(0);
   });
 
   it('接缝会离开引导平面，吸附到搜索带内更短的收腰环，并输出两个闭合临时网格', () => {

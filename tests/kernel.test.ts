@@ -58,6 +58,29 @@ describe('C1 操作原子性', () => {
     expect(split.assets.every((asset) => doc.assets.has(asset.id))).toBe(true);
   });
 
+  it('自动拆件把一件原子替换为 N 件，一次撤销恢复源实例与资产', () => {
+    const doc = makeDoc();
+    const sourceAsset = doc.addAsset(anyAsset('机甲'));
+    const source = doc.placeInstance(sourceAsset.id);
+    const historyBefore = doc.history.length;
+    const split = doc.splitInstanceWithDerivedPartsMany(source.id, [
+      anyAsset('头部'),
+      anyAsset('躯干'),
+      anyAsset('手臂'),
+    ]);
+
+    expect(doc.history.length).toBe(historyBefore + 1);
+    expect(split.assets).toHaveLength(3);
+    expect(doc.nodes.has(source.id)).toBe(false);
+    expect(doc.childrenOf(null)).toEqual(split.instances.map((instance) => instance.id));
+    expect(doc.assets.has(sourceAsset.id)).toBe(true);
+
+    doc.history.undo();
+    expect(doc.nodes.has(source.id)).toBe(true);
+    expect(doc.assets.has(sourceAsset.id)).toBe(true);
+    expect(split.assets.every((asset) => !doc.assets.has(asset.id))).toBe(true);
+  });
+
   it('多选批量删除 = 一步;撤销后全部恢复、呈选中、层级位置一致(PRD 6.7 验收样例 2)', () => {
     const doc = makeDoc();
     const a = doc.addAsset(anyAsset());

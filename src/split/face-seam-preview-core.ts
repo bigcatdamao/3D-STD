@@ -5,6 +5,7 @@ import {
   type FacePaintEdge,
   type FacePaintTopology,
 } from './face-paint-core';
+import { projectSeamLoop } from './seam-projection-core';
 
 export type FaceSeamIssueCode =
   | 'empty_selection'
@@ -70,6 +71,34 @@ function message<TCode extends string>(
   detail: string,
 ): FaceSeamMessage<TCode> {
   return { code, title, detail };
+}
+
+export function createShellGroupPreview(
+  mask: Uint8Array,
+  selectedShellCount: number,
+): FaceSeamPreviewResult {
+  const paintedFaces = paintedFaceCount(mask);
+  const remainingFaces = Math.max(0, mask.length - paintedFaces);
+  const valid = paintedFaces > 0 && remainingFaces > 0 && selectedShellCount > 0;
+  return {
+    status: valid ? 'ready' : 'invalid',
+    loopPositions: new Float32Array(0),
+    issues: valid
+      ? []
+      : [message(
+        'degenerate_loop',
+        '没有可独立拆出的壳体',
+        '粗涂必须至少命中一个与主体分离的完整网格壳体。',
+      )],
+    warnings: [],
+    metrics: {
+      ...EMPTY_METRICS,
+      paintedFaces,
+      remainingFaces,
+      paintedRatio: mask.length > 0 ? paintedFaces / mask.length : 0,
+      componentCount: selectedShellCount,
+    },
+  };
 }
 
 function boundaryGraph(topology: FacePaintTopology, mask: Uint8Array): BoundaryGraph {
@@ -191,52 +220,6 @@ function planarityDeviation(points: THREE.Vector3[], normal: THREE.Vector3): num
   return maximum;
 }
 
-type Point2 = [number, number];
-
-function projectedPoints(points: THREE.Vector3[], normal: THREE.Vector3): Point2[] {
-  const axis = new THREE.Vector3(Math.abs(normal.x), Math.abs(normal.y), Math.abs(normal.z));
-  if (axis.x >= axis.y && axis.x >= axis.z) return points.map((point) => [point.y, point.z]);
-  if (axis.y >= axis.x && axis.y >= axis.z) return points.map((point) => [point.x, point.z]);
-  return points.map((point) => [point.x, point.y]);
-}
-
-function orientation(a: Point2, b: Point2, c: Point2): number {
-  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-}
-
-function properIntersection(a: Point2, b: Point2, c: Point2, d: Point2): boolean {
-  const abC = orientation(a, b, c);
-  const abD = orientation(a, b, d);
-  const cdA = orientation(c, d, a);
-  const cdB = orientation(c, d, b);
-  const epsilon = 1e-8;
-  return abC * abD < -epsilon && cdA * cdB < -epsilon;
-}
-
-function hasSelfIntersection(points: THREE.Vector3[], normal: THREE.Vector3): boolean {
-  const projected = projectedPoints(points, normal);
-  const count = projected.length;
-  for (let first = 0; first < count; first += 1) {
-    const firstNext = (first + 1) % count;
-    for (let second = first + 1; second < count; second += 1) {
-      const secondNext = (second + 1) % count;
-      if (
-        first === second
-        || firstNext === second
-        || secondNext === first
-        || (first === 0 && secondNext === 0)
-      ) continue;
-      if (properIntersection(
-        projected[first],
-        projected[firstNext],
-        projected[second],
-        projected[secondNext],
-      )) return true;
-    }
-  }
-  return false;
-}
-
 function selectionDimensions(
   topology: FacePaintTopology,
   mask: Uint8Array,
@@ -287,8 +270,8 @@ export function createFaceSeamPreview(
   if (!topology) {
     issues.push(message(
       'boundary_budget',
-      '当前模型超过接缝预览预算',
-      '高面数模式暂时只显示色块；请先减面或等待后续分块拓扑版本。',
+      '局部接缝超过当前处理范围',
+      '首版支持模型总面数 200 万以内、自动补全后面组 50 万面以内；请缩小到一个关节区域后重试。',
     ));
     return {
       status: 'invalid',
@@ -369,11 +352,16 @@ export function createFaceSeamPreview(
       '接缝形状退化',
       '闭环面积过小或边界重合，请扩大面组后重试。',
     ));
-  } else if (worldPoints.length >= 4 && hasSelfIntersection(worldPoints, normal)) {
+  } else if (
+    worldPoints.length >= 4
+    && projectSeamLoop(
+      worldPoints.map((point) => [point.x, point.y, point.z]),
+    ).status === 'self_intersection'
+  ) {
     issues.push(message(
       'self_intersection',
       '接缝发生自相交',
-      '边界在投影中交叉；擦除交叉处并重画为单一轮廓。',
+      '候选边界在实际封口平面中交叉；已拒绝生成可能破裂的封口。',
     ));
   }
 

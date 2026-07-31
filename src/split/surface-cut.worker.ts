@@ -26,7 +26,11 @@ self.onmessage = (event: MessageEvent<SurfaceCutRequest>) => {
     return;
   }
   try {
-    post({ t: 'progress', requestId: request.requestId, phase: '构建表面邻接图' });
+    post({
+      t: 'progress',
+      requestId: request.requestId,
+      phase: request.faceLabels ? '扫描关节局部接缝并生成 A/B' : '构建表面邻接图',
+    });
     const result = createSurfaceAdaptiveCut({
       positions: geometry.positions,
       index: geometry.index,

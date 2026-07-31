@@ -350,6 +350,54 @@ export class SceneDocument {
     return { assets, instances };
   }
 
+  /**
+   * 自动拆件落地：把一个实例原子替换为 N 个派生零件。
+   * 源资产始终留在资产库；一次撤销恢复源实例并移除全部派生资产。
+   */
+  splitInstanceWithDerivedPartsMany(
+    instanceId: string,
+    parts: readonly Omit<Asset, 'id'>[],
+    label = `自动拆件为 ${parts.length} 个零件`,
+  ): { assets: Asset[]; instances: InstanceNode[] } {
+    if (parts.length < 2) throw new Error('自动拆件至少需要两个有效零件');
+    if (this.effectiveLocked(instanceId)) throw new Error('对象已锁定，不能执行自动拆件');
+    const current = this.instance(instanceId);
+    const source = clone(current);
+    const assets = parts.map((part) => ({ ...clone(part), id: genId('ast') } as Asset));
+    const names = this.takenNames();
+    names.delete(current.name);
+    const instances = assets.map((asset, index) => {
+      const name = dedupeName(`${current.name} · ${index + 1}`, names);
+      names.add(name);
+      return {
+        ...clone(source),
+        id: genId('ins'),
+        name,
+        assetId: asset.id,
+      } satisfies InstanceNode;
+    });
+    const parentKey = current.parentId ?? ROOT;
+
+    this.commit(
+      'split',
+      label,
+      [instanceId, ...instances.map((instance) => instance.id)],
+      () => {
+        const siblings = this.order.get(parentKey);
+        if (!siblings) throw new Error('对象层级已失效，不能执行自动拆件');
+        const sourceIndex = siblings.indexOf(instanceId);
+        if (sourceIndex < 0) throw new Error('对象顺序已失效，不能执行自动拆件');
+        for (const asset of assets) this.assets.set(asset.id, clone(asset));
+        this.nodes.delete(instanceId);
+        for (const instance of instances) this.nodes.set(instance.id, clone(instance));
+        siblings.splice(sourceIndex, 1, ...instances.map((instance) => instance.id));
+        this.selection = new Set(instances.map((instance) => instance.id));
+      },
+      { assetIds: assets.map((asset) => asset.id) },
+    );
+    return { assets, instances };
+  }
+
   /** AST 边界 6/场景树边界:删除资产 → 级联删除其全部实例,整体一步 */
   removeAssetCascade(assetId: string) {
     const victims = [...this.nodes.values()]

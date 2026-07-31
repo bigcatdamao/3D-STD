@@ -9,12 +9,15 @@
 // - cancel:释放引擎侧资源(mock 无资源为 no-op);账务返还统一由路由层执行,
 //   保证「返还」只有一个执行点、一套幂等语义(quota-core 的 ledger)。
 
-import type { EngineTask, GenerateRequest } from './api-types';
+import type { EngineTask, GenerateRequest, GenerateType } from './api-types';
+import { Hi3DEngine } from './hi3d-engine';
 import { MockEngine } from './mock-engine';
 import { TripoEngine } from './tripo-engine';
 
 export interface Engine {
   readonly name: string;
+  readonly supportedTypes?: readonly GenerateType[];
+  readonly acceptsOwnKey?: boolean;
   /** 引擎侧 prompt 上限(字符);缺省 = 路由层默认 2000。Tripo 上游硬限 1024(T13a)。 */
   readonly promptMaxLength?: number;
   /** 提交任务;serviceTaskId = 路由层账务键;ownKey 存在时透传用户自带 key(服务层不落盘,D6 ④)。 */
@@ -48,6 +51,12 @@ export interface EngineEnv {
   TRIPO_API_KEY?: string; // T13a:真实引擎密钥(Workers Secrets;自带 key 通道不依赖它)
   TRIPO_MODEL_VERSION?: string; // T13a:默认 v2.5-20250123(20 credits 档,与 CREDITS_BY_TYPE 对齐)
   TRIPO_TIMEOUT_MS?: string; // T13a:排队+生成的超时合成阈值,默认 600000(10 分钟)
+  HI3D_ACCESS_KEY?: string;
+  HI3D_SECRET_KEY?: string;
+  HI3D_MODEL?: string;
+  HI3D_RESOLUTION?: string;
+  HI3D_FACE_COUNT?: string;
+  HI3D_TIMEOUT_MS?: string;
   MOCK_QUEUE_MS?: string; // mock 默认排队时长(dashboard 可覆盖)
   MOCK_RUN_MS?: string; // mock 默认生成时长
   MOCK_FAIL_RATE?: string; // mock 随机失败率 0–1(演示混沌注入;prompt 指令优先)
@@ -86,6 +95,19 @@ export function getEngine(env: EngineEnv, opts: EngineOpts = {}): Engine | null 
       serviceKey: env.TRIPO_API_KEY,
       modelVersion: env.TRIPO_MODEL_VERSION || 'v2.5-20250123',
       timeoutMs: numOr(env.TRIPO_TIMEOUT_MS, 600000),
+      taskMap: opts.taskMap,
+      fetchImpl: opts.fetchImpl,
+      now: opts.now,
+    });
+  }
+  if (env.ENGINE_MODE === 'hi3d') {
+    return new Hi3DEngine({
+      accessKey: env.HI3D_ACCESS_KEY,
+      secretKey: env.HI3D_SECRET_KEY,
+      model: env.HI3D_MODEL || 'hitem3dv2.1',
+      resolution: env.HI3D_RESOLUTION || '1536fast',
+      faceCount: Math.max(100_000, Math.min(2_000_000, numOr(env.HI3D_FACE_COUNT, 500_000))),
+      timeoutMs: numOr(env.HI3D_TIMEOUT_MS, 900_000),
       taskMap: opts.taskMap,
       fetchImpl: opts.fetchImpl,
       now: opts.now,

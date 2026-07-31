@@ -13,10 +13,18 @@ import type {
   HealthResponse,
   ImageView,
   QuotaResponse,
+  SplitLevel,
+  SplitSubmitResponse,
+  SplitTaskResponse,
   TaskResponse,
 } from './api-types';
 import { CREDITS_BY_TYPE, IMAGE_MAX_BYTES, IMAGE_MIME_TYPES } from './api-types';
 import { getEngine, type Engine, type TaskMapStore } from './engine';
+import {
+  HI3D_MESH_EXTENSIONS,
+  HI3D_MESH_MAX_BYTES,
+  Hi3DSplitEngine,
+} from './hi3d-split-engine';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
@@ -48,6 +56,12 @@ export interface WorkerEnv {
   TRIPO_API_KEY?: string; // T13a(Workers Secret)
   TRIPO_MODEL_VERSION?: string; // T13a,默认 v2.5-20250123
   TRIPO_TIMEOUT_MS?: string; // T13a,默认 600000
+  HI3D_ACCESS_KEY?: string; // M1.13a,Workers Secret
+  HI3D_SECRET_KEY?: string; // M1.13a,Workers Secret
+  HI3D_MODEL?: string;
+  HI3D_RESOLUTION?: string;
+  HI3D_FACE_COUNT?: string;
+  HI3D_TIMEOUT_MS?: string;
   OPENAI_API_KEY?: string; // 官方 OpenAI 回滚通道，只允许 Workers Secret
   AIHUBMIX_API_KEY?: string; // AIHubMix 通道，只允许 Workers Secret
   OPENAI_SPLIT_MODEL?: string; // 旧配置兼容，优先使用 SPLIT_ANALYSIS_MODEL
@@ -70,6 +84,9 @@ export interface WorkerEnv {
   SPLIT_ANALYSIS_TIMEOUT_MS?: string; // 默认 45000
   SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS?: string; // 默认 3200
   SPLIT_ANALYSIS_COST_UNITS?: string; // 单次预扣单位，默认 1
+  HI3D_SPLIT_DAILY_LIMIT?: string;
+  HI3D_SPLIT_BREAKER_CREDITS?: string;
+  HI3D_SPLIT_COST_CREDITS?: string;
 }
 
 export interface RouterDeps {
@@ -109,6 +126,17 @@ function engineOf(env: WorkerEnv, deps: RouterDeps): Engine | null {
   return getEngine(env, { now: deps.now, fetchImpl: deps.fetchImpl, taskMap: taskMapOf(env) });
 }
 
+function hi3dSplitEngineOf(env: WorkerEnv, deps: RouterDeps): Hi3DSplitEngine | null {
+  if (!env.HI3D_ACCESS_KEY?.trim() || !env.HI3D_SECRET_KEY?.trim()) return null;
+  return new Hi3DSplitEngine({
+    accessKey: env.HI3D_ACCESS_KEY,
+    secretKey: env.HI3D_SECRET_KEY,
+    fetchImpl: deps.fetchImpl,
+    now: deps.now,
+    taskMap: taskMapOf(env),
+  });
+}
+
 interface VisitorCtx {
   visitorKey: string;
   limitTimes: number;
@@ -141,6 +169,7 @@ function health(env: WorkerEnv, deps: RouterDeps): Response {
       turnstile: Boolean(env.TURNSTILE_SECRET_KEY),
       engine: engine !== null,
       engineName: engine?.name ?? null,
+      generationTypes: engine?.supportedTypes ? [...engine.supportedTypes] : ['text', 'image', 'multiview'],
       promptMax: engine?.promptMaxLength ?? 2000,
       demoCodes: parseDemoCodes(env.DEMO_CODES, num(env.DEMO_DEFAULT_LIMIT, 20)).size,
     },
@@ -316,6 +345,9 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   // T13a:上限取引擎上报值(Tripo 上游硬限 1024 < 服务层默认 2000)——在校验层如实拦截,
   // 而非提交后由上游打回(那会走「扣减 → 返还」白绕一圈,且报错含糊)
   const engine = engineOf(env, deps);
+  if (engine?.supportedTypes && !engine.supportedTypes.includes(body.type)) {
+    return err(400, 'generation_type_unsupported', 'validation', '当前 Hi3D 服务仅支持单图或多图生成，请先添加图片。');
+  }
   const promptMax = engine?.promptMaxLength ?? 2000;
   if (body.type === 'text' && prompt.length > promptMax) {
     return err(400, 'prompt_too_long', 'validation', `prompt 超长(上限 ${promptMax} 字符)。`);
@@ -334,7 +366,8 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   }
 
   // 3. 配额扣减(自带 key 跳过;PRD AI-11「自带 API key 解锁通道」)
-  const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
+  const requestedOwnKey = req.headers.get('x-engine-key')?.trim() || undefined;
+  const ownKey = engine?.acceptsOwnKey === false ? undefined : requestedOwnKey;
   const ctx = await visitorCtxOf(req, env);
   const credits = CREDITS_BY_TYPE[body.type];
   const taskId = `t_${crypto.randomUUID()}`;
@@ -387,13 +420,149 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
     // T13a-fix1:原因必须可诊断——日志记全文,响应带脱敏摘要(自造的错误串只含状态码/错误码,无密钥)。
     const reason = e instanceof Error ? e.message.slice(0, 120) : String(e).slice(0, 120);
     console.error(`[submit-fail] engine=${engine.name} task=${taskId} reason=${reason}`);
-    const hint = reason.includes('tripo_key_missing')
+    const hint = reason.includes('hi3d_credentials_missing')
+      ? '服务端未配置 HI3D_ACCESS_KEY / HI3D_SECRET_KEY（检查 Workers Secrets 并重新部署）'
+      : reason.includes('hi3d_auth_failed')
+        ? 'Hi3D 鉴权失败：AK/SK 无效、已停用或复制时混入空白字符'
+        : reason.includes('tripo_key_missing')
       ? '服务端未配置 TRIPO_API_KEY(检查 Secret 名与是否重新部署)'
       : /http=40[13]/.test(reason)
         ? '引擎鉴权失败:API key 无效、过期或复制时混入空白字符'
         : reason;
     return err(502, 'engine_submit_failed', 'service', `任务提交到引擎失败;本次扣减已按 AI-07 返还。(${hint})`, { refunded, taskId });
   }
+}
+
+// —— /api/split (M1.13a: Hi3D 真实语义拆件) ——
+
+const HI3D_SPLIT_SCOPE = 'hi3d-split';
+
+function meshExtension(name: string): string {
+  return name.split('.').pop()?.toLowerCase() ?? '';
+}
+
+async function hi3dSplitSubmit(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  const contentType = req.headers.get('content-type') ?? '';
+  if (!contentType.includes('multipart/form-data')) {
+    return err(400, 'split_multipart_required', 'validation', 'AI 拆件需要以 multipart/form-data 上传模型。');
+  }
+  // The mesh body is deliberately never parsed here. request.formData() would
+  // buffer a 50-200 MB file and rebuilding another FormData for Hi3D can exceed
+  // the Workers 128 MB isolate limit. Metadata and Turnstile travel in headers;
+  // the original multipart stream is forwarded to Hi3D unchanged.
+  const encodedName = req.headers.get('x-mesh-name') ?? '';
+  let meshName = '';
+  try { meshName = decodeURIComponent(encodedName); } catch { meshName = ''; }
+  const meshSize = Number(req.headers.get('x-mesh-size') ?? '0');
+  if (!req.body || !meshName || !Number.isFinite(meshSize) || meshSize <= 0) {
+    return err(400, 'split_mesh_required', 'validation', '请选择需要拆件的模型。');
+  }
+  const ext = meshExtension(meshName);
+  if (!(HI3D_MESH_EXTENSIONS as readonly string[]).includes(ext)) {
+    return err(400, 'split_mesh_format', 'validation', 'Hi3D 拆件仅支持 GLB、STL 或 OBJ。');
+  }
+  if (meshSize > HI3D_MESH_MAX_BYTES) return err(400, 'split_mesh_too_large', 'validation', '模型不能超过 200MB。');
+  const rawLevel = req.headers.get('x-split-level') ?? 'medium';
+  const level: SplitLevel = rawLevel === 'low' || rawLevel === 'high' ? rawLevel : 'medium';
+
+  const turnstileToken = (req.headers.get('x-turnstile-token') ?? '').trim();
+  if (!turnstileToken) return err(403, 'turnstile_required', 'turnstile', '缺少人机验证 token。');
+  if (!env.TURNSTILE_SECRET_KEY) {
+    return err(503, 'turnstile_unconfigured', 'service', '服务端人机验证尚未配置。');
+  }
+  const verdict = await verifyTurnstile(
+    env.TURNSTILE_SECRET_KEY,
+    turnstileToken,
+    req.headers.get('cf-connecting-ip') ?? '',
+    deps.fetchImpl ?? fetch,
+  );
+  if (!verdict.ok) return err(403, 'turnstile_failed', 'turnstile', '人机验证未通过。', { codes: verdict.codes });
+
+  const engine = hi3dSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'hi3d_split_unconfigured', 'service', 'Hi3D 拆件凭证尚未配置。');
+
+  const ctx = await visitorCtxOf(req, env);
+  const serviceTaskId = `hs_${crypto.randomUUID()}`;
+  const costCredits = Math.max(1, Math.min(100, num(env.HI3D_SPLIT_COST_CREDITS, 20)));
+  const deduct = await quotaCall<DeductResult>(
+    env,
+    {
+      op: 'deduct',
+      visitorKey: ctx.visitorKey,
+      taskId: serviceTaskId,
+      credits: costCredits,
+      limitTimes: Math.max(1, Math.min(10, num(env.HI3D_SPLIT_DAILY_LIMIT, 2))),
+      breakerLimitCredits: Math.max(costCredits, num(env.HI3D_SPLIT_BREAKER_CREDITS, 200)),
+      demoCode: ctx.demoCode,
+    },
+    HI3D_SPLIT_SCOPE,
+  );
+  if (!deduct.ok) {
+    return deduct.error === 'budget_exhausted'
+      ? err(429, 'split_budget_exhausted', 'quota', '今日 AI 拆件总额度已用完。')
+      : err(429, 'split_quota_exhausted', 'quota', '今日 AI 拆件次数已用完。');
+  }
+
+  try {
+    const task = await engine.submitMultipart(req.body, contentType, serviceTaskId);
+    return Response.json({ ok: true, engine: 'hi3d', task } satisfies SplitSubmitResponse);
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId: serviceTaskId }, HI3D_SPLIT_SCOPE);
+    const reason = error instanceof Error ? error.message.slice(0, 120) : 'unknown';
+    console.error(`[hi3d-split-submit-fail] task=${serviceTaskId} reason=${reason}`);
+    return err(502, 'hi3d_split_submit_failed', 'service', 'Hi3D 拆件任务提交失败，本次额度已返还。', {
+      refunded: refund.refunded,
+      taskId: serviceTaskId,
+    });
+  }
+}
+
+async function hi3dSplitQuery(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
+  const engine = hi3dSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'hi3d_split_unconfigured', 'service', 'Hi3D 拆件凭证尚未配置。');
+  let task: EngineTask;
+  try {
+    task = await engine.query(taskId);
+  } catch {
+    return err(502, 'hi3d_split_query_failed', 'service', 'Hi3D 拆件状态查询失败，请稍后重试。');
+  }
+  let refunded: boolean | undefined;
+  if (task.status === 'failed') {
+    const billingId = await engine.billingIdOf(taskId);
+    if (billingId) {
+      const result = await quotaCall<RefundResult>(env, { op: 'refund', taskId: billingId }, HI3D_SPLIT_SCOPE);
+      refunded = result.refunded;
+    }
+  }
+  return Response.json({ ok: true, task, ...(refunded === undefined ? {} : { refunded }) } satisfies SplitTaskResponse);
+}
+
+async function hi3dSplitResult(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
+  const engine = hi3dSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'hi3d_split_unconfigured', 'service', 'Hi3D 拆件凭证尚未配置。');
+  let asset: { url: string } | null;
+  try {
+    asset = await engine.resultAsset(taskId);
+  } catch {
+    return err(502, 'hi3d_split_query_failed', 'service', 'Hi3D 拆件结果查询失败。');
+  }
+  if (!asset) return err(404, 'hi3d_split_result_unavailable', 'validation', '拆件结果尚未生成或下载地址已过期。');
+  let upstream: Response;
+  try {
+    upstream = await (deps.fetchImpl ?? fetch)(asset.url);
+  } catch {
+    return err(502, 'hi3d_split_result_fetch_failed', 'service', '拆件结果下载失败。');
+  }
+  if (!upstream.ok || !upstream.body) {
+    return err(502, 'hi3d_split_result_fetch_failed', 'service', `拆件结果下载失败（上游 ${upstream.status}）。`);
+  }
+  return new Response(upstream.body, {
+    headers: {
+      'content-type': upstream.headers.get('content-type') ?? 'model/gltf-binary',
+      'content-disposition': 'inline; filename="hi3d-split.glb"',
+      'cache-control': 'private, no-store',
+    },
+  });
 }
 
 // —— /api/task/:id(T4:轮询代理 + 失败返还;T13 换真实引擎时本函数零改动)——
@@ -485,7 +654,13 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/health' && req.method === 'GET') return health(env, deps);
   if (path === '/api/quota' && req.method === 'GET') return quota(req, env);
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
+  if (path === '/api/split' && req.method === 'POST') return hi3dSplitSubmit(req, env, deps);
   if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
+
+  const splitResultM = /^\/api\/split\/([^/]+)\/result$/.exec(path);
+  if (splitResultM && req.method === 'GET') return hi3dSplitResult(env, deps, decodeURIComponent(splitResultM[1]));
+  const splitGetM = /^\/api\/split\/([^/]+)$/.exec(path);
+  if (splitGetM && req.method === 'GET') return hi3dSplitQuery(env, deps, decodeURIComponent(splitGetM[1]));
 
   const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
   const taskResultM = /^\/api\/task\/([^/]+)\/result$/.exec(path);

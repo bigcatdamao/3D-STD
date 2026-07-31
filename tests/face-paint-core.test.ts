@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   applyFacePaintSample,
   boundarySegmentsFromTopology,
+  buildLocalFacePaintTopology,
   buildFacePaintTopology,
   connectedSurfaceCandidates,
   faceCountOfGeometry,
@@ -60,6 +61,27 @@ describe('M1.11a 面组画笔核心', () => {
     const boundary = boundarySegmentsFromTopology(topology, new Uint8Array([1, 0]));
     expect(topology).toBeNull();
     expect(boundary.status).toBe('budget');
+    geometry.dispose();
+  });
+
+  it('rebuilds only the painted patch topology for an explicit high-poly seam request', () => {
+    const geometry = new THREE.BoxGeometry(20, 20, 20);
+    const mask = new Uint8Array(faceCountOfGeometry(geometry));
+    const position = geometry.getAttribute('position');
+    const indexAt = (corner: number) => geometry.index ? geometry.index.getX(corner) : corner;
+    for (let face = 0; face < mask.length; face += 1) {
+      const a = new THREE.Vector3().fromBufferAttribute(position, indexAt(face * 3));
+      const b = new THREE.Vector3().fromBufferAttribute(position, indexAt(face * 3 + 1));
+      const c = new THREE.Vector3().fromBufferAttribute(position, indexAt(face * 3 + 2));
+      if (b.sub(a).cross(c.sub(a)).normalize().z > 0.9) mask[face] = 1;
+    }
+    expect(buildFacePaintTopology(geometry, 1)).toBeNull();
+    const topology = buildLocalFacePaintTopology(geometry, mask, mask.length, mask.length);
+    const boundary = boundarySegmentsFromTopology(topology, mask);
+    expect(topology).not.toBeNull();
+    expect(topology!.edges.length).toBeLessThan(36);
+    expect(boundary.status).toBe('ready');
+    expect(boundary.segmentCount).toBe(4);
     geometry.dispose();
   });
 

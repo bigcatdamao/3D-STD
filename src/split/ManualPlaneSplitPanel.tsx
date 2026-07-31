@@ -2,9 +2,13 @@ import * as THREE from 'three';
 import { doc } from '../state/store';
 import type { Vec3 } from '../kernel/types';
 import {
+  beginFacePaintSeamAnchorPlacement,
+  cancelFacePaintSeamAnchorPlacement,
   clearFacePaintMask,
+  clearFacePaintSeamAnchor,
   generateFacePaintSeamPreview,
   returnFacePaintToEditing,
+  selectFacePaintSeamChoice,
   setFacePaintBrushRadius,
   setFacePaintMode,
   undoFacePaintStroke,
@@ -25,6 +29,11 @@ import {
   useManualPlaneSplitSnapshot,
   type ManualPlaneMode,
 } from './manual-plane-split-state';
+import {
+  ManualSurfaceStrokePanel,
+  SurfaceWorkflowSwitch,
+} from './ManualSurfaceStrokePanel';
+import { useSurfaceWorkflowSnapshot } from './surface-workflow-state';
 
 const AXES = ['X', 'Y', 'Z'] as const;
 
@@ -118,6 +127,7 @@ function ModeButton({
 export function ManualPlaneSplitPanel() {
   const state = useManualPlaneSplitSnapshot();
   const paint = useFacePaintSnapshot();
+  const surfaceWorkflowMode = useSurfaceWorkflowSnapshot().mode;
   if (state.phase === 'idle') return null;
   const node = state.instanceId ? doc.nodes.get(state.instanceId) : null;
   const stale = manualPlaneSplitIsStale();
@@ -131,6 +141,10 @@ export function ManualPlaneSplitPanel() {
   const running = state.phase === 'running' || state.phase === 'previewing';
   const isSurface = state.cutKind === 'surface';
 
+  if (isSurface && surfaceWorkflowMode === 'stroke') {
+    return <ManualSurfaceStrokePanel />;
+  }
+
   if (isSurface) {
     const brushMax = Math.max(8, Math.min(diagonal * 0.28, 160));
     const brushValue = Math.max(0.5, Math.min(brushMax, paint.brushRadiusMm));
@@ -138,6 +152,7 @@ export function ManualPlaneSplitPanel() {
       ? Math.round((paint.paintedFaceCount / paint.totalFaceCount) * 100)
       : 0;
     const instanceTransform = node?.kind === 'instance' ? node.transform : undefined;
+    const seamChoices = paint.seamChoices ?? [];
     const generateSeam = () => {
       generateFacePaintSeamPreview(matrixOfTransform(instanceTransform));
     };
@@ -249,6 +264,9 @@ export function ManualPlaneSplitPanel() {
 
     if (paint.seamStatus === 'ready' && paint.seamResult) {
       const { metrics, warnings } = paint.seamResult;
+      const completion = paint.completionSummary;
+      const shellOnly = completion?.splitMode === 'shells';
+      const hybrid = completion?.splitMode === 'hybrid';
       return (
         <section
           className="manual-plane-panel manual-plane-panel--face-paint manual-plane-panel--seam-review"
@@ -256,32 +274,116 @@ export function ManualPlaneSplitPanel() {
         >
           <header>
             <div>
-              <span className="manual-plane-panel__eyebrow">M1.11c · 准备真实切割</span>
-              <h3>接缝预览</h3>
+              <span className="manual-plane-panel__eyebrow">M1.11g · 锚点候选拆件</span>
+              <h3>{shellOnly ? '独立壳体预览' : '接缝预览'}</h3>
               <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
             </div>
-            <em>1 个闭环</em>
+            <em>
+              {shellOnly
+                ? `${completion?.selectedShellCount ?? 0} 个壳体`
+                : hybrid
+                  ? `${completion?.selectedShellCount ?? 0} 壳体 + 1 接缝`
+                  : `${Math.max(1, seamChoices.length)} 个候选`}
+            </em>
           </header>
 
           <div className="face-seam-result is-ready" role="status">
-            <strong>✓ 接缝拓扑通过</strong>
-            <span>绿色粗线是排序后的唯一闭环。当前禁止涂画，但仍可旋转、平移和缩放视图检查。</span>
+            <strong>
+              {shellOnly
+                ? '✓ 无需切割即可拆件'
+                : hybrid
+                  ? '✓ 完整壳体与关节接缝已合并'
+                  : '✓ 接缝拓扑通过'}
+            </strong>
+            <span>
+              {shellOnly
+                ? `已识别 ${completion?.selectedShellCount ?? 0} 个与主体分离的完整壳体；确认后只做 A/B 分组，不新增切口或封口。`
+                : hybrid
+                  ? `${completion?.selectedShellCount ?? 0} 个完整壳体直接归入拆下件，只在仍连接主体的壳体上沿绿色闭环切割。`
+                  : '绿色粗线是当前候选接缝。可切换方案比较位置，再生成真实 A/B。'}
+            </span>
           </div>
 
-          <div className="face-seam-metrics" aria-label="接缝指标">
-            <span>
-              <b>{metrics.boundaryVertices.toLocaleString()}</b>
-              <small>接缝顶点</small>
-            </span>
-            <span>
-              <b>{metrics.seamLengthMm.toFixed(1)}</b>
-              <small>长度 mm</small>
-            </span>
-            <span>
-              <b>{metrics.maxPlanarityDeviationMm.toFixed(2)}</b>
-              <small>平面偏差 mm</small>
-            </span>
-          </div>
+          {completion && (
+            <div className="face-seam-result is-clean" role="status">
+              <strong>
+                {shellOnly
+                  ? `已从 ${completion.sourceShellCount} 个源壳体中选出 ${completion.selectedShellCount} 个完整壳体`
+                  : hybrid
+                    ? `完整壳体直接分组，桥接壳体生长 ${completion.growthRings} 层并选择关节环`
+                    : completion.searchMode === 'seed_growth'
+                      ? `已向隐藏面生长 ${completion.growthRings} 层并选择关节环`
+                      : `已从 ${completion.candidateCount} 个候选中选择主接缝`}
+              </strong>
+              <span>
+                粗涂 {completion.roughFaces.toLocaleString()} 面 →
+                自动补全 {completion.completedFaces.toLocaleString()} 面 ·
+                新增隐藏面 {completion.addedFaces.toLocaleString()} ·
+                匹配度 {completion.matchPercent}%
+                {completion.anchorDistanceMm !== undefined
+                  ? ` · 距定位点 ${completion.anchorDistanceMm.toFixed(1)} mm`
+                  : ''}
+              </span>
+            </div>
+          )}
+
+          {!shellOnly && seamChoices.length > 1 && (
+            <div className="face-seam-candidates" aria-label="候选接缝方案">
+              <div>
+                <strong>选择接缝方案</strong>
+                <span>绿色闭环会立即切换；优先选最贴近关节根部的一条。</span>
+              </div>
+              <nav>
+                {seamChoices.slice(0, 3).map((choice, index) => (
+                  <button
+                    type="button"
+                    key={`${index}-${choice.completion.seamEdges}`}
+                    aria-pressed={paint.seamChoiceIndex === index}
+                    onClick={() => selectFacePaintSeamChoice(index)}
+                  >
+                    <b>方案 {index + 1}</b>
+                    <small>
+                      {choice.completion.anchorDistanceMm !== undefined
+                        ? `距定位点 ${choice.completion.anchorDistanceMm.toFixed(1)} mm`
+                        : `拆下 ${(choice.result.metrics.paintedRatio * 100).toFixed(1)}%`}
+                    </small>
+                  </button>
+                ))}
+              </nav>
+            </div>
+          )}
+
+          {shellOnly && completion ? (
+            <div className="face-seam-metrics" aria-label="壳体分组指标">
+              <span>
+                <b>{completion.sourceShellCount.toLocaleString()}</b>
+                <small>源壳体</small>
+              </span>
+              <span>
+                <b>{completion.selectedShellCount.toLocaleString()}</b>
+                <small>拆下壳体</small>
+              </span>
+              <span>
+                <b>{completion.fullShellFaces.toLocaleString()}</b>
+                <small>完整面数</small>
+              </span>
+            </div>
+          ) : (
+            <div className="face-seam-metrics" aria-label="接缝指标">
+              <span>
+                <b>{metrics.boundaryVertices.toLocaleString()}</b>
+                <small>接缝顶点</small>
+              </span>
+              <span>
+                <b>{metrics.seamLengthMm.toFixed(1)}</b>
+                <small>长度 mm</small>
+              </span>
+              <span>
+                <b>{metrics.maxPlanarityDeviationMm.toFixed(2)}</b>
+                <small>平面偏差 mm</small>
+              </span>
+            </div>
+          )}
 
           <div className="face-seam-split-ratio">
             <div>
@@ -307,8 +409,12 @@ export function ManualPlaneSplitPanel() {
             </div>
           ) : (
             <div className="face-seam-result is-clean">
-              <strong>未发现明显封口与小件风险</strong>
-              <span>M1.11c 执行前仍会再次检查真实切割结果。</span>
+              <strong>{shellOnly ? '未新增几何切口' : '未发现明显封口与小件风险'}</strong>
+              <span>
+                {shellOnly
+                  ? '确认前仍会验证 A/B 两组都非空；源模型其余拓扑风险由打印检查继续负责。'
+                  : '执行前仍会再次检查真实切割结果。'}
+              </span>
             </div>
           )}
 
@@ -338,7 +444,7 @@ export function ManualPlaneSplitPanel() {
             </button>
           </footer>
           <small className="manual-plane-panel__hint">
-            只读预览 · 右键旋转 · 中键平移 · 滚轮缩放 · Esc 退出
+            {shellOnly ? '只读壳体分组' : '只读预览'} · 右键旋转 · 中键平移 · 滚轮缩放 · Esc 退出
           </small>
         </section>
       );
@@ -351,12 +457,14 @@ export function ManualPlaneSplitPanel() {
       >
         <header>
           <div>
-            <span className="manual-plane-panel__eyebrow">M1.11b · 接缝验证</span>
+            <span className="manual-plane-panel__eyebrow">M1.11g · 锚点候选拆件</span>
             <h3>涂出要拆下的部分</h3>
             <p title={node?.name}>{node?.name ?? '源对象已失效'}</p>
           </div>
           <em>{paintedPercent}%</em>
         </header>
+
+        <SurfaceWorkflowSwitch />
 
         <div className="manual-plane-panel__paint-notice">
           <strong>像涂画一样定义一个面组</strong>
@@ -403,16 +511,16 @@ export function ManualPlaneSplitPanel() {
 
         <div className="manual-plane-panel__paint-stats" role="status">
           <span>
+            <b>{paint.totalFaceCount.toLocaleString()}</b>
+            <small>模型总面</small>
+          </span>
+          <span>
             <b>{paint.paintedFaceCount.toLocaleString()}</b>
             <small>已涂面</small>
           </span>
           <span>
-            <b>{paint.strokeCount}</b>
-            <small>画笔笔划</small>
-          </span>
-          <span>
-            <b>{paint.boundaryStatus === 'budget' ? '高面数' : paint.boundarySegmentCount.toLocaleString()}</b>
-            <small>{paint.boundaryStatus === 'budget' ? '仅显示色块' : '边界线段'}</small>
+            <b>{paint.boundaryStatus === 'budget' ? '待分析' : paint.boundarySegmentCount.toLocaleString()}</b>
+            <small>{paint.boundaryStatus === 'budget' ? '局部接缝' : '边界线段'}</small>
           </span>
         </div>
 
@@ -435,8 +543,57 @@ export function ManualPlaneSplitPanel() {
 
         {paint.boundaryStatus === 'budget' && (
           <div className="manual-plane-panel__paint-performance" role="status">
-            <strong>高面数流畅模式</strong>
-            <span>继续实时显示紫色面组；为避免卡顿，暂不计算黄色边界和闭环接缝。</span>
+            <strong>高面数 · 多壳体关节模式</strong>
+            <span>粗涂准备拆下的整个零件，再指定它与主体相连的关节位置。</span>
+          </div>
+        )}
+        {paint.boundaryStatus === 'budget' && (
+          <div
+            className={`manual-plane-panel__paint-anchor${paint.seamAnchorLocal ? ' is-set' : ''}${paint.seamAnchorPlacement ? ' is-placing' : ''}`}
+          >
+            <div>
+              <strong>第 2 步 · 指定切口位置</strong>
+              <span>
+                {paint.seamAnchorLocal
+                  ? '青色定位点已设置，算法只在它附近搜索关节闭环。'
+                  : '点击按钮，再在模型关节根部点一下；无需沿接缝描线。'}
+              </span>
+            </div>
+            <nav>
+              <button
+                type="button"
+                aria-pressed={paint.seamAnchorPlacement}
+                onClick={() => {
+                  if (paint.seamAnchorPlacement) cancelFacePaintSeamAnchorPlacement();
+                  else beginFacePaintSeamAnchorPlacement();
+                }}
+              >
+                {paint.seamAnchorPlacement
+                  ? '取消定位'
+                  : paint.seamAnchorLocal
+                    ? '重新定位'
+                    : '设置切口位置'}
+              </button>
+              {paint.seamAnchorLocal && (
+                <button type="button" onClick={clearFacePaintSeamAnchor}>清除</button>
+              )}
+            </nav>
+            {paint.seamAnchorPlacement && <small>现在点击模型上希望断开的关节位置</small>}
+          </div>
+        )}
+        {paint.seamStatus === 'running' && (
+          <div className="face-cut-working" role="status" aria-live="polite">
+            <i />
+            <div>
+              <strong>{paint.seamProgress || '正在分析局部接缝'}</strong>
+              <span>模型保持不变；完成后才显示绿色闭环与风险结果。</span>
+            </div>
+          </div>
+        )}
+        {paint.seamError && (
+          <div className="manual-plane-panel__error" role="alert">
+            <strong>局部接缝分析未完成</strong>
+            <span>{paint.seamError}</span>
           </div>
         )}
         {paint.seamStatus === 'invalid' && paint.seamResult && (
@@ -465,15 +622,24 @@ export function ManualPlaneSplitPanel() {
             disabled={
               stale
               || paint.paintedFaceCount === 0
-              || paint.boundaryStatus !== 'ready'
-              || paint.boundarySegmentCount === 0
+              || paint.seamStatus === 'running'
+              || (paint.boundaryStatus === 'budget' && !paint.seamAnchorLocal)
+              || (paint.boundaryStatus === 'ready' && paint.boundarySegmentCount === 0)
             }
             title={paint.boundaryStatus === 'budget'
-              ? '当前高面数模式不生成接缝，请先减面'
+              ? paint.seamAnchorLocal
+                ? '在青色定位点附近搜索最多三条候选关节闭环'
+                : '请先在模型关节根部设置切口位置'
               : '把黄色边界排序为一条可检查的闭环'}
             onClick={generateSeam}
           >
-            生成接缝预览
+            {paint.seamStatus === 'running'
+              ? '正在分析…'
+              : paint.boundaryStatus === 'budget'
+                ? paint.seamAnchorLocal
+                  ? '生成候选接缝'
+                  : '先设置切口位置'
+                : '生成接缝预览'}
           </button>
         </footer>
 

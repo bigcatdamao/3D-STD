@@ -25,7 +25,8 @@ export interface HealthResponse {
   config: {
     turnstile: boolean; // TURNSTILE_SECRET_KEY 是否已配置
     engine: boolean; // 生成引擎是否接入(T4 起 ENGINE_MODE='mock' 为 true,T13 Tripo 同)
-    engineName: string | null; // 接入的引擎名('mock' / 'tripo'),未接入为 null
+    engineName: string | null; // 接入的引擎名('mock' / 'tripo' / 'hi3d'),未接入为 null
+    generationTypes?: GenerateType[];
     promptMax: number; // 当前引擎的 prompt 字符上限(T13a-fix1:前端计数器与校验以此为准)
     demoCodes: number; // 已配置演示码数量(不泄露码本身)
   };
@@ -102,6 +103,20 @@ export interface CancelResponse {
   ok: true;
   canceled: true;
   refunded: boolean; // 本次取消是否执行了返还(AI-07「取消还」;重复取消幂等为 false)
+}
+
+export type SplitLevel = 'low' | 'medium' | 'high';
+
+export interface SplitSubmitResponse {
+  ok: true;
+  engine: 'hi3d';
+  task: EngineTask;
+}
+
+export interface SplitTaskResponse {
+  ok: true;
+  task: EngineTask;
+  refunded?: boolean;
 }
 
 // Tripo credit 价(技术方案 D2,核实于 2026-07):文生 $0.20 = 20 credits,图生带纹理 $0.30 = 30 credits。

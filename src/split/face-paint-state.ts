@@ -13,9 +13,20 @@ import {
   createFaceSeamPreview,
   type FaceSeamPreviewResult,
 } from './face-seam-preview-core';
+import {
+  FaceSeamRunner,
+  type FaceSeamWorkerLike,
+} from './face-seam-runner';
+import type { FaceSetCompletionSummary } from './face-set-completion-core';
 
 export type FacePaintBoundaryStatus = 'idle' | 'ready' | 'budget';
-export type FaceSeamStatus = 'idle' | 'ready' | 'invalid';
+export type FaceSeamStatus = 'idle' | 'running' | 'ready' | 'invalid';
+
+export interface FaceSeamChoice {
+  result: FaceSeamPreviewResult;
+  faceLabels: Uint8Array;
+  completion: FaceSetCompletionSummary;
+}
 
 export interface FacePaintUiState {
   active: boolean;
@@ -30,6 +41,14 @@ export interface FacePaintUiState {
   boundaryStatus: FacePaintBoundaryStatus;
   seamStatus: FaceSeamStatus;
   seamResult: FaceSeamPreviewResult | null;
+  seamProgress: string;
+  seamError: string | null;
+  seamDurationMs: number | null;
+  completionSummary?: FaceSetCompletionSummary | null;
+  seamAnchorPlacement: boolean;
+  seamAnchorLocal: [number, number, number] | null;
+  seamChoices: FaceSeamChoice[];
+  seamChoiceIndex: number;
   maskRevision: number;
 }
 
@@ -47,6 +66,9 @@ interface FacePaintSession {
   lastChangedFaces: number[];
   geometry: THREE.BufferGeometry | null;
   topology: FacePaintTopology | null | undefined;
+  viewPositionLocal: [number, number, number] | null;
+  seamAnchorLocal: [number, number, number] | null;
+  roughMaskBeforeSeam: Uint8Array | null;
 }
 
 const initialUiState: FacePaintUiState = {
@@ -62,6 +84,14 @@ const initialUiState: FacePaintUiState = {
   boundaryStatus: 'idle',
   seamStatus: 'idle',
   seamResult: null,
+  seamProgress: '',
+  seamError: null,
+  seamDurationMs: null,
+  completionSummary: null,
+  seamAnchorPlacement: false,
+  seamAnchorLocal: null,
+  seamChoices: [],
+  seamChoiceIndex: 0,
   maskRevision: 0,
 };
 
@@ -77,6 +107,22 @@ export function useFacePaintSnapshot(): FacePaintUiState {
 }
 
 let session: FacePaintSession | null = null;
+let seamRunner: FaceSeamRunner | null = null;
+
+function getFaceSeamRunner(): FaceSeamRunner | null {
+  if (seamRunner) return seamRunner;
+  if (typeof Worker === 'undefined') return null;
+  seamRunner = new FaceSeamRunner(() => new Worker(
+    new URL('./face-seam.worker.ts', import.meta.url),
+    { type: 'module' },
+  ) as unknown as FaceSeamWorkerLike);
+  return seamRunner;
+}
+
+export function _injectFaceSeamRunner(next: FaceSeamRunner | null): void {
+  seamRunner?.cancel();
+  seamRunner = next;
+}
 
 export function initializeFacePaintSession(
   instanceId: string,
@@ -103,6 +149,9 @@ export function initializeFacePaintSession(
     lastChangedFaces: [],
     geometry: null,
     topology: undefined,
+    viewPositionLocal: null,
+    seamAnchorLocal: null,
+    roughMaskBeforeSeam: null,
   };
   useFacePaint.setState({
     ...initialUiState,
@@ -116,6 +165,7 @@ export function initializeFacePaintSession(
 }
 
 export function resetFacePaintSession(): void {
+  seamRunner?.cancel();
   session = null;
   useFacePaint.setState({
     ...initialUiState,
@@ -124,7 +174,53 @@ export function resetFacePaintSession(): void {
 }
 
 export function setFacePaintMode(mode: FacePaintMode): void {
-  useFacePaint.setState({ mode });
+  useFacePaint.setState({ mode, seamAnchorPlacement: false });
+}
+
+export function beginFacePaintSeamAnchorPlacement(): boolean {
+  if (!session || ['running', 'ready'].includes(useFacePaint.getState().seamStatus)) return false;
+  useFacePaint.setState({ seamAnchorPlacement: true });
+  return true;
+}
+
+export function cancelFacePaintSeamAnchorPlacement(): void {
+  useFacePaint.setState({ seamAnchorPlacement: false });
+}
+
+export function setFacePaintSeamAnchorLocal(
+  position: readonly [number, number, number],
+): boolean {
+  if (!session || position.some((value) => !Number.isFinite(value))) return false;
+  session.seamAnchorLocal = [position[0], position[1], position[2]];
+  useFacePaint.setState({
+    seamAnchorPlacement: false,
+    seamAnchorLocal: [...session.seamAnchorLocal],
+    seamStatus: 'idle',
+    seamResult: null,
+    seamProgress: '',
+    seamError: null,
+    seamDurationMs: null,
+    completionSummary: null,
+    seamChoices: [],
+    seamChoiceIndex: 0,
+  });
+  return true;
+}
+
+export function clearFacePaintSeamAnchor(): void {
+  if (session) session.seamAnchorLocal = null;
+  useFacePaint.setState({
+    seamAnchorPlacement: false,
+    seamAnchorLocal: null,
+    seamStatus: 'idle',
+    seamResult: null,
+    seamProgress: '',
+    seamError: null,
+    seamDurationMs: null,
+    completionSummary: null,
+    seamChoices: [],
+    seamChoiceIndex: 0,
+  });
 }
 
 export function setFacePaintBrushRadius(radiusMm: number): void {
@@ -137,11 +233,24 @@ export function adjustFacePaintBrushRadius(factor: number): void {
 }
 
 export function beginFacePaintStroke(): boolean {
-  if (!session || session.currentChanges || useFacePaint.getState().seamStatus === 'ready') return false;
+  if (
+    !session
+    || session.currentChanges
+    || ['running', 'ready'].includes(useFacePaint.getState().seamStatus)
+  ) return false;
   session.currentChanges = new Map();
   session.lastChangedFaces = [];
   if (useFacePaint.getState().seamStatus !== 'idle') {
-    useFacePaint.setState({ seamStatus: 'idle', seamResult: null });
+    useFacePaint.setState({
+      seamStatus: 'idle',
+      seamResult: null,
+      seamProgress: '',
+      seamError: null,
+      seamDurationMs: null,
+      completionSummary: null,
+      seamChoices: [],
+      seamChoiceIndex: 0,
+    });
   }
   return true;
 }
@@ -158,12 +267,19 @@ export function applyFacePaintFaces(
 
 function publishMaskChange(changedFaces: number[]): void {
   if (!session) return;
+  session.roughMaskBeforeSeam = null;
   session.lastChangedFaces = changedFaces;
   useFacePaint.setState((state) => ({
     paintedFaceCount: session!.paintedCount,
     strokeCount: session!.history.length,
     seamStatus: 'idle',
     seamResult: null,
+    seamProgress: '',
+    seamError: null,
+    seamDurationMs: null,
+    completionSummary: null,
+    seamChoices: [],
+    seamChoiceIndex: 0,
     maskRevision: state.maskRevision + 1,
   }));
 }
@@ -227,6 +343,8 @@ export function copyFacePaintCutInput(): {
   positions: ArrayBuffer;
   index: ArrayBuffer | null;
   faceLabels: Uint8Array;
+  viewPositionLocal: [number, number, number] | null;
+  seamAnchorLocal: [number, number, number] | null;
 } | null {
   if (!session?.geometry || session.mask.length === 0) return null;
   const position = session.geometry.getAttribute('position');
@@ -250,6 +368,12 @@ export function copyFacePaintCutInput(): {
     positions: positions.buffer,
     index,
     faceLabels: session.mask.slice(),
+    viewPositionLocal: session.viewPositionLocal
+      ? [...session.viewPositionLocal] as [number, number, number]
+      : null,
+    seamAnchorLocal: session.seamAnchorLocal
+      ? [...session.seamAnchorLocal] as [number, number, number]
+      : null,
   };
 }
 
@@ -271,6 +395,35 @@ export function registerFacePaintTopology(topology: FacePaintTopology | null): v
   session.topology = topology;
 }
 
+export function registerFacePaintViewPositionLocal(
+  position: readonly [number, number, number],
+): void {
+  if (!session || position.some((value) => !Number.isFinite(value))) return;
+  session.viewPositionLocal = [position[0], position[1], position[2]];
+}
+
+function applyFaceSeamChoice(choice: FaceSeamChoice, index: number): boolean {
+  if (!session || choice.faceLabels.length !== session.mask.length) return false;
+  session.mask = choice.faceLabels;
+  session.paintedCount = paintedFaceCount(session.mask);
+  session.lastChangedFaces = [];
+  useFacePaint.setState((state) => ({
+    paintedFaceCount: session!.paintedCount,
+    seamStatus: choice.result.status,
+    seamResult: choice.result,
+    completionSummary: choice.completion,
+    seamChoiceIndex: index,
+    maskRevision: state.maskRevision + 1,
+  }));
+  return true;
+}
+
+export function selectFacePaintSeamChoice(index: number): boolean {
+  const choices = useFacePaint.getState().seamChoices;
+  if (!Number.isInteger(index) || index < 0 || index >= choices.length) return false;
+  return applyFaceSeamChoice(choices[index], index);
+}
+
 export function generateFacePaintSeamPreview(
   worldMatrix = new THREE.Matrix4(),
 ): FaceSeamPreviewResult | null {
@@ -278,16 +431,159 @@ export function generateFacePaintSeamPreview(
   if (session.topology === undefined) {
     session.topology = session.geometry ? buildFacePaintTopology(session.geometry) : null;
   }
-  const result = createFaceSeamPreview(session.topology ?? null, session.mask, worldMatrix);
+  if (session.topology) {
+    const result = createFaceSeamPreview(session.topology, session.mask, worldMatrix);
+    useFacePaint.setState({
+      seamStatus: result.status,
+      seamResult: result,
+      seamProgress: '',
+      seamError: null,
+      seamDurationMs: 0,
+      completionSummary: null,
+      seamChoices: [],
+      seamChoiceIndex: 0,
+    });
+    return result;
+  }
+
+  const input = copyFacePaintCutInput();
+  const activeRunner = getFaceSeamRunner();
+  if (!input || !activeRunner) {
+    const result = createFaceSeamPreview(null, session.mask, worldMatrix);
+    useFacePaint.setState({
+      seamStatus: 'invalid',
+      seamResult: result,
+      seamProgress: '',
+      seamError: '当前环境无法启动高面数局部接缝 Worker',
+      seamDurationMs: null,
+      completionSummary: null,
+      seamChoices: [],
+      seamChoiceIndex: 0,
+    });
+    return result;
+  }
+
   useFacePaint.setState({
-    seamStatus: result.status,
-    seamResult: result,
+    seamStatus: 'running',
+    seamResult: null,
+    seamProgress: '准备局部接缝数据',
+    seamError: null,
+    seamDurationMs: null,
+    completionSummary: null,
+    seamChoices: [],
+    seamChoiceIndex: 0,
   });
-  return result;
+  session.roughMaskBeforeSeam = session.mask.slice();
+  const started = activeRunner.run({
+    positions: input.positions,
+    index: input.index,
+    faceLabels: input.faceLabels,
+    worldMatrix: worldMatrix.toArray(),
+    viewPositionLocal: input.viewPositionLocal,
+    seamAnchorLocal: input.seamAnchorLocal,
+  }, {
+    onProgress: (seamProgress) => {
+      useFacePaint.setState({ seamProgress });
+    },
+    onResult: (
+      result,
+      seamDurationMs,
+      completedFaceLabels,
+      completionSummary,
+      alternatives,
+    ) => {
+      const choices: FaceSeamChoice[] = [];
+      if (
+        result.status === 'ready'
+        && completedFaceLabels
+        && completionSummary
+      ) {
+        choices.push({
+          result,
+          faceLabels: completedFaceLabels,
+          completion: completionSummary,
+        });
+      }
+      for (const alternative of alternatives ?? []) {
+        if (alternative.result.status !== 'ready') continue;
+        choices.push({
+          result: alternative.result,
+          faceLabels: alternative.completedFaceLabels,
+          completion: alternative.completion,
+        });
+      }
+      useFacePaint.setState({
+        seamStatus: result.status,
+        seamResult: result,
+        seamProgress: '',
+        seamError: null,
+        seamDurationMs,
+        completionSummary: completionSummary ?? null,
+        seamChoices: choices,
+        seamChoiceIndex: 0,
+      });
+      if (choices.length) applyFaceSeamChoice(choices[0], 0);
+    },
+    onError: (seamError) => {
+      useFacePaint.setState({
+        seamStatus: 'invalid',
+        seamResult: null,
+        seamProgress: '',
+        seamError,
+        seamDurationMs: null,
+        completionSummary: null,
+        seamChoices: [],
+        seamChoiceIndex: 0,
+      });
+    },
+    onCancelled: () => {
+      useFacePaint.setState({
+        seamStatus: 'idle',
+        seamResult: null,
+        seamProgress: '',
+        seamError: null,
+        seamDurationMs: null,
+        completionSummary: null,
+        seamChoices: [],
+        seamChoiceIndex: 0,
+      });
+    },
+  });
+  if (!started) {
+    useFacePaint.setState({
+      seamStatus: 'invalid',
+      seamResult: null,
+      seamProgress: '',
+      seamError: '局部接缝分析尚未启动，请重试',
+      seamDurationMs: null,
+      completionSummary: null,
+      seamChoices: [],
+      seamChoiceIndex: 0,
+    });
+  }
+  return null;
 }
 
 export function returnFacePaintToEditing(): void {
-  useFacePaint.setState({ seamStatus: 'idle', seamResult: null });
+  seamRunner?.cancel();
+  if (session?.roughMaskBeforeSeam) {
+    session.mask = session.roughMaskBeforeSeam;
+    session.roughMaskBeforeSeam = null;
+    session.paintedCount = paintedFaceCount(session.mask);
+    session.lastChangedFaces = [];
+  }
+  useFacePaint.setState((state) => ({
+    paintedFaceCount: session?.paintedCount ?? state.paintedFaceCount,
+    seamStatus: 'idle',
+    seamResult: null,
+    seamProgress: '',
+    seamError: null,
+    seamDurationMs: null,
+    completionSummary: null,
+    seamChoices: [],
+    seamChoiceIndex: 0,
+    maskRevision: state.maskRevision + 1,
+  }));
 }
 
 export function setFacePaintBoundaryInfo(

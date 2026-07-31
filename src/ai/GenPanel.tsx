@@ -126,6 +126,8 @@ export function GenPanel() {
   const [promptMax, setPromptMax] = useState(PROMPT_MAX_CHARS); // T13a-fix1:随 /api/health 的引擎上报值收紧(Tripo=1024)
   const promptMaxRef = useRef(PROMPT_MAX_CHARS);
   const engineNameRef = useRef<string | null>(null);
+  const [engineName, setEngineName] = useState<string | null>(null);
+  const [supportedTypes, setSupportedTypes] = useState<GenerateType[]>(['text', 'image', 'multiview']);
   const [waitingToken, setWaitingToken] = useState(false); // 已点提交、等 widget 出 token
   const [tsBroken, setTsBroken] = useState(false); // 脚本装载失败/错误回调
   const [ownKeyOpen, setOwnKeyOpen] = useState(false);
@@ -453,9 +455,26 @@ export function GenPanel() {
     void (async () => {
       try {
         const h = await fetch('/api/health');
-        const hj = (await h.json()) as { config?: { promptMax?: number; engineName?: string } };
+        const hj = (await h.json()) as {
+          config?: { promptMax?: number; engineName?: string; generationTypes?: GenerateType[] };
+        };
         const m = hj?.config?.promptMax;
-        engineNameRef.current = typeof hj?.config?.engineName === 'string' ? hj.config.engineName : null;
+        const nextEngine = typeof hj?.config?.engineName === 'string' ? hj.config.engineName : null;
+        engineNameRef.current = nextEngine;
+        setEngineName(nextEngine);
+        if (nextEngine === 'hi3d') setHasOwnKey(false);
+        const modes: GenerateType[] = Array.isArray(hj?.config?.generationTypes)
+          ? hj.config.generationTypes.filter(
+              (type): type is GenerateType => type === 'text' || type === 'image' || type === 'multiview',
+            )
+          : ['text', 'image', 'multiview'];
+        if (modes.length) {
+          setSupportedTypes(modes);
+          const current = genRef.current;
+          if (current.phase === 'idle' && !modes.includes(current.context.type)) {
+            commit(idleState({ type: modes[0], prompt: '', images: [] }, 'Hi3D 使用图片生成模型，请添加主体图片。'));
+          }
+        }
         if (typeof m === 'number' && m > 0) {
           setPromptMax(m);
           promptMaxRef.current = m;
@@ -514,7 +533,8 @@ export function GenPanel() {
   // ---- 派生读数 ----
   const remaining = quota?.visitor.remaining ?? null;
   const breakerOpen = quota?.breaker.open ?? false;
-  const blocked = !hasOwnKey && (breakerOpen || remaining === 0); // 提交前拦截(AI-07:不进入扣减)
+  const allowOwnKey = engineName !== 'hi3d';
+  const blocked = !(allowOwnKey && hasOwnKey) && (breakerOpen || remaining === 0); // 提交前拦截(AI-07:不进入扣减)
   const p = gen.context.prompt;
   const overLimit = gen.context.type === 'text' && p.trim().length > promptMax;
   const imageValidation = validateImageSelection(gen.context.type, selectedImages.map(imageMeta));
@@ -617,9 +637,11 @@ export function GenPanel() {
               <span style={{ color: '#e0c9a8' }}>
                 {breakerOpen ? '今日站点生成额度已用完' : '今日生成配额已用完'} · 明日再来,或
               </span>
-              <button style={btn} onClick={() => setOwnKeyOpen(true)}>
-                使用自带 API key
-              </button>
+              {allowOwnKey && (
+                <button style={btn} onClick={() => setOwnKeyOpen(true)}>
+                  使用自带 API key
+                </button>
+              )}
             </>
           );
         }
@@ -627,10 +649,10 @@ export function GenPanel() {
           <>
             <span style={dim}>
               {quota ? `配额 ${quota.visitor.remaining}/${quota.visitor.limit}` : '配额 —'}
-              {hasOwnKey ? ' · 自带 key' : ''}
+              {allowOwnKey && hasOwnKey ? ' · 自带 key' : ''}
               {quota?.demo === 'active' ? ' · 演示码' : ''}
             </span>
-            {hasOwnKey && (
+            {allowOwnKey && hasOwnKey && (
               <button
                 style={{ ...btn, padding: '2px 6px' }}
                 title="清除自带 key(仅存于本会话)"
@@ -725,7 +747,9 @@ export function GenPanel() {
             ['text', '文字'],
             ['image', '单图'],
             ['multiview', '多图'],
-          ] as Array<[GenerateType, string]>).map(([type, label]) => (
+          ] as Array<[GenerateType, string]>)
+            .filter(([type]) => supportedTypes.includes(type))
+            .map(([type, label]) => (
             <button
               key={type}
               type="button"
@@ -737,7 +761,7 @@ export function GenPanel() {
             >
               {label}
             </button>
-          ))}
+            ))}
         </div>
         <div className="gen-input-surface">
           {gen.context.type === 'text' ? (
@@ -791,7 +815,7 @@ export function GenPanel() {
       <div style={statusRow}>{renderStatus()}</div>
       {/* Turnstile 挂载点:interaction-only,无感通过时不可见;需要交互时在条内浮现 */}
       <div ref={tsMount} style={{ position: 'absolute', bottom: 30, left: 10, zIndex: 40 }} />
-      {ownKeyOpen && (
+      {allowOwnKey && ownKeyOpen && (
         <div
           style={{
             position: 'absolute',
