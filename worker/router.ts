@@ -31,6 +31,8 @@ import type { QuotaOp } from './quota-do';
 import type { SplitAnalysisApiSuccess } from '../src/agent/split-analysis-api-types';
 import type { CreationAgentApiSuccess } from '../src/agent/creation-agent-api-types';
 import type { CreationConceptApiSuccess } from '../src/agent/creation-concept-api-types';
+import type { CreationReferenceApiSuccess } from '../src/agent/creation-reference-api-types';
+import type { CreationImageApiSuccess } from '../src/agent/creation-image-api-types';
 import {
   callCreationAgentResponses,
   CreationAgentInputError,
@@ -43,6 +45,19 @@ import {
   CreationConceptUpstreamError,
   parseCreationConceptRequest,
 } from './creation-concept';
+import {
+  callCreationReferenceResponses,
+  CreationReferenceInputError,
+  CreationReferenceUpstreamError,
+  parseCreationReferenceRequest,
+} from './creation-reference';
+import {
+  callCreationImage,
+  CreationImageInputError,
+  CreationImageUpstreamError,
+  imageWarning,
+  parseCreationImageRequest,
+} from './creation-image';
 import {
   callSplitAnalysisResponses,
   parseSplitAnalysisRequest,
@@ -112,6 +127,19 @@ export interface WorkerEnv {
   CREATION_CONCEPT_DAILY_LIMIT?: string; // 单访客视觉规划次数，默认 5
   CREATION_CONCEPT_BREAKER_UNITS?: string; // 独立全站日熔断，默认 300
   CREATION_CONCEPT_COST_UNITS?: string; // 单次预扣单位，默认 2
+  CREATION_REFERENCE_MODEL?: string; // 默认 gemini-2.5-flash
+  CREATION_REFERENCE_TIMEOUT_MS?: string;
+  CREATION_REFERENCE_MAX_OUTPUT_TOKENS?: string;
+  CREATION_REFERENCE_DAILY_LIMIT?: string;
+  CREATION_REFERENCE_BREAKER_UNITS?: string;
+  CREATION_REFERENCE_COST_UNITS?: string;
+  CREATION_IMAGE_MODEL?: string; // 默认 gpt-image-2
+  CREATION_IMAGE_TIMEOUT_MS?: string;
+  CREATION_IMAGE_SIZE?: string;
+  CREATION_IMAGE_QUALITY?: string;
+  CREATION_IMAGE_DAILY_LIMIT?: string;
+  CREATION_IMAGE_BREAKER_UNITS?: string;
+  CREATION_IMAGE_COST_UNITS?: string;
   HI3D_SPLIT_DAILY_LIMIT?: string;
   HI3D_SPLIT_BREAKER_CREDITS?: string;
   HI3D_SPLIT_COST_CREDITS?: string;
@@ -475,6 +503,126 @@ async function creationConcepts(req: Request, env: WorkerEnv, deps: RouterDeps):
     if (upstreamStatus === 401 || upstreamStatus === 403) return err(502, 'creation_concept_provider_auth', 'service', '视觉方案服务授权失效，本次额度已返还。', details);
     if (upstreamStatus === 429) return err(503, 'creation_concept_provider_busy', 'service', '视觉方案服务繁忙，本次额度已返还。', details);
     return err(502, 'creation_concept_failed', 'service', '视觉方案暂时不可用，本次额度已返还。', details);
+  }
+}
+
+/** M1.15a:VLM 只读理解 1–3 张参考图并给出 Brief 补丁，不保存原图。 */
+async function creationReferenceAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let request;
+  try {
+    request = await parseCreationReferenceRequest(req);
+  } catch (error) {
+    if (error instanceof CreationReferenceInputError) return err(400, error.code, 'validation', error.message);
+    return err(400, 'bad_request', 'validation', '参考图请求无法解析。');
+  }
+  const providerConfig = creationProviderOf(env);
+  if (!providerConfig?.apiKey) return err(503, 'creation_reference_unconfigured', 'service', '参考图分析服务尚未配置服务端密钥。');
+  const ctx = await visitorCtxOf(req, env);
+  const taskId = `cr_${crypto.randomUUID()}`;
+  const scope = 'creation-reference';
+  const deducted = await quotaCall<DeductResult>(env, {
+    op: 'deduct', visitorKey: ctx.visitorKey, taskId,
+    credits: Math.max(1, Math.min(10, num(env.CREATION_REFERENCE_COST_UNITS, 2))),
+    limitTimes: Math.min(20, num(env.CREATION_REFERENCE_DAILY_LIMIT, 8)),
+    breakerLimitCredits: Math.min(50_000, num(env.CREATION_REFERENCE_BREAKER_UNITS, 300)),
+    demoCode: ctx.demoCode,
+  }, scope);
+  if (!deducted.ok) return deducted.error === 'budget_exhausted'
+    ? err(429, 'creation_reference_budget_exhausted', 'quota', '今日参考图分析总额度已用完。')
+    : err(429, 'creation_reference_quota_exhausted', 'quota', '今日参考图分析次数已用完。');
+  const model = env.CREATION_REFERENCE_MODEL?.trim() || 'gemini-2.5-flash';
+  try {
+    const startedAt = Date.now();
+    const result = await callCreationReferenceResponses(request, {
+      apiKey: providerConfig.apiKey,
+      endpoint: providerConfig.endpoint,
+      model,
+      reasoningEffort: 'none',
+      timeoutMs: Math.max(10_000, Math.min(90_000, num(env.CREATION_REFERENCE_TIMEOUT_MS, 60_000))),
+      maxOutputTokens: Math.max(800, Math.min(3_000, num(env.CREATION_REFERENCE_MAX_OUTPUT_TOKENS, 1_600))),
+    }, deps.fetchImpl ?? fetch);
+    const body: CreationReferenceApiSuccess = {
+      ok: true,
+      result: result.output,
+      meta: {
+        provider: providerConfig.provider,
+        model,
+        requestId: request.requestId,
+        evidenceImages: request.images.length,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        usage: result.usage,
+      },
+    };
+    return Response.json(body, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
+    const upstreamStatus = error instanceof CreationReferenceUpstreamError ? error.upstreamStatus : null;
+    const providerCode = error instanceof CreationReferenceUpstreamError ? error.providerCode : null;
+    const details = { refunded: refund.refunded, taskId, ...(upstreamStatus ? { upstreamStatus } : {}), ...(providerCode ? { providerCode } : {}) };
+    if (error instanceof CreationReferenceUpstreamError && error.code === 'timeout') return err(504, 'creation_reference_timeout', 'service', '参考图分析超时，本次额度已返还。', details);
+    if (upstreamStatus === 401 || upstreamStatus === 403) return err(502, 'creation_reference_provider_auth', 'service', '参考图分析服务授权失效，本次额度已返还。', details);
+    if (upstreamStatus === 429) return err(503, 'creation_reference_provider_busy', 'service', '参考图分析服务繁忙，本次额度已返还。', details);
+    return err(502, 'creation_reference_failed', 'service', '参考图分析暂时不可用，本次额度已返还。', details);
+  }
+}
+
+/** M1.15a:确认方案后才调用付费生图；不保存图片，也不自动提交 Hi3D。 */
+async function creationImages(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let request;
+  try {
+    request = await parseCreationImageRequest(req);
+  } catch (error) {
+    if (error instanceof CreationImageInputError) return err(400, error.code, 'validation', error.message);
+    return err(400, 'bad_request', 'validation', '效果图请求无法解析。');
+  }
+  const apiKey = env.AIHUBMIX_API_KEY?.trim();
+  if (!apiKey) return err(503, 'creation_image_unconfigured', 'service', '效果图服务尚未配置服务端密钥。');
+  const ctx = await visitorCtxOf(req, env);
+  const taskId = `ci_${crypto.randomUUID()}`;
+  const scope = 'creation-images';
+  const deducted = await quotaCall<DeductResult>(env, {
+    op: 'deduct', visitorKey: ctx.visitorKey, taskId,
+    credits: Math.max(1, Math.min(50, num(env.CREATION_IMAGE_COST_UNITS, 10))),
+    limitTimes: Math.min(10, num(env.CREATION_IMAGE_DAILY_LIMIT, 3)),
+    breakerLimitCredits: Math.min(50_000, num(env.CREATION_IMAGE_BREAKER_UNITS, 100)),
+    demoCode: ctx.demoCode,
+  }, scope);
+  if (!deducted.ok) return deducted.error === 'budget_exhausted'
+    ? err(429, 'creation_image_budget_exhausted', 'quota', '今日效果图全站预算已用完。')
+    : err(429, 'creation_image_quota_exhausted', 'quota', '今日效果图次数已用完。');
+  const model = env.CREATION_IMAGE_MODEL?.trim() || 'gpt-image-2';
+  try {
+    const startedAt = Date.now();
+    const result = await callCreationImage(request, {
+      apiKey,
+      endpoint: 'https://api.aihubmix.com/v1/images/generations',
+      model,
+      timeoutMs: Math.max(20_000, Math.min(180_000, num(env.CREATION_IMAGE_TIMEOUT_MS, 120_000))),
+      size: env.CREATION_IMAGE_SIZE?.trim() || '1024x1024',
+      quality: env.CREATION_IMAGE_QUALITY?.trim() || 'low',
+    }, deps.fetchImpl ?? fetch);
+    const body: CreationImageApiSuccess = {
+      ok: true,
+      result: {
+        schemaVersion: 'creation-image-output.v1',
+        mode: request.mode,
+        mimeType: 'image/png',
+        imageBase64: result.imageBase64,
+        revisedPrompt: result.revisedPrompt,
+        warning: imageWarning(request.mode),
+      },
+      meta: { provider: 'aihubmix', model, requestId: request.requestId, latencyMs: Math.max(0, Date.now() - startedAt) },
+    };
+    return Response.json(body, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
+    const upstreamStatus = error instanceof CreationImageUpstreamError ? error.upstreamStatus : null;
+    const providerCode = error instanceof CreationImageUpstreamError ? error.providerCode : null;
+    const details = { refunded: refund.refunded, taskId, ...(upstreamStatus ? { upstreamStatus } : {}), ...(providerCode ? { providerCode } : {}) };
+    if (error instanceof CreationImageUpstreamError && error.code === 'timeout') return err(504, 'creation_image_timeout', 'service', '效果图生成超时，本次额度已返还。', details);
+    if (upstreamStatus === 401 || upstreamStatus === 403) return err(502, 'creation_image_provider_auth', 'service', '效果图服务授权失效，本次额度已返还。', details);
+    if (upstreamStatus === 429) return err(503, 'creation_image_provider_busy', 'service', '效果图服务繁忙，本次额度已返还。', details);
+    return err(502, 'creation_image_failed', 'service', '效果图生成失败，本次额度已返还。', details);
   }
 }
 
@@ -842,6 +990,8 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
   if (path === '/api/agent/creation' && req.method === 'POST') return creationAgent(req, env, deps);
   if (path === '/api/agent/creation/concepts' && req.method === 'POST') return creationConcepts(req, env, deps);
+  if (path === '/api/agent/creation/reference-analysis' && req.method === 'POST') return creationReferenceAnalysis(req, env, deps);
+  if (path === '/api/agent/creation/images' && req.method === 'POST') return creationImages(req, env, deps);
 
   const splitResultM = /^\/api\/split\/([^/]+)\/result$/.exec(path);
   if (splitResultM && req.method === 'GET') return hi3dSplitResult(env, deps, decodeURIComponent(splitResultM[1]));

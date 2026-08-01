@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCreationAgent } from './creation-agent-api';
 import { requestCreationConcepts } from './creation-concept-api';
 import type { CreationConceptApiOutput } from './creation-concept-api-types';
+import { requestCreationReferenceAnalysis } from './creation-reference-api';
+import type { CreationReferenceApiOutput } from './creation-reference-api-types';
+import { requestCreationImage } from './creation-image-api';
+import type { CreationImageMode } from './creation-image-api-types';
+import {
+  base64PngToFile,
+  compressReferenceImage,
+  splitTurntableSheet,
+  type AgentGenerationHandoff,
+} from './creation-handoff';
 import type {
   CreationAgentApiOutput,
   CreationAgentBrief,
@@ -31,6 +41,20 @@ interface SavedSession {
   concepts: CreationConceptApiOutput | null;
   selectedSchemeId: string | null;
   conceptConfirmed: boolean;
+  referenceAnalysis: CreationReferenceApiOutput | null;
+}
+
+interface ReferenceFile {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
+
+interface GeneratedVisual {
+  mode: CreationImageMode;
+  base64: string;
+  warning: string;
+  model: string;
 }
 
 const welcome: ChatMessage = {
@@ -54,10 +78,11 @@ function initialSession(): SavedSession {
   return {
     brief: emptyCreationBrief(), messages: [welcome], output: null, confirmed: false,
     concepts: null, selectedSchemeId: null, conceptConfirmed: false,
+    referenceAnalysis: null,
   };
 }
 
-export function CreationAgentPanel() {
+export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentGenerationHandoff) => void }) {
   const [session, setSession] = useState<SavedSession>(initialSession);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -66,6 +91,13 @@ export function CreationAgentPanel() {
   const [serviceLabel, setServiceLabel] = useState('等待首次对话');
   const [conceptBusy, setConceptBusy] = useState(false);
   const [conceptError, setConceptError] = useState<string | null>(null);
+  const [referenceFiles, setReferenceFiles] = useState<ReferenceFile[]>([]);
+  const referenceFilesRef = useRef<ReferenceFile[]>([]);
+  const [referenceBusy, setReferenceBusy] = useState(false);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [visual, setVisual] = useState<GeneratedVisual | null>(null);
+  const [visualBusy, setVisualBusy] = useState(false);
+  const [visualError, setVisualError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -81,6 +113,7 @@ export function CreationAgentPanel() {
           concepts: saved.concepts ?? null,
           selectedSchemeId: saved.selectedSchemeId ?? null,
           conceptConfirmed: saved.conceptConfirmed === true,
+          referenceAnalysis: saved.referenceAnalysis ?? null,
         });
       }
     } catch {
@@ -95,6 +128,10 @@ export function CreationAgentPanel() {
       /* 无 storage 时只失去刷新恢复。 */
     }
   }, [session]);
+
+  useEffect(() => () => {
+    referenceFilesRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+  }, []);
 
   const readiness = Math.round((session.output?.readiness.score ?? 0) * 100);
   const canConfirm = Boolean(
@@ -135,7 +172,7 @@ export function CreationAgentPanel() {
         message,
         brief: currentBrief,
         history,
-        referenceImageCount: 0,
+        referenceImageCount: referenceFilesRef.current.length,
       });
       const assistant: ChatMessage = { id: nextId('assistant'), role: 'assistant', source: 'ai', content: response.result.message };
       setSession((current) => ({
@@ -179,6 +216,7 @@ export function CreationAgentPanel() {
       concepts: null,
       selectedSchemeId: null,
       conceptConfirmed: false,
+      referenceAnalysis: current.referenceAnalysis,
     }));
     setConceptError(null);
   };
@@ -237,9 +275,95 @@ export function CreationAgentPanel() {
     if (!scheme) return;
     const assistant: ChatMessage = {
       id: nextId('scheme-confirmed'), role: 'assistant', source: 'system',
-      content: `已确认视觉方向“${scheme.title}”。M1.14b 在这里停止；进入效果图生成前仍会单独展示模型、费用和确认按钮。`,
+      content: `已确认视觉方向“${scheme.title}”。下一步可以生成一张效果图；这是独立付费节点，不会自动提交 3D 任务。`,
     };
     setSession((current) => ({ ...current, conceptConfirmed: true, messages: [...current.messages, assistant] }));
+    setVisual(null);
+    setVisualError(null);
+  };
+
+  const setReferences = (files: File[]) => {
+    const valid = files.filter((file) => /image\/(?:png|jpeg|webp)/.test(file.type) && file.size > 0 && file.size <= 10 * 1024 * 1024).slice(0, 3);
+    referenceFilesRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    const next = valid.map((file, index) => ({ id: `reference_${index + 1}`, file, previewUrl: URL.createObjectURL(file) }));
+    referenceFilesRef.current = next;
+    setReferenceFiles(next);
+    setReferenceError(valid.length === files.slice(0, 3).length ? null : '仅支持 1–3 张 PNG、JPG 或 WebP，单张不超过 10MB。');
+    setVisual(null);
+  };
+
+  const analyzeReferences = async () => {
+    if (!referenceFiles.length || referenceBusy) return;
+    setReferenceBusy(true);
+    setReferenceError(null);
+    try {
+      const images = await Promise.all(referenceFiles.map(async (item) => ({ imageId: item.id, imageUrl: await compressReferenceImage(item.file) })));
+      const response = await requestCreationReferenceAnalysis({
+        schemaVersion: 'creation-reference-input.v1', requestId: `reference_${Date.now()}`, locale: 'zh-CN', brief: session.brief, images,
+      });
+      const patch = response.result.briefPatch;
+      setSession((current) => {
+        const brief = {
+          ...current.brief,
+          subject: current.brief.subject || patch.subject,
+          projectType: current.brief.projectType === 'unknown' ? patch.projectType : current.brief.projectType,
+          style: current.brief.style || patch.style,
+          pose: current.brief.pose || patch.pose,
+          notes: Array.from(new Set([...current.brief.notes, ...patch.notes])).slice(0, 20),
+        };
+        const assistant: ChatMessage = {
+          id: nextId('reference'), role: 'assistant', source: 'ai',
+          content: `已理解 ${images.length} 张参考图：${response.result.summary} 我只补充 Brief 中原本为空的字段，请你继续核对。`,
+        };
+        return { ...current, brief, output: null, confirmed: false, concepts: null, selectedSchemeId: null, conceptConfirmed: false, referenceAnalysis: response.result, messages: [...current.messages, assistant] };
+      });
+      setServiceLabel(`${response.meta.provider} · ${response.meta.model}`);
+    } catch (error) {
+      setReferenceError(error instanceof Error ? error.message : '参考图分析失败。');
+    } finally { setReferenceBusy(false); }
+  };
+
+  const referenceSummary = session.referenceAnalysis
+    ? `${session.referenceAnalysis.summary}；轮廓：${session.referenceAnalysis.silhouette}；配色：${session.referenceAnalysis.colorPalette.join('、')}；材质：${session.referenceAnalysis.materials.join('、')}；特征：${session.referenceAnalysis.distinctiveFeatures.join('、')}`
+    : null;
+
+  const generateVisual = async (mode: CreationImageMode) => {
+    const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
+    if (!session.conceptConfirmed || !scheme || visualBusy) return;
+    setVisualBusy(true);
+    setVisualError(null);
+    try {
+      const response = await requestCreationImage({
+        schemaVersion: 'creation-image-input.v1', requestId: `image_${Date.now()}`, locale: 'zh-CN', mode,
+        brief: session.brief, scheme, referenceSummary,
+      });
+      setVisual({ mode, base64: response.result.imageBase64, warning: response.result.warning, model: response.meta.model });
+      setServiceLabel(`${response.meta.provider} · ${response.meta.model}`);
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : '效果图生成失败。');
+    } finally { setVisualBusy(false); }
+  };
+
+  const handoffVisual = async () => {
+    const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
+    if (!visual || !scheme || !onHandoff) return;
+    setVisualBusy(true);
+    setVisualError(null);
+    try {
+      const stem = (session.brief.subject || scheme.title).replace(/[\\/:*?"<>|]/g, '-');
+      const images = visual.mode === 'turntable_sheet'
+        ? await splitTurntableSheet(visual.base64, stem)
+        : [{ view: 'front' as const, file: await base64PngToFile(visual.base64, `${stem}-concept.png`) }];
+      onHandoff({
+        id: `handoff_${Date.now()}`,
+        type: visual.mode === 'turntable_sheet' ? 'multiview' : 'image',
+        prompt: `${session.brief.subject || scheme.title} · ${scheme.title}`,
+        images,
+        source: visual.mode === 'turntable_sheet' ? 'agent_turntable' : 'agent_concept',
+      });
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : '图片交接失败。');
+    } finally { setVisualBusy(false); }
   };
 
   const reset = () => {
@@ -250,16 +374,41 @@ export function CreationAgentPanel() {
     setServiceLabel('等待首次对话');
     setConceptBusy(false);
     setConceptError(null);
+    referenceFilesRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    referenceFilesRef.current = [];
+    setReferenceFiles([]);
+    setReferenceBusy(false);
+    setReferenceError(null);
+    setVisual(null);
+    setVisualBusy(false);
+    setVisualError(null);
   };
 
   return (
     <div className="creation-agent" data-testid="creation-agent-panel">
       <section className="creation-agent__conversation" aria-label="3D 创作 Agent 对话">
         <div className="creation-agent__status">
-          <span className="creation-agent__live"><i /> 需求理解</span>
+          <span className="creation-agent__live"><i /> {session.conceptConfirmed ? '视觉生成' : session.confirmed ? '方案规划' : '需求理解'}</span>
           <span>{serviceLabel}</span>
           <button type="button" onClick={reset}>重新开始</button>
         </div>
+        <section className="creation-reference" aria-label="参考图">
+          <div className="creation-reference__copy">
+            <strong>参考图 <em>可选 · 最多 3 张</em></strong>
+            <span>{session.referenceAnalysis ? `已提取：${session.referenceAnalysis.subject}` : '用于识别主体、风格与关键特征，不公开、不写入历史。'}</span>
+          </div>
+          <div className="creation-reference__previews">
+            {referenceFiles.map((item) => <img key={item.id} src={item.previewUrl} alt="用户参考图" />)}
+          </div>
+          <label className="creation-reference__pick">
+            {referenceFiles.length ? '替换图片' : '+ 添加图片'}
+            <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => setReferences(Array.from(event.target.files ?? []))} />
+          </label>
+          <button type="button" disabled={!referenceFiles.length || referenceBusy} onClick={() => void analyzeReferences()}>
+            {referenceBusy ? 'VLM 分析中…' : session.referenceAnalysis ? '重新分析' : '理解参考图'}
+          </button>
+        </section>
+        {referenceError && <div className="creation-agent__fallback">{referenceError}</div>}
         <div className="creation-agent__messages" aria-live="polite">
           {session.messages.map((message) => (
             <article key={message.id} className={`creation-agent__message is-${message.role}`}>
@@ -355,6 +504,41 @@ export function CreationAgentPanel() {
           </section>
         )}
 
+        {session.conceptConfirmed && (
+          <section className="creation-visual" aria-label="效果图与三视图生成">
+            <div className="creation-visual__head">
+              <div><strong>视觉生成</strong><span>先确认效果，再交给 Hi3D 成模</span></div>
+              <em>独立付费节点</em>
+            </div>
+            {!visual && (
+              <div className="creation-visual__empty">
+                <p>生成 1 张低质量预览图，用来检查造型方向；不会自动提交 3D，也不会修改场景。</p>
+                <button type="button" disabled={visualBusy} onClick={() => void generateVisual('concept')}>
+                  {visualBusy ? '生成中…' : '生成效果图 · 1 次'}
+                </button>
+              </div>
+            )}
+            {visual && (
+              <div className="creation-visual__result">
+                <img src={`data:image/png;base64,${visual.base64}`} alt={visual.mode === 'concept' ? 'Agent 生成效果图' : 'Agent 生成三视图参考表'} />
+                <div>
+                  <strong>{visual.mode === 'concept' ? '效果图已生成' : '三视图参考表已生成'}</strong>
+                  <p>{visual.warning}</p>
+                  <small>{visual.model} · 图片只保留在当前页面内存中</small>
+                  <div className="creation-visual__actions">
+                    <button type="button" disabled={visualBusy || !onHandoff} onClick={() => void handoffVisual()}>
+                      {visual.mode === 'concept' ? '用此图进入 3D' : '用三视图进入 3D'}
+                    </button>
+                    {visual.mode === 'concept' && <button type="button" disabled={visualBusy} onClick={() => void generateVisual('turntable_sheet')}>再生成三视图</button>}
+                    <button type="button" disabled={visualBusy} onClick={() => void generateVisual(visual.mode)}>重新生成</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+        {visualError && <div className="creation-agent__fallback">{visualError}</div>}
+
         <div className="creation-agent__composer">
           <textarea
             value={draft}
@@ -371,7 +555,7 @@ export function CreationAgentPanel() {
           />
           <button type="button" disabled={!draft.trim() || busy} onClick={() => void sendMessage(draft)}>{busy ? '整理中' : '发送'}</button>
         </div>
-        <small className="creation-agent__boundary">需求与视觉方案由 LLM 整理 · 不自动生图 · 不自动生成 3D · 不修改场景</small>
+        <small className="creation-agent__boundary">Agent 分阶段调用 LLM / VLM / 生图 · 付费生成需点击确认 · Hi3D 提交仍在下一步确认 · 不自动修改场景</small>
       </section>
 
       <aside className="creation-agent__brief" aria-label="创作需求 Brief">
@@ -407,7 +591,7 @@ export function CreationAgentPanel() {
               ? session.selectedSchemeId ? '下一步：确认视觉方向' : '请选择一套视觉方向'
               : session.confirmed ? '下一步：规划视觉方向' : '下一步：确认创作需求'}</strong>
           <p>{session.conceptConfirmed
-            ? '效果图生成尚未接通；后续仍需单独确认模型与费用。'
+            ? visual ? '检查效果图后，可进入现有 Hi3D 单图/多图成模流程。' : '点击生成效果图才会调用付费生图，不会自动提交 Hi3D。'
             : session.concepts
               ? '选择不会生成图片；确认后才进入下一阶段准备状态。'
               : session.confirmed
@@ -426,7 +610,9 @@ export function CreationAgentPanel() {
           <button className="creation-agent__confirm" type="button" disabled={!session.selectedSchemeId} onClick={confirmScheme}>确认选用此方案</button>
         )}
         {session.conceptConfirmed && (
-          <button className="creation-agent__confirm" type="button" disabled>✓ 已确认视觉方向</button>
+          <button className="creation-agent__confirm" type="button" disabled={visualBusy} onClick={() => void (visual ? handoffVisual() : generateVisual('concept'))}>
+            {visualBusy ? '处理中…' : visual ? '继续到 Hi3D 成模' : '生成效果图 · 1 次'}
+          </button>
         )}
         {session.confirmed && !session.concepts && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗 Hi3D 额度</small>}
       </aside>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
 import { CreationAgentPanel } from './agent/CreationAgentPanel';
+import type { AgentGenerationHandoff } from './agent/creation-handoff';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -188,6 +189,11 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
 
 function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose: () => void }) {
   const [route, setRoute] = useState<'agent' | 'image'>('agent');
+  const [handoff, setHandoff] = useState<AgentGenerationHandoff | null>(null);
+  const acceptAgentHandoff = (next: AgentGenerationHandoff) => {
+    setHandoff(next);
+    setRoute('image');
+  };
   const openExample = () => {
     if (bootstrapDemoScene()) {
       onClose();
@@ -206,7 +212,7 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
       <section className={`creation-panel${route === 'agent' ? ' creation-panel--agent' : ''}`} aria-label="3D 创作 Agent">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.14b.1</div>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.15a</div>
             <h2>{route === 'agent' ? '从模糊想法，到可确认的创作需求' : '用参考图快速生成模型'}</h2>
             <p>{route === 'agent' ? '像聊天一样说出想法；Agent 会在合适时机追问，并整理成可编辑的 Brief。' : '添加一至三张本地图片，直接进入现有图生 3D 流程。'}</p>
           </div>
@@ -224,7 +230,9 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
             <strong>快速图生模型</strong><small>已有清晰参考图</small>
           </button>
         </div>
-        {route === 'agent' ? <CreationAgentPanel /> : <GenPanel allowedTypes={['image', 'multiview']} />}
+        {route === 'agent'
+          ? <CreationAgentPanel onHandoff={acceptAgentHandoff} />
+          : <GenPanel allowedTypes={['image', 'multiview']} initialHandoff={handoff} />}
         {!dismissible && (
           <footer className="creation-panel__footer">
             <span>或者</span>

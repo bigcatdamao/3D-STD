@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "summary", "subject", "style", "silhouette", "colorPalette", "materials", "distinctiveFeatures", "pose", "viewCoverage", "risks", "briefPatch", "confidence", "nextAction"],
+  "properties": {
+    "schemaVersion": { "type": "string", "enum": ["creation-reference-output.v1"] },
+    "summary": { "type": "string" },
+    "subject": { "type": "string" },
+    "style": { "type": "string" },
+    "silhouette": { "type": "string" },
+    "colorPalette": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 8 },
+    "materials": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 8 },
+    "distinctiveFeatures": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 10 },
+    "pose": { "type": "string" },
+    "viewCoverage": { "type": "string", "enum": ["single_view", "partial_multiview", "usable_multiview"] },
+    "risks": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+    "briefPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "projectType", "style", "pose", "notes"],
+      "properties": {
+        "subject": { "type": ["string", "null"] },
+        "projectType": { "type": "string", "enum": ["character", "mecha", "prop", "product", "scene", "other", "unknown"] },
+        "style": { "type": ["string", "null"] },
+        "pose": { "type": ["string", "null"] },
+        "notes": { "type": "array", "items": { "type": "string" }, "maxItems": 8 }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "nextAction": { "type": "string", "enum": ["continue_dialogue", "review_brief"] }
+  }
+}

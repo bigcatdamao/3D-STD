@@ -37,6 +37,7 @@ import {
 } from './gen-logic';
 import { mountTurnstile, usingTestSiteKey, type TurnstileHandle } from './turnstile';
 import { startAiLanding } from './landing';
+import type { AgentGenerationHandoff } from '../agent/creation-handoff';
 
 // ---------- 样式 ----------
 
@@ -121,11 +122,12 @@ const fileStem = (name: string): string => name.replace(/\.[^.]+$/, '').trim() |
 
 interface GenPanelProps {
   allowedTypes?: GenerateType[];
+  initialHandoff?: AgentGenerationHandoff | null;
 }
 
 const ALL_GENERATE_TYPES: GenerateType[] = ['text', 'image', 'multiview'];
 
-export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES }: GenPanelProps) {
+export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = null }: GenPanelProps) {
   const initialType = allowedTypes[0] ?? 'image';
   const [gen, setGen] = useState<GenState>(() => idleState({ type: initialType, prompt: '', images: [] }));
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
@@ -153,6 +155,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES }: GenPanelProps) {
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingSubmit = useRef(false); // token 就绪后自动续提交(重试出路 / 首次验证慢)
   const acceptingRef = useRef(false); // 防成功态「接受」双击生成重复资产/实例
+  const consumedHandoffRef = useRef<string | null>(null);
 
   // ---- 状态更新统一入口:同步维护刷新恢复票据(AI 边界 1)----
   const commit = useCallback((next: GenState) => {
@@ -244,6 +247,15 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES }: GenPanelProps) {
     },
     [clearSelectedImages, commit, textDraft],
   );
+
+  useEffect(() => {
+    if (!initialHandoff || consumedHandoffRef.current === initialHandoff.id || inputLockedIn(genRef.current.phase)) return;
+    consumedHandoffRef.current = initialHandoff.id;
+    switchMode(initialHandoff.type);
+    assignImages('front', initialHandoff.images.map((image) => image.file));
+    const next = genRef.current;
+    commit(idleState({ ...next.context, prompt: initialHandoff.prompt }, '已接收 Agent 生成图；请检查图片和模式后，再提交 Hi3D。'));
+  }, [assignImages, commit, initialHandoff, switchMode]);
 
   // ---- 配额 ----
   const refreshQuota = useCallback(async () => {
