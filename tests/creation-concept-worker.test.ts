@@ -53,7 +53,7 @@ const successFetch = (inspect?: (url: string, body: Record<string, unknown>, ini
 describe('M1.14b 视觉方案 Worker', () => {
   it('只调用 Responses API 规划文字方案，并使用 strict schema 与 no-store', async () => {
     const response = await post(makeEnv(), requestBody(), successFetch((url, body, init) => {
-      expect(url).toBe('https://aihubmix.com/v1/responses');
+      expect(url).toBe('https://api.aihubmix.com/v1/responses');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer concept-secret');
       expect(body.store).toBe(false);
       expect(body.text).toMatchObject({ format: { type: 'json_schema', strict: true, name: 'creation_concept_output' } });

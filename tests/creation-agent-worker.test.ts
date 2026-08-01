@@ -49,7 +49,7 @@ const successFetch = (inspect?: (url: string, body: Record<string, unknown>, ini
 describe('M1.14a 创作 Agent Worker', () => {
   it('仅经服务端 Secret 调用 Responses API，并使用 strict schema 与 no-store', async () => {
     const response = await post(makeEnv(), requestBody(), successFetch((url, body, init) => {
-      expect(url).toBe('https://aihubmix.com/v1/responses');
+      expect(url).toBe('https://api.aihubmix.com/v1/responses');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer server-secret');
       expect(body.store).toBe(false);
       expect(body.text).toMatchObject({ format: { type: 'json_schema', strict: true, name: 'creation_agent_output' } });

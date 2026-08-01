@@ -130,7 +130,7 @@ describe('M1.6.2 Responses API 拆件分析端点', () => {
 
   it('AIHubMix 使用独立 secret 和固定端点，并保留 OpenAI secret 作为回滚通道', async () => {
     const fetchImpl = responsesSuccess((url, body, init) => {
-      expect(url).toBe('https://aihubmix.com/v1/responses');
+      expect(url).toBe('https://api.aihubmix.com/v1/responses');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer aihubmix-secret');
       expect(JSON.stringify(body)).not.toContain('aihubmix-secret');
       expect(JSON.stringify(body)).not.toContain('server-secret');

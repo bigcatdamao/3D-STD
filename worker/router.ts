@@ -232,7 +232,8 @@ type SplitAnalysisProvider = SplitAnalysisApiSuccess['meta']['provider'];
 
 const SPLIT_PROVIDER_ENDPOINTS: Record<SplitAnalysisProvider, string> = {
   openai: 'https://api.openai.com/v1/responses',
-  aihubmix: 'https://aihubmix.com/v1/responses',
+  // 使用专用 API 主机，避免 Cloudflare Worker 到站点主域的同网络鉴权异常。
+  aihubmix: 'https://api.aihubmix.com/v1/responses',
 };
 
 function splitProviderOf(env: WorkerEnv): { provider: SplitAnalysisProvider; endpoint: string; apiKey: string } | null {
