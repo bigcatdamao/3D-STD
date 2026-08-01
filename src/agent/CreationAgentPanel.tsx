@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { requestCreationAgent } from './creation-agent-api';
+import { requestCreationConcepts } from './creation-concept-api';
+import type { CreationConceptApiOutput } from './creation-concept-api-types';
 import type {
   CreationAgentApiOutput,
   CreationAgentBrief,
@@ -26,6 +28,9 @@ interface SavedSession {
   messages: ChatMessage[];
   output: CreationAgentApiOutput | null;
   confirmed: boolean;
+  concepts: CreationConceptApiOutput | null;
+  selectedSchemeId: string | null;
+  conceptConfirmed: boolean;
 }
 
 const welcome: ChatMessage = {
@@ -46,7 +51,10 @@ function nextId(prefix: string): string {
 }
 
 function initialSession(): SavedSession {
-  return { brief: emptyCreationBrief(), messages: [welcome], output: null, confirmed: false };
+  return {
+    brief: emptyCreationBrief(), messages: [welcome], output: null, confirmed: false,
+    concepts: null, selectedSchemeId: null, conceptConfirmed: false,
+  };
 }
 
 export function CreationAgentPanel() {
@@ -56,6 +64,8 @@ export function CreationAgentPanel() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [serviceLabel, setServiceLabel] = useState('等待首次对话');
+  const [conceptBusy, setConceptBusy] = useState(false);
+  const [conceptError, setConceptError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -68,6 +78,9 @@ export function CreationAgentPanel() {
           messages: saved.messages.slice(-24),
           output: saved.output ?? null,
           confirmed: saved.confirmed === true,
+          concepts: saved.concepts ?? null,
+          selectedSchemeId: saved.selectedSchemeId ?? null,
+          conceptConfirmed: saved.conceptConfirmed === true,
         });
       }
     } catch {
@@ -101,10 +114,19 @@ export function CreationAgentPanel() {
     if (!message || busy) return;
     const currentBrief = briefOverride ?? session.brief;
     const userMessage: ChatMessage = { id: nextId('user'), role: 'user', content: message };
-    setSession((current) => ({ ...current, brief: currentBrief, confirmed: false, messages: [...current.messages, userMessage] }));
+    setSession((current) => ({
+      ...current,
+      brief: currentBrief,
+      confirmed: false,
+      concepts: null,
+      selectedSchemeId: null,
+      conceptConfirmed: false,
+      messages: [...current.messages, userMessage],
+    }));
     setDraft('');
     setBusy(true);
     setFallbackNotice(null);
+    setConceptError(null);
     try {
       const response = await requestCreationAgent({
         schemaVersion: 'creation-agent-input.v1',
@@ -150,7 +172,15 @@ export function CreationAgentPanel() {
   };
 
   const updateBrief = (patch: Partial<CreationAgentBrief>) => {
-    setSession((current) => ({ ...current, brief: { ...current.brief, ...patch }, confirmed: false }));
+    setSession((current) => ({
+      ...current,
+      brief: { ...current.brief, ...patch },
+      confirmed: false,
+      concepts: null,
+      selectedSchemeId: null,
+      conceptConfirmed: false,
+    }));
+    setConceptError(null);
   };
 
   const confirmBrief = () => {
@@ -159,9 +189,57 @@ export function CreationAgentPanel() {
       id: nextId('confirmed'),
       role: 'assistant',
       source: 'system',
-      content: '创作需求已确认。M1.14a 会在这里停下；下一阶段再由你明确授权是否生成效果图或多视图，不会自动产生付费调用。',
+      content: '创作需求已确认。现在可以让 Agent 规划三套视觉方向；这一步只生成文字方案，不会生成图片或 3D 模型。',
     };
-    setSession((current) => ({ ...current, confirmed: true, messages: [...current.messages, assistant] }));
+    setSession((current) => ({
+      ...current, confirmed: true, concepts: null, selectedSchemeId: null, conceptConfirmed: false,
+      messages: [...current.messages, assistant],
+    }));
+  };
+
+  const generateConcepts = async () => {
+    if (!session.confirmed || conceptBusy) return;
+    setConceptBusy(true);
+    setConceptError(null);
+    try {
+      const response = await requestCreationConcepts({
+        schemaVersion: 'creation-concept-input.v1',
+        requestId: `concept_${Date.now()}`,
+        locale: 'zh-CN',
+        brief: session.brief,
+        desiredSchemeCount: 3,
+      });
+      const assistant: ChatMessage = {
+        id: nextId('concepts'), role: 'assistant', source: 'ai',
+        content: `我根据已确认的 Brief 规划了 ${response.result.schemes.length} 套视觉方向。推荐方案已标出，但最终选择由你决定。`,
+      };
+      setSession((current) => ({
+        ...current,
+        concepts: response.result,
+        selectedSchemeId: null,
+        conceptConfirmed: false,
+        messages: [...current.messages, assistant],
+      }));
+      setServiceLabel(`${response.meta.provider} · ${response.meta.model}`);
+    } catch (error) {
+      setConceptError(`${error instanceof Error ? error.message : '视觉方案暂时不可用'} 没有生成假方案，也没有调用生图或 3D 服务。`);
+    } finally {
+      setConceptBusy(false);
+    }
+  };
+
+  const selectScheme = (schemeId: string) => {
+    setSession((current) => ({ ...current, selectedSchemeId: schemeId, conceptConfirmed: false }));
+  };
+
+  const confirmScheme = () => {
+    const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
+    if (!scheme) return;
+    const assistant: ChatMessage = {
+      id: nextId('scheme-confirmed'), role: 'assistant', source: 'system',
+      content: `已确认视觉方向“${scheme.title}”。M1.14b 在这里停止；进入效果图生成前仍会单独展示模型、费用和确认按钮。`,
+    };
+    setSession((current) => ({ ...current, conceptConfirmed: true, messages: [...current.messages, assistant] }));
   };
 
   const reset = () => {
@@ -170,6 +248,8 @@ export function CreationAgentPanel() {
     setAnswers({});
     setFallbackNotice(null);
     setServiceLabel('等待首次对话');
+    setConceptBusy(false);
+    setConceptError(null);
   };
 
   return (
@@ -234,6 +314,47 @@ export function CreationAgentPanel() {
           </div>
         )}
 
+        {conceptError && <div className="creation-agent__fallback">{conceptError}</div>}
+
+        {session.concepts && (
+          <section className="creation-concepts" aria-label="视觉方案比较">
+            <div className="creation-concepts__head">
+              <div><strong>视觉方向</strong><span>{session.concepts.summary}</span></div>
+              <button type="button" disabled={conceptBusy} onClick={() => void generateConcepts()}>重新规划（1 次）</button>
+            </div>
+            <div className="creation-concepts__grid">
+              {session.concepts.schemes.map((scheme, index) => {
+                const selected = session.selectedSchemeId === scheme.schemeId;
+                const recommended = session.concepts?.recommendedSchemeId === scheme.schemeId;
+                return (
+                  <article key={scheme.schemeId} className={`${selected ? 'is-selected' : ''}${recommended ? ' is-recommended' : ''}`}>
+                    <header>
+                      <span>方案 {String.fromCharCode(65 + index)}</span>
+                      {recommended && <em>Agent 推荐</em>}
+                    </header>
+                    <h3>{scheme.title}</h3>
+                    <p>{scheme.tagline}</p>
+                    <div className="creation-concepts__scores">
+                      <span><b>{scheme.scores.briefFit}</b>契合</span>
+                      <span><b>{scheme.scores.distinctiveness}</b>辨识</span>
+                      <span><b>{scheme.scores.printability}</b>打印</span>
+                    </div>
+                    <p className="creation-concepts__description">{scheme.description}</p>
+                    <div className="creation-concepts__keywords">{scheme.visualKeywords.slice(0, 5).map((keyword) => <i key={keyword}>{keyword}</i>)}</div>
+                    <dl>
+                      <div><dt>优势</dt><dd>{scheme.strengths[0]}</dd></div>
+                      <div><dt>取舍</dt><dd>{scheme.tradeoffs[0]}</dd></div>
+                      <div><dt>打印倾向</dt><dd>{scheme.printableStrategy}</dd></div>
+                    </dl>
+                    <button type="button" onClick={() => selectScheme(scheme.schemeId)}>{selected ? '✓ 已选择' : '选择此方向'}</button>
+                  </article>
+                );
+              })}
+            </div>
+            <small>这里是 LLM 规划结果，不是已生成的效果图；“打印”评分也不是几何检查结论。</small>
+          </section>
+        )}
+
         <div className="creation-agent__composer">
           <textarea
             value={draft}
@@ -250,7 +371,7 @@ export function CreationAgentPanel() {
           />
           <button type="button" disabled={!draft.trim() || busy} onClick={() => void sendMessage(draft)}>{busy ? '整理中' : '发送'}</button>
         </div>
-        <small className="creation-agent__boundary">本阶段只整理需求 · 不自动生图 · 不自动生成 3D · 不修改场景</small>
+        <small className="creation-agent__boundary">需求与视觉方案由 LLM 整理 · 不自动生图 · 不自动生成 3D · 不修改场景</small>
       </section>
 
       <aside className="creation-agent__brief" aria-label="创作需求 Brief">
@@ -280,12 +401,34 @@ export function CreationAgentPanel() {
           <div className="creation-agent__missing">仍需确认：{session.output.readiness.missingFields.join('、')}</div>
         )}
         <div className="creation-agent__next">
-          <strong>{session.confirmed ? '需求已锁定' : '下一步：确认创作需求'}</strong>
-          <p>{session.confirmed ? '后续将单独预览效果图方案，并再次征得你的确认。' : '确认只保存 Brief，不会立即调用任何生成服务。'}</p>
+          <strong>{session.conceptConfirmed
+            ? '视觉方向已锁定'
+            : session.concepts
+              ? session.selectedSchemeId ? '下一步：确认视觉方向' : '请选择一套视觉方向'
+              : session.confirmed ? '下一步：规划视觉方向' : '下一步：确认创作需求'}</strong>
+          <p>{session.conceptConfirmed
+            ? '效果图生成尚未接通；后续仍需单独确认模型与费用。'
+            : session.concepts
+              ? '选择不会生成图片；确认后才进入下一阶段准备状态。'
+              : session.confirmed
+                ? '调用一次 LLM 生成三套文字视觉方案，不会调用生图。'
+                : '确认只保存 Brief，不会立即调用任何生成服务。'}</p>
         </div>
-        <button className="creation-agent__confirm" type="button" disabled={!canConfirm || session.confirmed} onClick={confirmBrief}>
-          {session.confirmed ? '✓ 已确认创作需求' : '确认创作需求'}
-        </button>
+        {!session.confirmed && (
+          <button className="creation-agent__confirm" type="button" disabled={!canConfirm} onClick={confirmBrief}>确认创作需求</button>
+        )}
+        {session.confirmed && !session.concepts && (
+          <button className="creation-agent__confirm" type="button" disabled={conceptBusy} onClick={() => void generateConcepts()}>
+            {conceptBusy ? 'Agent 正在规划…' : '生成 3 套视觉方案'}
+          </button>
+        )}
+        {session.concepts && !session.conceptConfirmed && (
+          <button className="creation-agent__confirm" type="button" disabled={!session.selectedSchemeId} onClick={confirmScheme}>确认选用此方案</button>
+        )}
+        {session.conceptConfirmed && (
+          <button className="creation-agent__confirm" type="button" disabled>✓ 已确认视觉方向</button>
+        )}
+        {session.confirmed && !session.concepts && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗 Hi3D 额度</small>}
       </aside>
     </div>
   );

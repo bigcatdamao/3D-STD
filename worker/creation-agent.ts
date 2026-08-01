@@ -30,7 +30,7 @@ const projectTypes = new Set(['character', 'mecha', 'prop', 'product', 'scene', 
 const purposes = new Set(['resin_print', 'fdm_print', 'display', 'prototype', 'unknown']);
 const nextActions = new Set(['ask_questions', 'review_brief', 'request_reference', 'ready_for_concept']);
 
-function validBrief(value: unknown): value is CreationAgentBrief {
+export function validCreationBrief(value: unknown): value is CreationAgentBrief {
   if (!value || typeof value !== 'object') return false;
   const brief = value as Partial<CreationAgentBrief>;
   const partCount = brief.preferredPartCount;
@@ -82,7 +82,7 @@ function validOutput(value: unknown): value is CreationAgentApiOutput {
   return output.schemaVersion === 'creation-agent-output.v1'
     && typeof output.message === 'string'
     && output.message.length > 0
-    && validBrief(output.brief)
+    && validCreationBrief(output.brief)
     && Array.isArray(output.questions)
     && output.questions.length <= 3
     && output.questions.every(validQuestion)
@@ -129,7 +129,7 @@ export async function parseCreationAgentRequest(req: Request): Promise<CreationA
   if (!body.message?.trim() || body.message.length > MAX_MESSAGE_CHARS) {
     throw new CreationAgentInputError('bad_message', `本轮消息须为 1–${MAX_MESSAGE_CHARS} 字。`);
   }
-  if (!validBrief(body.brief)) {
+  if (!validCreationBrief(body.brief)) {
     throw new CreationAgentInputError('bad_brief', '当前创作需求摘要不符合数据契约。');
   }
   if (!Array.isArray(body.history) || body.history.length > MAX_HISTORY_ITEMS || body.history.some((item) => (

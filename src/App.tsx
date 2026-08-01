@@ -206,7 +206,7 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
       <section className={`creation-panel${route === 'agent' ? ' creation-panel--agent' : ''}`} aria-label="3D 创作 Agent">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.14a</div>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.14b</div>
             <h2>{route === 'agent' ? '从模糊想法，到可确认的创作需求' : '用参考图快速生成模型'}</h2>
             <p>{route === 'agent' ? '像聊天一样说出想法；Agent 会在合适时机追问，并整理成可编辑的 Brief。' : '添加一至三张本地图片，直接进入现有图生 3D 流程。'}</p>
           </div>

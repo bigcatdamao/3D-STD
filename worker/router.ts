@@ -30,12 +30,19 @@ import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
 import type { SplitAnalysisApiSuccess } from '../src/agent/split-analysis-api-types';
 import type { CreationAgentApiSuccess } from '../src/agent/creation-agent-api-types';
+import type { CreationConceptApiSuccess } from '../src/agent/creation-concept-api-types';
 import {
   callCreationAgentResponses,
   CreationAgentInputError,
   CreationAgentUpstreamError,
   parseCreationAgentRequest,
 } from './creation-agent';
+import {
+  callCreationConceptResponses,
+  CreationConceptInputError,
+  CreationConceptUpstreamError,
+  parseCreationConceptRequest,
+} from './creation-concept';
 import {
   callSplitAnalysisResponses,
   parseSplitAnalysisRequest,
@@ -99,6 +106,12 @@ export interface WorkerEnv {
   CREATION_AGENT_DAILY_LIMIT?: string; // 单访客对话轮数，默认 20
   CREATION_AGENT_BREAKER_UNITS?: string; // 独立全站日熔断，默认 500
   CREATION_AGENT_COST_UNITS?: string; // 单轮预扣单位，默认 1
+  CREATION_CONCEPT_REASONING_EFFORT?: string; // 默认继承创作 Agent
+  CREATION_CONCEPT_TIMEOUT_MS?: string; // 默认 60000
+  CREATION_CONCEPT_MAX_OUTPUT_TOKENS?: string; // 默认 3500
+  CREATION_CONCEPT_DAILY_LIMIT?: string; // 单访客视觉规划次数，默认 5
+  CREATION_CONCEPT_BREAKER_UNITS?: string; // 独立全站日熔断，默认 300
+  CREATION_CONCEPT_COST_UNITS?: string; // 单次预扣单位，默认 2
   HI3D_SPLIT_DAILY_LIMIT?: string;
   HI3D_SPLIT_BREAKER_CREDITS?: string;
   HI3D_SPLIT_COST_CREDITS?: string;
@@ -386,6 +399,69 @@ async function creationAgent(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
     if (code === 'timeout') return err(504, 'creation_agent_timeout', 'service', '创作 Agent 响应超时，已切换到本地引导。', { refunded: refund.refunded, taskId });
     if (code === 'refusal') return err(422, 'creation_agent_refused', 'service', '创作 Agent 无法处理本轮消息，已切换到本地引导。', { refunded: refund.refunded, taskId });
     return err(502, 'creation_agent_failed', 'service', '创作 Agent 暂时不可用，已切换到本地引导。', { refunded: refund.refunded, taskId });
+  }
+}
+
+/** M1.14b:基于已确认 Brief 生成 2–3 套只读视觉方向，不调用生图或 3D 引擎。 */
+async function creationConcepts(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let request;
+  try {
+    request = await parseCreationConceptRequest(req);
+  } catch (error) {
+    if (error instanceof CreationConceptInputError) return err(400, error.code, 'validation', error.message);
+    return err(400, 'bad_request', 'validation', '视觉方案请求无法解析。');
+  }
+
+  const providerConfig = creationProviderOf(env);
+  if (!providerConfig) return err(503, 'creation_concept_provider_invalid', 'service', '视觉方案 Provider 配置无效，请稍后重试。');
+  if (!providerConfig.apiKey) return err(503, 'creation_concept_unconfigured', 'service', '视觉方案服务尚未配置服务端密钥。');
+
+  const ctx = await visitorCtxOf(req, env);
+  const taskId = `cc_${crypto.randomUUID()}`;
+  const dailyLimit = Math.min(20, num(env.CREATION_CONCEPT_DAILY_LIMIT, 5));
+  const breakerLimit = Math.min(50_000, num(env.CREATION_CONCEPT_BREAKER_UNITS, 300));
+  const costUnits = Math.max(1, Math.min(10, num(env.CREATION_CONCEPT_COST_UNITS, 2)));
+  const scope = 'creation-concepts';
+  const deducted = await quotaCall<DeductResult>(env, {
+    op: 'deduct', visitorKey: ctx.visitorKey, taskId, credits: costUnits,
+    limitTimes: dailyLimit, breakerLimitCredits: breakerLimit, demoCode: ctx.demoCode,
+  }, scope);
+  if (!deducted.ok) {
+    return deducted.error === 'budget_exhausted'
+      ? err(429, 'creation_concept_budget_exhausted', 'quota', '今日视觉方案总额度已用完，请明日再试。')
+      : err(429, 'creation_concept_quota_exhausted', 'quota', '今日视觉方案次数已用完，请明日再试。');
+  }
+
+  const model = env.CREATION_AGENT_MODEL?.trim() || env.SPLIT_ANALYSIS_MODEL?.trim() || 'gpt-5.6-sol';
+  try {
+    const startedAt = Date.now();
+    const result = await callCreationConceptResponses(request, {
+      apiKey: providerConfig.apiKey,
+      endpoint: providerConfig.endpoint,
+      model,
+      reasoningEffort: splitReasoningEffort(env.CREATION_CONCEPT_REASONING_EFFORT ?? env.CREATION_AGENT_REASONING_EFFORT),
+      timeoutMs: Math.max(10_000, Math.min(90_000, num(env.CREATION_CONCEPT_TIMEOUT_MS, 60_000))),
+      maxOutputTokens: Math.max(2_000, Math.min(6_000, num(env.CREATION_CONCEPT_MAX_OUTPUT_TOKENS, 3_500))),
+    }, deps.fetchImpl ?? fetch);
+    const body: CreationConceptApiSuccess = {
+      ok: true,
+      result: result.output,
+      meta: {
+        provider: providerConfig.provider,
+        model,
+        requestId: request.requestId,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        usage: result.usage,
+      },
+    };
+    return Response.json(body, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
+    const code = error instanceof CreationConceptUpstreamError ? error.code : 'upstream';
+    console.error(`[creation-concept-fail] task=${taskId} code=${code}`);
+    if (code === 'timeout') return err(504, 'creation_concept_timeout', 'service', '视觉方案规划超时，本次额度已返还。', { refunded: refund.refunded, taskId });
+    if (code === 'refusal') return err(422, 'creation_concept_refused', 'service', '模型无法规划本次视觉方案，本次额度已返还。', { refunded: refund.refunded, taskId });
+    return err(502, 'creation_concept_failed', 'service', '视觉方案暂时不可用，本次额度已返还。', { refunded: refund.refunded, taskId });
   }
 }
 
@@ -752,6 +828,7 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/split' && req.method === 'POST') return hi3dSplitSubmit(req, env, deps);
   if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
   if (path === '/api/agent/creation' && req.method === 'POST') return creationAgent(req, env, deps);
+  if (path === '/api/agent/creation/concepts' && req.method === 'POST') return creationConcepts(req, env, deps);
 
   const splitResultM = /^\/api\/split\/([^/]+)\/result$/.exec(path);
   if (splitResultM && req.method === 'GET') return hi3dSplitResult(env, deps, decodeURIComponent(splitResultM[1]));

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "summary", "schemes", "recommendedSchemeId", "recommendationReason", "nextAction"],
+  "properties": {
+    "schemaVersion": { "const": "creation-concept-output.v1" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 600 },
+    "schemes": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "$ref": "#/$defs/scheme" } },
+    "recommendedSchemeId": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "recommendationReason": { "type": "string", "minLength": 1, "maxLength": 400 },
+    "nextAction": { "const": "select_scheme" }
+  },
+  "$defs": {
+    "shortList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["briefFit", "distinctiveness", "printability"],
+      "properties": {
+        "briefFit": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "distinctiveness": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "printability": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "scheme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemeId", "title", "tagline", "description", "visualKeywords", "silhouetteStrategy", "colorMaterialStrategy", "poseComposition", "printableStrategy", "strengths", "tradeoffs", "scores", "imagePrompt", "negativePrompt"],
+      "properties": {
+        "schemeId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "tagline": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "visualKeywords": { "type": "array", "minItems": 3, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 40 } },
+        "silhouetteStrategy": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "colorMaterialStrategy": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "poseComposition": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "printableStrategy": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "strengths": { "$ref": "#/$defs/shortList" },
+        "tradeoffs": { "$ref": "#/$defs/shortList" },
+        "scores": { "$ref": "#/$defs/scores" },
+        "imagePrompt": { "type": "string", "minLength": 1, "maxLength": 1800 },
+        "negativePrompt": { "type": "string", "minLength": 1, "maxLength": 800 }
+      }
+    }
+  }
+}
