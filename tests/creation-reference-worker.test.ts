@@ -64,6 +64,19 @@ describe('M1.15a 参考图 VLM Worker', () => {
     expect((await post(env, successFetch())).status).toBe(429);
   });
 
+  it('兼容 Gemini 将 nullable null 返回为空对象', async () => {
+    const quirky = structuredClone(output) as unknown as { briefPatch: Record<string, unknown> };
+    quirky.briefPatch.subject = {};
+    quirky.briefPatch.style = {};
+    quirky.briefPatch.pose = {};
+    const response = await post(makeEnv(), async () => Response.json({
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(quirky) }] }],
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ result: { briefPatch: { subject: null, style: null, pose: null } } });
+  });
+
   it('在上游调用前拒绝超过三张图', async () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const bad = requestBody(); bad.images = [1, 2, 3, 4].map((n) => ({ imageId: `r${n}`, imageUrl: 'data:image/jpeg;base64,/9j/' }));

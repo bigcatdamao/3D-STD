@@ -100,6 +100,20 @@ function usageOf(raw: Record<string, unknown>): ResponsesUsage {
   return { inputTokens: token(usage.input_tokens), outputTokens: token(usage.output_tokens), totalTokens: token(usage.total_tokens) };
 }
 
+function normalizeNullableBriefPatch(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const output = value as Record<string, unknown>;
+  if (!output.briefPatch || typeof output.briefPatch !== 'object' || Array.isArray(output.briefPatch)) return value;
+  const patch = output.briefPatch as Record<string, unknown>;
+  for (const key of ['subject', 'style', 'pose']) {
+    const candidate = patch[key];
+    // AIHubMix Gemini 当前会把 JSON Schema 的 nullable null 序列化为 `{}`。
+    // 空对象不承载视觉证据，按契约恢复为 null；其他非字符串对象继续交给校验拒绝。
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate) && Object.keys(candidate).length === 0) patch[key] = null;
+  }
+  return output;
+}
+
 const INSTRUCTIONS = `你是 3D-STD 的参考图理解助手。观察用户上传的 1–3 张图片，为后续 3D 概念设计提取可验证的主体、风格、轮廓、颜色、材质、姿态和关键特征。
 不要猜测图片背面或不可见结构；不要把 UI 截图、商品页或拼贴误当成干净的三视图。briefPatch 只提供从图片中有证据支持的字段，notes 保留可操作特征。
 输出简体中文，严格遵守 JSON Schema。`;
@@ -143,7 +157,7 @@ export async function callCreationReferenceResponses(
   const text = outputTextOf(raw);
   if (!text) throw new CreationReferenceUpstreamError('bad_output', '参考图分析未返回结构化文本。');
   let output: unknown;
-  try { output = JSON.parse(text); } catch { throw new CreationReferenceUpstreamError('bad_output', '参考图结构化结果无法解析。'); }
+  try { output = normalizeNullableBriefPatch(JSON.parse(text)); } catch { throw new CreationReferenceUpstreamError('bad_output', '参考图结构化结果无法解析。'); }
   if (!validOutput(output)) throw new CreationReferenceUpstreamError('bad_output', '参考图结果不符合数据契约。');
   return { output, usage: usageOf(raw) };
 }
