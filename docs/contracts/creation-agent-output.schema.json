@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "message", "brief", "questions", "nextAction", "readiness", "assumptions"],
+  "properties": {
+    "schemaVersion": { "const": "creation-agent-output.v1" },
+    "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "brief": { "$ref": "#/$defs/brief" },
+    "questions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/question" }
+    },
+    "nextAction": {
+      "type": "string",
+      "enum": ["ask_questions", "review_brief", "request_reference", "ready_for_concept"]
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "missingFields"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "missingFields": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 80 } }
+      }
+    },
+    "assumptions": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 240 } }
+  },
+  "$defs": {
+    "nullableString": { "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }] },
+    "partCount": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum", "preferred", "maximum"],
+          "properties": {
+            "minimum": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "preferred": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "maximum": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "projectType", "purpose", "style", "targetHeightMm", "pose", "preferredPartCount", "notes"],
+      "properties": {
+        "subject": { "$ref": "#/$defs/nullableString" },
+        "projectType": { "type": "string", "enum": ["character", "mecha", "prop", "product", "scene", "other", "unknown"] },
+        "purpose": { "type": "string", "enum": ["resin_print", "fdm_print", "display", "prototype", "unknown"] },
+        "style": { "$ref": "#/$defs/nullableString" },
+        "targetHeightMm": { "anyOf": [{ "type": "number", "minimum": 1, "maximum": 5000 }, { "type": "null" }] },
+        "pose": { "$ref": "#/$defs/nullableString" },
+        "preferredPartCount": { "$ref": "#/$defs/partCount" },
+        "notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 240 } }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "label", "description", "recommended"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 160 },
+        "recommended": { "type": "boolean" }
+      }
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questionId", "question", "options", "allowFreeText"],
+      "properties": {
+        "questionId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "question": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "options": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "$ref": "#/$defs/option" } },
+        "allowFreeText": { "const": true }
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { GenPanel } from './ai/GenPanel';
+import { CreationAgentPanel } from './agent/CreationAgentPanel';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -186,6 +187,7 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
 }
 
 function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose: () => void }) {
+  const [route, setRoute] = useState<'agent' | 'image'>('agent');
   const openExample = () => {
     if (bootstrapDemoScene()) {
       onClose();
@@ -201,12 +203,12 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
         if (dismissible && event.target === event.currentTarget) onClose();
       }}
     >
-      <section className="creation-panel" aria-label="AI 生成模型">
+      <section className={`creation-panel${route === 'agent' ? ' creation-panel--agent' : ''}`} aria-label="3D 创作 Agent">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">AI 3D 创作</div>
-            <h2>{dismissible ? '继续生成一个新模型' : '从想法或图片开始'}</h2>
-            <p>输入描述，或添加一至三张本地图片生成可继续编辑的 3D 模型。</p>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.14a</div>
+            <h2>{route === 'agent' ? '从模糊想法，到可确认的创作需求' : '用参考图快速生成模型'}</h2>
+            <p>{route === 'agent' ? '像聊天一样说出想法；Agent 会在合适时机追问，并整理成可编辑的 Brief。' : '添加一至三张本地图片，直接进入现有图生 3D 流程。'}</p>
           </div>
           {dismissible && (
             <button className="creation-panel__close" onClick={onClose} aria-label="关闭 AI 创作面板" title="关闭">
@@ -214,7 +216,15 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
             </button>
           )}
         </header>
-        <GenPanel />
+        <div className="creation-panel__routes" role="tablist" aria-label="3D 创作方式">
+          <button type="button" role="tab" aria-selected={route === 'agent'} className={route === 'agent' ? 'is-active' : ''} onClick={() => setRoute('agent')}>
+            <strong>✦ 3D 创作 Agent</strong><small>对话澄清需求</small>
+          </button>
+          <button type="button" role="tab" aria-selected={route === 'image'} className={route === 'image' ? 'is-active' : ''} onClick={() => setRoute('image')}>
+            <strong>快速图生模型</strong><small>已有清晰参考图</small>
+          </button>
+        </div>
+        {route === 'agent' ? <CreationAgentPanel /> : <GenPanel allowedTypes={['image', 'multiview']} />}
         {!dismissible && (
           <footer className="creation-panel__footer">
             <span>或者</span>

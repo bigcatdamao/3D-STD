@@ -18,7 +18,6 @@ import { apiHeaders, getEngineKey, setEngineKey } from '../net/visitor';
 import {
   ACTIVE_TASK_KEY,
   applyTask,
-  emptyContext,
   idleState,
   inputLockedIn,
   onSubmitted,
@@ -120,14 +119,21 @@ const fileStem = (name: string): string => name.replace(/\.[^.]+$/, '').trim() |
 
 // ---------- 组件 ----------
 
-export function GenPanel() {
-  const [gen, setGen] = useState<GenState>(() => idleState());
+interface GenPanelProps {
+  allowedTypes?: GenerateType[];
+}
+
+const ALL_GENERATE_TYPES: GenerateType[] = ['text', 'image', 'multiview'];
+
+export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES }: GenPanelProps) {
+  const initialType = allowedTypes[0] ?? 'image';
+  const [gen, setGen] = useState<GenState>(() => idleState({ type: initialType, prompt: '', images: [] }));
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
   const [promptMax, setPromptMax] = useState(PROMPT_MAX_CHARS); // T13a-fix1:随 /api/health 的引擎上报值收紧(Tripo=1024)
   const promptMaxRef = useRef(PROMPT_MAX_CHARS);
   const engineNameRef = useRef<string | null>(null);
   const [engineName, setEngineName] = useState<string | null>(null);
-  const [supportedTypes, setSupportedTypes] = useState<GenerateType[]>(['text', 'image', 'multiview']);
+  const [supportedTypes, setSupportedTypes] = useState<GenerateType[]>(allowedTypes);
   const [waitingToken, setWaitingToken] = useState(false); // 已点提交、等 widget 出 token
   const [tsBroken, setTsBroken] = useState(false); // 脚本装载失败/错误回调
   const [ownKeyOpen, setOwnKeyOpen] = useState(false);
@@ -427,8 +433,8 @@ export function GenPanel() {
     selectedImagesRef.current = [];
     setSelectedImages([]);
     setTextDraft('');
-    commit(idleState(emptyContext(), '已丢弃。成功任务的配额不返还(成本归因:丢弃是用户选择)。'));
-  }, [commit]);
+    commit(idleState({ type: initialType, prompt: '', images: [] }, '已丢弃。成功任务的配额不返还(成本归因:丢弃是用户选择)。'));
+  }, [commit, initialType]);
 
   // ---- 失败出路(AI-05)----
   const onFailOutlet = useCallback(() => {
@@ -463,11 +469,12 @@ export function GenPanel() {
         engineNameRef.current = nextEngine;
         setEngineName(nextEngine);
         if (nextEngine === 'hi3d') setHasOwnKey(false);
-        const modes: GenerateType[] = Array.isArray(hj?.config?.generationTypes)
+        const providerModes: GenerateType[] = Array.isArray(hj?.config?.generationTypes)
           ? hj.config.generationTypes.filter(
               (type): type is GenerateType => type === 'text' || type === 'image' || type === 'multiview',
             )
-          : ['text', 'image', 'multiview'];
+          : ALL_GENERATE_TYPES;
+        const modes = providerModes.filter((type) => allowedTypes.includes(type));
         if (modes.length) {
           setSupportedTypes(modes);
           const current = genRef.current;

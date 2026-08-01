@@ -29,6 +29,13 @@ import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
 import type { SplitAnalysisApiSuccess } from '../src/agent/split-analysis-api-types';
+import type { CreationAgentApiSuccess } from '../src/agent/creation-agent-api-types';
+import {
+  callCreationAgentResponses,
+  CreationAgentInputError,
+  CreationAgentUpstreamError,
+  parseCreationAgentRequest,
+} from './creation-agent';
 import {
   callSplitAnalysisResponses,
   parseSplitAnalysisRequest,
@@ -84,6 +91,14 @@ export interface WorkerEnv {
   SPLIT_ANALYSIS_TIMEOUT_MS?: string; // 默认 45000
   SPLIT_ANALYSIS_MAX_OUTPUT_TOKENS?: string; // 默认 3200
   SPLIT_ANALYSIS_COST_UNITS?: string; // 单次预扣单位，默认 1
+  CREATION_AGENT_PROVIDER?: string; // openai | aihubmix，默认继承 SPLIT_ANALYSIS_PROVIDER
+  CREATION_AGENT_MODEL?: string; // 默认继承 SPLIT_ANALYSIS_MODEL
+  CREATION_AGENT_REASONING_EFFORT?: string; // 默认 low
+  CREATION_AGENT_TIMEOUT_MS?: string; // 默认 45000
+  CREATION_AGENT_MAX_OUTPUT_TOKENS?: string; // 默认 1800
+  CREATION_AGENT_DAILY_LIMIT?: string; // 单访客对话轮数，默认 20
+  CREATION_AGENT_BREAKER_UNITS?: string; // 独立全站日熔断，默认 500
+  CREATION_AGENT_COST_UNITS?: string; // 单轮预扣单位，默认 1
   HI3D_SPLIT_DAILY_LIMIT?: string;
   HI3D_SPLIT_BREAKER_CREDITS?: string;
   HI3D_SPLIT_COST_CREDITS?: string;
@@ -215,6 +230,18 @@ function splitProviderOf(env: WorkerEnv): { provider: SplitAnalysisProvider; end
   return { provider, endpoint: SPLIT_PROVIDER_ENDPOINTS[provider], apiKey: apiKey ?? '' };
 }
 
+type CreationAgentProvider = CreationAgentApiSuccess['meta']['provider'];
+
+function creationProviderOf(env: WorkerEnv): { provider: CreationAgentProvider; endpoint: string; apiKey: string } | null {
+  const raw = env.CREATION_AGENT_PROVIDER?.trim().toLowerCase()
+    || env.SPLIT_ANALYSIS_PROVIDER?.trim().toLowerCase()
+    || 'openai';
+  if (raw !== 'openai' && raw !== 'aihubmix') return null;
+  const provider: CreationAgentProvider = raw;
+  const apiKey = provider === 'aihubmix' ? env.AIHUBMIX_API_KEY?.trim() : env.OPENAI_API_KEY?.trim();
+  return { provider, endpoint: SPLIT_PROVIDER_ENDPOINTS[provider], apiKey: apiKey ?? '' };
+}
+
 /** M1.6.2:单 Agent、只读分析。独立配额实例，不占用 Tripo 生成配额，也不接受浏览器自带 key。 */
 async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
   let request;
@@ -291,6 +318,74 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
       return err(422, 'split_analysis_refused', 'service', 'AI 无法完成本次分析，已可切换到本地降级建议。', { refunded: refund.refunded, taskId });
     }
     return err(502, 'split_analysis_failed', 'service', 'AI 分析暂时不可用，已可切换到本地降级建议。', { refunded: refund.refunded, taskId });
+  }
+}
+
+/** M1.14a:创作需求 Agent。仅整理 Brief 和追问，不调用生图/Hi3D，也不修改场景。 */
+async function creationAgent(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let request;
+  try {
+    request = await parseCreationAgentRequest(req);
+  } catch (error) {
+    if (error instanceof CreationAgentInputError) return err(400, error.code, 'validation', error.message);
+    return err(400, 'bad_request', 'validation', '创作 Agent 请求无法解析。');
+  }
+
+  const providerConfig = creationProviderOf(env);
+  if (!providerConfig) return err(503, 'creation_agent_provider_invalid', 'service', '创作 Agent Provider 配置无效，可切换到本地引导。');
+  if (!providerConfig.apiKey) return err(503, 'creation_agent_unconfigured', 'service', '创作 Agent 尚未配置服务端密钥，可切换到本地引导。');
+
+  const ctx = await visitorCtxOf(req, env);
+  const taskId = `ca_${crypto.randomUUID()}`;
+  const dailyLimit = Math.min(100, num(env.CREATION_AGENT_DAILY_LIMIT, 20));
+  const breakerLimit = Math.min(50_000, num(env.CREATION_AGENT_BREAKER_UNITS, 500));
+  const costUnits = Math.max(1, Math.min(10, num(env.CREATION_AGENT_COST_UNITS, 1)));
+  const scope = 'creation-agent';
+  const deducted = await quotaCall<DeductResult>(env, {
+    op: 'deduct',
+    visitorKey: ctx.visitorKey,
+    taskId,
+    credits: costUnits,
+    limitTimes: dailyLimit,
+    breakerLimitCredits: breakerLimit,
+    demoCode: ctx.demoCode,
+  }, scope);
+  if (!deducted.ok) {
+    return deducted.error === 'budget_exhausted'
+      ? err(429, 'creation_agent_budget_exhausted', 'quota', '今日创作 Agent 总额度已用完，可继续使用本地引导。')
+      : err(429, 'creation_agent_quota_exhausted', 'quota', '今日创作 Agent 对话次数已用完，可继续使用本地引导。');
+  }
+
+  const model = env.CREATION_AGENT_MODEL?.trim() || env.SPLIT_ANALYSIS_MODEL?.trim() || 'gpt-5.6-sol';
+  try {
+    const startedAt = Date.now();
+    const result = await callCreationAgentResponses(request, {
+      apiKey: providerConfig.apiKey,
+      endpoint: providerConfig.endpoint,
+      model,
+      reasoningEffort: splitReasoningEffort(env.CREATION_AGENT_REASONING_EFFORT),
+      timeoutMs: Math.max(5_000, Math.min(90_000, num(env.CREATION_AGENT_TIMEOUT_MS, 45_000))),
+      maxOutputTokens: Math.max(900, Math.min(4_000, num(env.CREATION_AGENT_MAX_OUTPUT_TOKENS, 1_800))),
+    }, deps.fetchImpl ?? fetch);
+    const body: CreationAgentApiSuccess = {
+      ok: true,
+      result: result.output,
+      meta: {
+        provider: providerConfig.provider,
+        model,
+        requestId: request.requestId,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        usage: result.usage,
+      },
+    };
+    return Response.json(body, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
+    const code = error instanceof CreationAgentUpstreamError ? error.code : 'upstream';
+    console.error(`[creation-agent-fail] task=${taskId} code=${code}`);
+    if (code === 'timeout') return err(504, 'creation_agent_timeout', 'service', '创作 Agent 响应超时，已切换到本地引导。', { refunded: refund.refunded, taskId });
+    if (code === 'refusal') return err(422, 'creation_agent_refused', 'service', '创作 Agent 无法处理本轮消息，已切换到本地引导。', { refunded: refund.refunded, taskId });
+    return err(502, 'creation_agent_failed', 'service', '创作 Agent 暂时不可用，已切换到本地引导。', { refunded: refund.refunded, taskId });
   }
 }
 
@@ -656,6 +751,7 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
   if (path === '/api/split' && req.method === 'POST') return hi3dSplitSubmit(req, env, deps);
   if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
+  if (path === '/api/agent/creation' && req.method === 'POST') return creationAgent(req, env, deps);
 
   const splitResultM = /^\/api\/split\/([^/]+)\/result$/.exec(path);
   if (splitResultM && req.method === 'GET') return hi3dSplitResult(env, deps, decodeURIComponent(splitResultM[1]));
