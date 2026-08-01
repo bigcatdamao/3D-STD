@@ -57,6 +57,9 @@ describe('M1.14b 视觉方案 Worker', () => {
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer concept-secret');
       expect(body.store).toBe(false);
       expect(body.text).toMatchObject({ format: { type: 'json_schema', strict: true, name: 'creation_concept_output' } });
+      const schemaText = JSON.stringify((body.text as { format: { schema: unknown } }).format.schema);
+      expect(schemaText).not.toContain('"$schema"');
+      expect(schemaText).not.toContain('"const"');
       expect(JSON.stringify(body)).not.toContain('concept-secret');
       expect(JSON.stringify(body)).not.toContain('/api/generate');
     }));
@@ -79,9 +82,9 @@ describe('M1.14b 视觉方案 Worker', () => {
 
   it('上游失败返还独立视觉规划额度', async () => {
     const env = makeEnv({ CREATION_CONCEPT_DAILY_LIMIT: '1' });
-    const failed = await post(env, requestBody(), async () => new Response('bad', { status: 500 }));
+    const failed = await post(env, requestBody(), async () => Response.json({ error: { type: 'invalid_request_error', code: 'invalid_schema' } }, { status: 400 }));
     expect(failed.status).toBe(502);
-    expect(await failed.json()).toMatchObject({ error: 'creation_concept_failed', refunded: true });
+    expect(await failed.json()).toMatchObject({ error: 'creation_concept_request_incompatible', refunded: true, upstreamStatus: 400, providerCode: 'invalid_schema' });
     expect((await post(env, requestBody(), successFetch())).status).toBe(200);
     expect((await post(env, requestBody(), successFetch())).status).toBe(429);
   });

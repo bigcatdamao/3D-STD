@@ -395,10 +395,16 @@ async function creationAgent(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
   } catch (error) {
     const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
     const code = error instanceof CreationAgentUpstreamError ? error.code : 'upstream';
-    console.error(`[creation-agent-fail] task=${taskId} code=${code}`);
-    if (code === 'timeout') return err(504, 'creation_agent_timeout', 'service', '创作 Agent 响应超时，已切换到本地引导。', { refunded: refund.refunded, taskId });
-    if (code === 'refusal') return err(422, 'creation_agent_refused', 'service', '创作 Agent 无法处理本轮消息，已切换到本地引导。', { refunded: refund.refunded, taskId });
-    return err(502, 'creation_agent_failed', 'service', '创作 Agent 暂时不可用，已切换到本地引导。', { refunded: refund.refunded, taskId });
+    const upstreamStatus = error instanceof CreationAgentUpstreamError ? error.upstreamStatus : null;
+    const providerCode = error instanceof CreationAgentUpstreamError ? error.providerCode : null;
+    const details = { refunded: refund.refunded, taskId, ...(upstreamStatus ? { upstreamStatus } : {}), ...(providerCode ? { providerCode } : {}) };
+    console.error(`[creation-agent-fail] task=${taskId} code=${code} status=${upstreamStatus ?? '-'} provider=${providerCode ?? '-'}`);
+    if (code === 'timeout') return err(504, 'creation_agent_timeout', 'service', '创作 Agent 响应超时，已切换到本地引导。', details);
+    if (code === 'refusal') return err(422, 'creation_agent_refused', 'service', '创作 Agent 无法处理本轮消息，已切换到本地引导。', details);
+    if (upstreamStatus === 400) return err(502, 'creation_agent_request_incompatible', 'service', '当前模型不兼容本轮结构化请求，已切换到本地引导。', details);
+    if (upstreamStatus === 401 || upstreamStatus === 403) return err(502, 'creation_agent_provider_auth', 'service', '创作 Agent 服务授权失效，已切换到本地引导。', details);
+    if (upstreamStatus === 429) return err(503, 'creation_agent_provider_busy', 'service', '创作 Agent 上游繁忙，已切换到本地引导。', details);
+    return err(502, 'creation_agent_failed', 'service', '创作 Agent 暂时不可用，已切换到本地引导。', details);
   }
 }
 
@@ -458,10 +464,16 @@ async function creationConcepts(req: Request, env: WorkerEnv, deps: RouterDeps):
   } catch (error) {
     const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId }, scope);
     const code = error instanceof CreationConceptUpstreamError ? error.code : 'upstream';
-    console.error(`[creation-concept-fail] task=${taskId} code=${code}`);
-    if (code === 'timeout') return err(504, 'creation_concept_timeout', 'service', '视觉方案规划超时，本次额度已返还。', { refunded: refund.refunded, taskId });
-    if (code === 'refusal') return err(422, 'creation_concept_refused', 'service', '模型无法规划本次视觉方案，本次额度已返还。', { refunded: refund.refunded, taskId });
-    return err(502, 'creation_concept_failed', 'service', '视觉方案暂时不可用，本次额度已返还。', { refunded: refund.refunded, taskId });
+    const upstreamStatus = error instanceof CreationConceptUpstreamError ? error.upstreamStatus : null;
+    const providerCode = error instanceof CreationConceptUpstreamError ? error.providerCode : null;
+    const details = { refunded: refund.refunded, taskId, ...(upstreamStatus ? { upstreamStatus } : {}), ...(providerCode ? { providerCode } : {}) };
+    console.error(`[creation-concept-fail] task=${taskId} code=${code} status=${upstreamStatus ?? '-'} provider=${providerCode ?? '-'}`);
+    if (code === 'timeout') return err(504, 'creation_concept_timeout', 'service', '视觉方案规划超时，本次额度已返还。', details);
+    if (code === 'refusal') return err(422, 'creation_concept_refused', 'service', '模型无法规划本次视觉方案，本次额度已返还。', details);
+    if (upstreamStatus === 400) return err(502, 'creation_concept_request_incompatible', 'service', '当前模型不兼容视觉方案结构，本次额度已返还。', details);
+    if (upstreamStatus === 401 || upstreamStatus === 403) return err(502, 'creation_concept_provider_auth', 'service', '视觉方案服务授权失效，本次额度已返还。', details);
+    if (upstreamStatus === 429) return err(503, 'creation_concept_provider_busy', 'service', '视觉方案服务繁忙，本次额度已返还。', details);
+    return err(502, 'creation_concept_failed', 'service', '视觉方案暂时不可用，本次额度已返还。', details);
   }
 }
 

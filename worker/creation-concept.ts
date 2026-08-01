@@ -6,6 +6,7 @@ import type {
 } from '../src/agent/creation-concept-api-types';
 import { validCreationBrief } from './creation-agent';
 import type { ResponsesConfig, ResponsesUsage } from './split-analysis';
+import { providerFailureOf } from './provider-error';
 
 const MAX_BODY_BYTES = 32 * 1024;
 
@@ -19,6 +20,8 @@ export class CreationConceptUpstreamError extends Error {
   constructor(
     readonly code: 'timeout' | 'refusal' | 'incomplete' | 'bad_output' | 'upstream',
     message: string,
+    readonly upstreamStatus: number | null = null,
+    readonly providerCode: string | null = null,
   ) {
     super(message);
   }
@@ -177,7 +180,10 @@ export async function callCreationConceptResponses(
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) throw new CreationConceptUpstreamError('upstream', `Responses API 返回 HTTP ${response.status}。`);
+  if (!response.ok) {
+    const failure = await providerFailureOf(response);
+    throw new CreationConceptUpstreamError('upstream', `Responses API 返回 HTTP ${failure.status}。`, failure.status, failure.code);
+  }
   let raw: Record<string, unknown>;
   try {
     raw = await response.json() as Record<string, unknown>;

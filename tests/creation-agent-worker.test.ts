@@ -53,6 +53,9 @@ describe('M1.14a 创作 Agent Worker', () => {
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer server-secret');
       expect(body.store).toBe(false);
       expect(body.text).toMatchObject({ format: { type: 'json_schema', strict: true, name: 'creation_agent_output' } });
+      const schemaText = JSON.stringify((body.text as { format: { schema: unknown } }).format.schema);
+      expect(schemaText).not.toContain('"$schema"');
+      expect(schemaText).not.toContain('"const"');
       expect(JSON.stringify(body)).not.toContain('server-secret');
       expect(JSON.stringify(body)).not.toContain('/api/generate');
     }));
@@ -70,9 +73,9 @@ describe('M1.14a 创作 Agent Worker', () => {
 
   it('上游失败会返还本轮独立配额', async () => {
     const env = makeEnv({ CREATION_AGENT_DAILY_LIMIT: '1' });
-    const failed = await post(env, requestBody(), async () => new Response('bad', { status: 500 }));
+    const failed = await post(env, requestBody(), async () => Response.json({ error: { type: 'invalid_request_error', code: 'invalid_schema' } }, { status: 400 }));
     expect(failed.status).toBe(502);
-    expect(await failed.json()).toMatchObject({ error: 'creation_agent_failed', refunded: true });
+    expect(await failed.json()).toMatchObject({ error: 'creation_agent_request_incompatible', refunded: true, upstreamStatus: 400, providerCode: 'invalid_schema' });
     expect((await post(env, requestBody(), successFetch())).status).toBe(200);
     expect((await post(env, requestBody(), successFetch())).status).toBe(429);
   });

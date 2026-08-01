@@ -16,6 +16,8 @@ export interface ApiError {
   refunded?: boolean; // 若本次请求曾扣减配额,是否已返还(AI-07)
   taskId?: string;
   codes?: string[]; // turnstile 上游 error-codes 透传(诊断用)
+  upstreamStatus?: number; // 仅服务商 HTTP 状态，不透传上游正文
+  providerCode?: string; // 清洗后的服务商机器码，不含请求内容或 Secret
 }
 
 export interface HealthResponse {

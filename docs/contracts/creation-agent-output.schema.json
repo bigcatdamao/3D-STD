@@ -1,11 +1,10 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "message", "brief", "questions", "nextAction", "readiness", "assumptions"],
   "properties": {
-    "schemaVersion": { "const": "creation-agent-output.v1" },
-    "message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "schemaVersion": { "type": "string", "enum": ["creation-agent-output.v1"] },
+    "message": { "type": "string" },
     "brief": { "$ref": "#/$defs/brief" },
     "questions": {
       "type": "array",
@@ -22,27 +21,22 @@
       "required": ["score", "missingFields"],
       "properties": {
         "score": { "type": "number", "minimum": 0, "maximum": 1 },
-        "missingFields": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 80 } }
+        "missingFields": { "type": "array", "maxItems": 8, "items": { "type": "string" } }
       }
     },
-    "assumptions": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 240 } }
+    "assumptions": { "type": "array", "maxItems": 8, "items": { "type": "string" } }
   },
   "$defs": {
-    "nullableString": { "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }] },
+    "nullableString": { "type": ["string", "null"] },
     "partCount": {
-      "anyOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["minimum", "preferred", "maximum"],
-          "properties": {
-            "minimum": { "type": "integer", "minimum": 1, "maximum": 100 },
-            "preferred": { "type": "integer", "minimum": 1, "maximum": 100 },
-            "maximum": { "type": "integer", "minimum": 1, "maximum": 100 }
-          }
-        },
-        { "type": "null" }
-      ]
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["minimum", "preferred", "maximum"],
+      "properties": {
+        "minimum": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "preferred": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maximum": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
     },
     "brief": {
       "type": "object",
@@ -53,10 +47,10 @@
         "projectType": { "type": "string", "enum": ["character", "mecha", "prop", "product", "scene", "other", "unknown"] },
         "purpose": { "type": "string", "enum": ["resin_print", "fdm_print", "display", "prototype", "unknown"] },
         "style": { "$ref": "#/$defs/nullableString" },
-        "targetHeightMm": { "anyOf": [{ "type": "number", "minimum": 1, "maximum": 5000 }, { "type": "null" }] },
+        "targetHeightMm": { "type": ["number", "null"], "minimum": 1, "maximum": 5000 },
         "pose": { "$ref": "#/$defs/nullableString" },
         "preferredPartCount": { "$ref": "#/$defs/partCount" },
-        "notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 240 } }
+        "notes": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
       }
     },
     "option": {
@@ -64,9 +58,9 @@
       "additionalProperties": false,
       "required": ["value", "label", "description", "recommended"],
       "properties": {
-        "value": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "description": { "type": "string", "maxLength": 160 },
+        "value": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
         "recommended": { "type": "boolean" }
       }
     },
@@ -75,10 +69,10 @@
       "additionalProperties": false,
       "required": ["questionId", "question", "options", "allowFreeText"],
       "properties": {
-        "questionId": { "type": "string", "minLength": 1, "maxLength": 80 },
-        "question": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "questionId": { "type": "string" },
+        "question": { "type": "string" },
         "options": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "$ref": "#/$defs/option" } },
-        "allowFreeText": { "const": true }
+        "allowFreeText": { "type": "boolean", "enum": [true] }
       }
     }
   }
