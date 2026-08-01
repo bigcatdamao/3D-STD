@@ -40,7 +40,8 @@ describe('M1.15a 付费效果图 Worker', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       expect(String(url)).toBe('https://api.aihubmix.com/v1/images/generations');
       expect((init?.headers as Record<string, string>).authorization).toBe('Bearer image-secret');
-      expect(body).toMatchObject({ model: 'gpt-image-2', n: 1, size: '1024x1024', quality: 'low', response_format: 'b64_json' });
+      expect(body).toMatchObject({ model: 'gpt-image-2', n: 1, size: '1024x1024', quality: 'low' });
+      expect(body).not.toHaveProperty('response_format');
       expect(String(body.prompt)).toContain('蘑菇冒险家');
       expect(JSON.stringify(body)).not.toContain('image-secret');
       return Response.json({ data: [{ b64_json: pngBase64 }] });

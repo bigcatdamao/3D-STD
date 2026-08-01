@@ -80,7 +80,6 @@ export async function callCreationImage(
         n: 1,
         size: config.size,
         quality: config.quality,
-        response_format: 'b64_json',
       }),
       signal: controller.signal,
     });
