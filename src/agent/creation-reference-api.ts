@@ -1,5 +1,6 @@
 import { apiHeaders } from '../net/visitor';
 import type { CreationReferenceApiRequest, CreationReferenceApiSuccess } from './creation-reference-api-types';
+import { isJsonApiResponse, serviceVersionMismatchMessage } from './api-response';
 
 export class CreationReferenceApiError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -18,6 +19,12 @@ export async function requestCreationReferenceAnalysis(
       body: JSON.stringify(request),
       signal: controller.signal,
     });
+    if (!isJsonApiResponse(response)) {
+      throw new CreationReferenceApiError(
+        'service_version_mismatch',
+        serviceVersionMismatchMessage('参考图分析服务'),
+      );
+    }
     let body: unknown;
     try { body = await response.json(); } catch { throw new CreationReferenceApiError('bad_response', '参考图分析服务返回了无法解析的响应。'); }
     if (!response.ok || !body || typeof body !== 'object' || (body as { ok?: unknown }).ok !== true) {

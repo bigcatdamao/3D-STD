@@ -4,6 +4,7 @@ import type {
   CreationAgentQuestion,
   CreationProjectType,
   CreationPurpose,
+  CreationQuestionTarget,
 } from './creation-agent-api-types';
 
 export const CREATION_AGENT_SESSION_KEY = '3dstd:creation-agent-session:v1';
@@ -35,6 +36,9 @@ const PURPOSE_LABELS: Record<Exclude<CreationPurpose, 'unknown'>, string> = {
   prototype: '产品验证',
 };
 
+const PROJECT_VALUES = new Set<CreationProjectType>(['character', 'mecha', 'prop', 'product', 'scene', 'other', 'unknown']);
+const PURPOSE_VALUES = new Set<CreationPurpose>(['resin_print', 'fdm_print', 'display', 'prototype', 'unknown']);
+
 export function projectTypeLabel(value: CreationProjectType): string {
   return value === 'unknown' ? '尚未确定' : PROJECT_LABELS[value];
 }
@@ -44,12 +48,13 @@ export function purposeLabel(value: CreationPurpose): string {
 }
 
 function includesAny(text: string, values: string[]): boolean {
-  return values.some((value) => text.includes(value));
+  const normalized = text.toLowerCase();
+  return values.some((value) => normalized.includes(value.toLowerCase()));
 }
 
 function inferProjectType(text: string): CreationProjectType | null {
   if (includesAny(text, ['机甲', '机器人', '高达', '机械角色'])) return 'mecha';
-  if (includesAny(text, ['手办', '角色', '人物', '人偶', '动物', '怪兽'])) return 'character';
+  if (includesAny(text, ['手办', '角色', '人物', '人偶', '动物', '怪兽', 'gk'])) return 'character';
   if (includesAny(text, ['道具', '摆件', '武器', '头盔', '徽章'])) return 'prop';
   if (includesAny(text, ['产品', '外壳', '原型', '工业设计'])) return 'product';
   if (includesAny(text, ['场景', '建筑', '地台', '环境'])) return 'scene';
@@ -65,7 +70,7 @@ function inferPurpose(text: string): CreationPurpose | null {
 }
 
 function inferStyle(text: string): string | null {
-  const styles = ['卡通', 'Q版', '写实', '科幻', '赛博朋克', '机甲', '极简', '国风', '奇幻', '可爱'];
+  const styles = ['卡通', 'Q版', '写实', '日式二次元', '科幻', '赛博朋克', '机甲', '极简', '国风', '奇幻', '可爱', 'GK'];
   const hits = styles.filter((style) => text.toLowerCase().includes(style.toLowerCase()));
   return hits.length ? hits.join('、') : null;
 }
@@ -91,9 +96,9 @@ function inferPartCount(text: string): CreationAgentBrief['preferredPartCount'] 
 }
 
 function meaningfulSubject(text: string): string | null {
-  const normalized = text.trim().replace(/[。！!？?]+$/g, '');
+  const normalized = text.trim().replace(/[。！!，,？?]+$/g, '');
   if (!normalized || normalized.length > 120) return null;
-  if (/^(?:我想|想要|帮我)?(?:做|制作|生成|设计)?(?:一个|个)?(?:3d)?模型$/i.test(normalized.replace(/\s/g, ''))) return null;
+  if (/^(?:我想|想要|帮我)?(?:做|制作|生成|设计)?(?:一个|一款)?(?:3d)?模型$/i.test(normalized.replace(/\s/g, ''))) return null;
   return normalized;
 }
 
@@ -110,6 +115,7 @@ export function inferCreationBrief(current: CreationAgentBrief, message: string)
 
 const projectQuestion = (): CreationAgentQuestion => ({
   questionId: 'project_type',
+  targetField: 'project_type',
   question: '你最想制作哪一类模型？',
   allowFreeText: true,
   options: [
@@ -122,7 +128,8 @@ const projectQuestion = (): CreationAgentQuestion => ({
 
 const styleQuestion = (): CreationAgentQuestion => ({
   questionId: 'style',
-  question: '希望整体呈现什么风格？',
+  targetField: 'style',
+  question: '希望整体呈现什么视觉风格？',
   allowFreeText: true,
   options: [
     { value: '可爱卡通', label: '可爱卡通', description: '比例夸张、形体清晰', recommended: true },
@@ -134,6 +141,7 @@ const styleQuestion = (): CreationAgentQuestion => ({
 
 const purposeQuestion = (): CreationAgentQuestion => ({
   questionId: 'purpose',
+  targetField: 'purpose',
   question: '这个模型最终主要用来做什么？',
   allowFreeText: true,
   options: [
@@ -146,49 +154,80 @@ const purposeQuestion = (): CreationAgentQuestion => ({
 
 const sizeQuestion = (): CreationAgentQuestion => ({
   questionId: 'target_height',
-  question: '你希望成品大约多高？',
+  targetField: 'target_height',
+  question: '希望成品大约多高？',
   allowFreeText: true,
   options: [
     { value: '100', label: '约 100 mm', description: '小型桌面摆件', recommended: false },
     { value: '180', label: '约 180 mm', description: '常见手办尺寸', recommended: true },
     { value: '300', label: '约 300 mm', description: '大型展示模型', recommended: false },
-    { value: 'unknown', label: '暂不确定', description: '由后续方案建议', recommended: false },
+    { value: 'unknown', label: '交给 Agent', description: '根据题材和用途给出建议', recommended: false },
   ],
 });
 
+/** 对话优先：每轮只提出一个会影响方案的关键问题。 */
 export function questionsForBrief(brief: CreationAgentBrief): CreationAgentQuestion[] {
-  const questions: CreationAgentQuestion[] = [];
-  if (brief.projectType === 'unknown') questions.push(projectQuestion());
-  if (!brief.style) questions.push(styleQuestion());
-  if (brief.purpose === 'unknown') questions.push(purposeQuestion());
-  if (questions.length < 3 && brief.targetHeightMm === null && brief.purpose !== 'display') questions.push(sizeQuestion());
-  return questions.slice(0, 3);
+  if (brief.projectType === 'unknown') return [projectQuestion()];
+  if (!brief.style) return [styleQuestion()];
+  if (brief.purpose === 'unknown') return [purposeQuestion()];
+  if (brief.targetHeightMm === null && brief.purpose !== 'display') return [sizeQuestion()];
+  return [];
+}
+
+function targetFromId(questionId: string): CreationQuestionTarget | null {
+  const normalized = questionId.toLowerCase();
+  if (normalized.includes('subject') || normalized.includes('object') || normalized.includes('character')) return 'subject';
+  if (normalized.includes('project') || normalized.includes('type')) return 'project_type';
+  if (normalized.includes('purpose') || normalized.includes('usage') || normalized.includes('print')) return 'purpose';
+  if (normalized.includes('style') || normalized.includes('visual')) return 'style';
+  if (normalized.includes('height') || normalized.includes('size') || normalized.includes('scale')) return 'target_height';
+  if (normalized.includes('pose') || normalized.includes('posture')) return 'pose';
+  if (normalized.includes('part') || normalized.includes('split')) return 'preferred_part_count';
+  if (normalized.includes('note')) return 'notes';
+  return null;
 }
 
 export function applyQuestionAnswers(
   brief: CreationAgentBrief,
   answers: Record<string, string>,
+  questions: CreationAgentQuestion[] = [],
 ): { brief: CreationAgentBrief; summary: string } {
-  let next = { ...brief };
+  const next: CreationAgentBrief = { ...brief, notes: [...brief.notes] };
   const summary: string[] = [];
-  if (answers.project_type) {
-    next.projectType = answers.project_type as CreationProjectType;
-    next.subject ??= projectTypeLabel(next.projectType);
-    summary.push(`模型类型：${projectTypeLabel(next.projectType)}`);
-  }
-  if (answers.style) {
-    next.style = answers.style;
-    summary.push(`风格：${answers.style}`);
-  }
-  if (answers.purpose) {
-    next.purpose = answers.purpose as CreationPurpose;
-    summary.push(`用途：${purposeLabel(next.purpose)}`);
-  }
-  if (answers.target_height && answers.target_height !== 'unknown') {
-    next.targetHeightMm = Number(answers.target_height);
-    summary.push(`成品高度：约 ${answers.target_height} mm`);
-  }
-  return { brief: next, summary: summary.join('；') };
+
+  Object.entries(answers).forEach(([questionId, value]) => {
+    const question = questions.find((item) => item.questionId === questionId);
+    const target = question?.targetField ?? targetFromId(questionId);
+    const option = question?.options.find((item) => item.value === value);
+    let display = option?.label || value;
+
+    if (target === 'project_type' && PROJECT_VALUES.has(value as CreationProjectType)) {
+      next.projectType = value as CreationProjectType;
+      next.subject ??= projectTypeLabel(next.projectType);
+      display = projectTypeLabel(next.projectType);
+    } else if (target === 'purpose' && PURPOSE_VALUES.has(value as CreationPurpose)) {
+      next.purpose = value as CreationPurpose;
+      display = purposeLabel(next.purpose);
+    } else if (target === 'subject' && value !== 'unknown') {
+      next.subject = display;
+    } else if (target === 'style' && value !== 'unknown') {
+      next.style = display;
+    } else if (target === 'target_height' && value !== 'unknown') {
+      const height = Number(value);
+      if (Number.isFinite(height) && height > 0) next.targetHeightMm = height;
+    } else if (target === 'pose' && value !== 'unknown') {
+      next.pose = display;
+    } else if (target === 'preferred_part_count' && value !== 'unknown') {
+      const count = Number(value);
+      if (Number.isInteger(count) && count > 0) next.preferredPartCount = { minimum: count, preferred: count, maximum: count };
+    } else if (target === 'notes' && display) {
+      next.notes = Array.from(new Set([...next.notes, display])).slice(0, 20);
+    }
+
+    summary.push(`${question?.question || questionId}：${display}`);
+  });
+
+  return { brief: next, summary: summary.join('；') || '请结合当前 Brief 继续整理，并只追问一个真正影响结果的问题。' };
 }
 
 function missingFieldsOf(brief: CreationAgentBrief): string[] {
@@ -208,12 +247,12 @@ export function buildLocalCreationTurn(current: CreationAgentBrief, message: str
   return {
     schemaVersion: 'creation-agent-output.v1',
     message: complete
-      ? '我已经把目前的想法整理成一份创作需求。请先核对，确认后再进入效果图和多视图阶段。'
-      : '这个方向可以继续做。为了避免直接生成出与你预期不一致的模型，我还需要确认下面几个关键问题。',
+      ? '我已把想法整理成可继续创作的 Brief。你可以直接生成视觉方案，也可以继续补充细节。'
+      : `我先理解了你已经说清楚的部分。接下来只确认一个最影响结果的问题：${questions[0]?.question ?? ''}`,
     brief,
     questions: complete ? [] : questions,
-    nextAction: complete ? 'review_brief' : 'ask_questions',
+    nextAction: complete ? 'ready_for_concept' : 'ask_questions',
     readiness: { score: Math.max(0, Math.min(1, (4 - missingFields.length) / 4)), missingFields },
-    assumptions: complete ? [] : ['尚未确认的信息不会自动提交到付费生成服务。'],
+    assumptions: complete ? [] : ['未确定的非关键细节可由 Agent 给出可编辑建议，不会自动触发付费服务。'],
   };
 }

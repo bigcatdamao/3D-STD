@@ -123,11 +123,12 @@ const fileStem = (name: string): string => name.replace(/\.[^.]+$/, '').trim() |
 interface GenPanelProps {
   allowedTypes?: GenerateType[];
   initialHandoff?: AgentGenerationHandoff | null;
+  onAccepted?: () => void;
 }
 
 const ALL_GENERATE_TYPES: GenerateType[] = ['text', 'image', 'multiview'];
 
-export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = null }: GenPanelProps) {
+export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = null, onAccepted }: GenPanelProps) {
   const initialType = allowedTypes[0] ?? 'image';
   const [gen, setGen] = useState<GenState>(() => idleState({ type: initialType, prompt: '', images: [] }));
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
@@ -415,6 +416,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
         taskId: cur.taskId ?? null,
         engine: engineNameRef.current,
       });
+      onAccepted?.();
       acceptingRef.current = false;
       setAccepting(false);
       for (const image of selectedImagesRef.current) URL.revokeObjectURL(image.previewUrl);
@@ -427,7 +429,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
       setAccepting(false);
       commit({ ...cur, notice: '结果下载失败,请重试「接受」或稍后再试(链接仍有效)。' });
     }
-  }, [commit]);
+  }, [commit, onAccepted]);
 
   const doAdjust = useCallback(() => {
     // AI-08:完整上下文回填,仅改差异。上下文从未离开输入区数据结构,回填即切回 idle。

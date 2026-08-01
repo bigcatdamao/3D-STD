@@ -34,6 +34,7 @@ import type { CreationConceptApiSuccess } from '../src/agent/creation-concept-ap
 import type { CreationReferenceApiSuccess } from '../src/agent/creation-reference-api-types';
 import type { CreationImageApiSuccess } from '../src/agent/creation-image-api-types';
 import {
+  callCreationAgentChatCompletions,
   callCreationAgentResponses,
   CreationAgentInputError,
   CreationAgentUpstreamError,
@@ -115,6 +116,7 @@ export interface WorkerEnv {
   SPLIT_ANALYSIS_COST_UNITS?: string; // 单次预扣单位，默认 1
   CREATION_AGENT_PROVIDER?: string; // openai | aihubmix，默认继承 SPLIT_ANALYSIS_PROVIDER
   CREATION_AGENT_MODEL?: string; // 默认继承 SPLIT_ANALYSIS_MODEL
+  CREATION_AGENT_PROTOCOL?: string; // auto | responses | chat_completions；DeepSeek 默认 chat_completions
   CREATION_AGENT_REASONING_EFFORT?: string; // 默认 low
   CREATION_AGENT_TIMEOUT_MS?: string; // 默认 45000
   CREATION_AGENT_MAX_OUTPUT_TOKENS?: string; // 默认 1800
@@ -122,6 +124,7 @@ export interface WorkerEnv {
   CREATION_AGENT_BREAKER_UNITS?: string; // 独立全站日熔断，默认 500
   CREATION_AGENT_COST_UNITS?: string; // 单轮预扣单位，默认 1
   CREATION_CONCEPT_REASONING_EFFORT?: string; // 默认继承创作 Agent
+  CREATION_CONCEPT_MODEL?: string; // 可与对话模型分开，避免协议能力互相约束
   CREATION_CONCEPT_TIMEOUT_MS?: string; // 默认 60000
   CREATION_CONCEPT_MAX_OUTPUT_TOKENS?: string; // 默认 3500
   CREATION_CONCEPT_DAILY_LIMIT?: string; // 单访客视觉规划次数，默认 5
@@ -284,6 +287,16 @@ function creationProviderOf(env: WorkerEnv): { provider: CreationAgentProvider; 
   return { provider, endpoint: SPLIT_PROVIDER_ENDPOINTS[provider], apiKey: apiKey ?? '' };
 }
 
+function creationProtocolOf(env: WorkerEnv, model: string): 'responses' | 'chat_completions' {
+  const configured = env.CREATION_AGENT_PROTOCOL?.trim().toLowerCase();
+  if (configured === 'responses' || configured === 'chat_completions') return configured;
+  return model.toLowerCase().startsWith('deepseek-') ? 'chat_completions' : 'responses';
+}
+
+function creationEndpointOf(endpoint: string, protocol: 'responses' | 'chat_completions'): string {
+  return protocol === 'chat_completions' ? endpoint.replace(/\/responses$/, '/chat/completions') : endpoint;
+}
+
 /** M1.6.2:单 Agent、只读分析。独立配额实例，不占用 Tripo 生成配额，也不接受浏览器自带 key。 */
 async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
   let request;
@@ -363,7 +376,7 @@ async function splitAnalysis(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
   }
 }
 
-/** M1.14a:创作需求 Agent。仅整理 Brief 和追问，不调用生图/Hi3D，也不修改场景。 */
+/** M1.16b:自然对话创作 Agent。仅整理 Brief 和单问题追问，不调用生图/Hi3D，也不修改场景。 */
 async function creationAgent(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
   let request;
   try {
@@ -399,11 +412,13 @@ async function creationAgent(req: Request, env: WorkerEnv, deps: RouterDeps): Pr
   }
 
   const model = env.CREATION_AGENT_MODEL?.trim() || env.SPLIT_ANALYSIS_MODEL?.trim() || 'gpt-5.6-sol';
+  const protocol = creationProtocolOf(env, model);
   try {
     const startedAt = Date.now();
-    const result = await callCreationAgentResponses(request, {
+    const callAgent = protocol === 'chat_completions' ? callCreationAgentChatCompletions : callCreationAgentResponses;
+    const result = await callAgent(request, {
       apiKey: providerConfig.apiKey,
-      endpoint: providerConfig.endpoint,
+      endpoint: creationEndpointOf(providerConfig.endpoint, protocol),
       model,
       reasoningEffort: splitReasoningEffort(env.CREATION_AGENT_REASONING_EFFORT),
       timeoutMs: Math.max(5_000, Math.min(90_000, num(env.CREATION_AGENT_TIMEOUT_MS, 45_000))),
@@ -467,7 +482,7 @@ async function creationConcepts(req: Request, env: WorkerEnv, deps: RouterDeps):
       : err(429, 'creation_concept_quota_exhausted', 'quota', '今日视觉方案次数已用完，请明日再试。');
   }
 
-  const model = env.CREATION_AGENT_MODEL?.trim() || env.SPLIT_ANALYSIS_MODEL?.trim() || 'gpt-5.6-sol';
+  const model = env.CREATION_CONCEPT_MODEL?.trim() || env.SPLIT_ANALYSIS_MODEL?.trim() || 'gpt-5.6-sol';
   try {
     const startedAt = Date.now();
     const result = await callCreationConceptResponses(request, {

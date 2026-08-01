@@ -4,6 +4,7 @@ import type {
   CreationAgentApiSuccess,
 } from './creation-agent-api-types';
 import { apiHeaders } from '../net/visitor';
+import { isJsonApiResponse, serviceVersionMismatchMessage } from './api-response';
 
 export class CreationAgentApiError extends Error {
   constructor(readonly code: string, message: string) {
@@ -25,6 +26,12 @@ export async function requestCreationAgent(
       body: JSON.stringify(request),
       signal: controller.signal,
     });
+    if (!isJsonApiResponse(response)) {
+      throw new CreationAgentApiError(
+        'service_version_mismatch',
+        serviceVersionMismatchMessage('创作 Agent 服务'),
+      );
+    }
     let body: unknown;
     try {
       body = await response.json();

@@ -1,6 +1,7 @@
 export type CreationProjectType = 'character' | 'mecha' | 'prop' | 'product' | 'scene' | 'other' | 'unknown';
 export type CreationPurpose = 'resin_print' | 'fdm_print' | 'display' | 'prototype' | 'unknown';
 export type CreationNextAction = 'ask_questions' | 'review_brief' | 'request_reference' | 'ready_for_concept';
+export type CreationQuestionTarget = 'subject' | 'project_type' | 'purpose' | 'style' | 'target_height' | 'pose' | 'preferred_part_count' | 'notes';
 
 export interface CreationAgentBrief {
   subject: string | null;
@@ -26,6 +27,7 @@ export interface CreationAgentQuestionOption {
 
 export interface CreationAgentQuestion {
   questionId: string;
+  targetField: CreationQuestionTarget;
   question: string;
   options: CreationAgentQuestionOption[];
   allowFreeText: true;
@@ -74,4 +76,3 @@ export interface CreationAgentApiSuccess {
     };
   };
 }
-

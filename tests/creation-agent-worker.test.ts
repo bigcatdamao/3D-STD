@@ -46,7 +46,16 @@ const successFetch = (inspect?: (url: string, body: Record<string, unknown>, ini
   return Response.json({ status: 'completed', usage: { input_tokens: 120, output_tokens: 90, total_tokens: 210 }, output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(output) }] }] });
 };
 
-describe('M1.14a 创作 Agent Worker', () => {
+const chatSuccessFetch = (inspect?: (url: string, body: Record<string, unknown>, init?: RequestInit) => void): typeof fetch => async (url, init) => {
+  const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+  inspect?.(String(url), body, init);
+  return Response.json({
+    choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(output) } }],
+    usage: { prompt_tokens: 130, completion_tokens: 80, total_tokens: 210 },
+  });
+};
+
+describe('M1.16b 创作 Agent Worker', () => {
   it('仅经服务端 Secret 调用 Responses API，并使用 strict schema 与 no-store', async () => {
     const response = await post(makeEnv(), requestBody(), successFetch((url, body, init) => {
       expect(url).toBe('https://api.aihubmix.com/v1/responses');
@@ -61,6 +70,24 @@ describe('M1.14a 创作 Agent Worker', () => {
     }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, result: { nextAction: 'review_brief' }, meta: { provider: 'aihubmix', usage: { totalTokens: 210 } } });
+  });
+
+  it('DeepSeek V4 自动走 Chat Completions JSON 协议并继续服务端校验', async () => {
+    const response = await post(
+      makeEnv({ CREATION_AGENT_MODEL: 'deepseek-v4-flash' }),
+      requestBody(),
+      chatSuccessFetch((url, body, init) => {
+        expect(url).toBe('https://api.aihubmix.com/v1/chat/completions');
+        expect((init?.headers as Record<string, string>).authorization).toBe('Bearer server-secret');
+        expect(body.model).toBe('deepseek-v4-flash');
+        expect(body.thinking).toEqual({ type: 'disabled' });
+        expect(body.response_format).toEqual({ type: 'json_object' });
+        expect(body.messages).toBeInstanceOf(Array);
+        expect(JSON.stringify(body)).not.toContain('server-secret');
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, meta: { model: 'deepseek-v4-flash', usage: { totalTokens: 210 } } });
   });
 
   it('无服务端密钥时 fail-closed，前端可明确走本地降级', async () => {

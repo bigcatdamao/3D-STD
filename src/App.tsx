@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GenPanel } from './ai/GenPanel';
 import { CreationAgentPanel } from './agent/CreationAgentPanel';
-import type { AgentGenerationHandoff } from './agent/creation-handoff';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -188,12 +186,6 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
 }
 
 function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose: () => void }) {
-  const [route, setRoute] = useState<'agent' | 'image'>('agent');
-  const [handoff, setHandoff] = useState<AgentGenerationHandoff | null>(null);
-  const acceptAgentHandoff = (next: AgentGenerationHandoff) => {
-    setHandoff(next);
-    setRoute('image');
-  };
   const openExample = () => {
     if (bootstrapDemoScene()) {
       onClose();
@@ -203,44 +195,25 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
   };
 
   return (
-    <div
-      className={`creation-overlay${dismissible ? ' is-dismissible' : ''}`}
-      onMouseDown={(event) => {
-        if (dismissible && event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section className={`creation-panel${route === 'agent' ? ' creation-panel--agent' : ''}`} aria-label="3D 创作 Agent">
+    <div className="creation-overlay">
+      <section className="creation-panel creation-panel--agent" aria-label="3D 创作 Agent 工作台">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.15a</div>
-            <h2>{route === 'agent' ? '从模糊想法，到可确认的创作需求' : '用参考图快速生成模型'}</h2>
-            <p>{route === 'agent' ? '像聊天一样说出想法；Agent 会在合适时机追问，并整理成可编辑的 Brief。' : '添加一至三张本地图片，直接进入现有图生 3D 流程。'}</p>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.16b</div>
+            <h2>从想法与参考图，推进到可打印模型</h2>
+            <p>对话、视觉方案、效果图和 Hi3D 成模共享同一工作台，阶段变化不再改变页面尺寸。</p>
           </div>
-          {dismissible && (
+          <div className="creation-panel__header-actions">
+            <ImportButton target="viewport" label="导入本地模型" className="creation-panel__secondary" />
+            <button className="creation-panel__tertiary" onClick={openExample}>打开示例场景</button>
+            {dismissible && (
             <button className="creation-panel__close" onClick={onClose} aria-label="关闭 AI 创作面板" title="关闭">
               ×
             </button>
-          )}
+            )}
+          </div>
         </header>
-        <div className="creation-panel__routes" role="tablist" aria-label="3D 创作方式">
-          <button type="button" role="tab" aria-selected={route === 'agent'} className={route === 'agent' ? 'is-active' : ''} onClick={() => setRoute('agent')}>
-            <strong>✦ 3D 创作 Agent</strong><small>对话澄清需求</small>
-          </button>
-          <button type="button" role="tab" aria-selected={route === 'image'} className={route === 'image' ? 'is-active' : ''} onClick={() => setRoute('image')}>
-            <strong>快速图生模型</strong><small>已有清晰参考图</small>
-          </button>
-        </div>
-        {route === 'agent'
-          ? <CreationAgentPanel onHandoff={acceptAgentHandoff} />
-          : <GenPanel allowedTypes={['image', 'multiview']} initialHandoff={handoff} />}
-        {!dismissible && (
-          <footer className="creation-panel__footer">
-            <span>或者</span>
-            <ImportButton target="viewport" label="导入本地模型" className="creation-panel__secondary" />
-            <button className="creation-panel__tertiary" onClick={openExample}>打开示例场景</button>
-            <small>支持 GLB、glTF、STL、OBJ，也可直接拖入视口</small>
-          </footer>
-        )}
+        <CreationAgentPanel onComplete={onClose} />
       </section>
     </div>
   );
@@ -401,6 +374,7 @@ export function App() {
       data-left-open={layout.leftOpen}
       data-inspector-open={layout.inspectorOpen}
       data-creation-open={creationVisible}
+      data-creation-workspace={creationVisible}
     >
       <header className="app-header">
         <div className="brand-lockup">
@@ -415,7 +389,7 @@ export function App() {
 
         <div className="header-actions">
           <button
-            className={`app-icon-button${layout.leftOpen ? ' is-active' : ''}`}
+            className={`app-icon-button app-workspace-toggle${layout.leftOpen ? ' is-active' : ''}`}
             onClick={() => patchLayout({ leftOpen: !layout.leftOpen })}
             title={layout.leftOpen ? '收起场景与资产' : '展开场景与资产'}
             aria-label={layout.leftOpen ? '收起场景与资产' : '展开场景与资产'}
@@ -431,7 +405,7 @@ export function App() {
             ✦
           </button>
           <button
-            className={`app-icon-button${layout.inspectorOpen ? ' is-active' : ''}`}
+            className={`app-icon-button app-workspace-toggle${layout.inspectorOpen ? ' is-active' : ''}`}
             onClick={() => patchLayout({ inspectorOpen: !layout.inspectorOpen })}
             title={layout.inspectorOpen ? '收起检查器' : '展开检查器'}
             aria-label={layout.inspectorOpen ? '收起检查器' : '展开检查器'}

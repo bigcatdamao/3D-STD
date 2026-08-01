@@ -52,17 +52,19 @@
     "SPLIT_ANALYSIS_DAILY_LIMIT": "3",
     "SPLIT_ANALYSIS_BREAKER_UNITS": "100",
     "SPLIT_ANALYSIS_COST_UNITS": "1",
-    // M1.14a:3D 创作 Agent 只做需求理解与 Brief，不调用生图或 Hi3D。
-    // 默认复用 AIHubMix Secret；也可独立切换 CREATION_AGENT_PROVIDER/MODEL。
+    // M1.16b:DeepSeek V4 Flash 负责低延迟自然对话；服务端使用 Chat Completions + JSON 校验。
+    // Secret 仍只存在 Worker；对话不会自动调用生图或 Hi3D。
     "CREATION_AGENT_PROVIDER": "aihubmix",
-    "CREATION_AGENT_MODEL": "gpt-5.6-sol",
+    "CREATION_AGENT_MODEL": "deepseek-v4-flash",
+    "CREATION_AGENT_PROTOCOL": "chat_completions",
     "CREATION_AGENT_REASONING_EFFORT": "low",
-    "CREATION_AGENT_TIMEOUT_MS": "45000",
-    "CREATION_AGENT_MAX_OUTPUT_TOKENS": "1800",
+    "CREATION_AGENT_TIMEOUT_MS": "60000",
+    "CREATION_AGENT_MAX_OUTPUT_TOKENS": "2400",
     "CREATION_AGENT_DAILY_LIMIT": "20",
     "CREATION_AGENT_BREAKER_UNITS": "500",
     "CREATION_AGENT_COST_UNITS": "1",
-    // M1.14b:确认 Brief 后的视觉方向规划，仍不调用生图或 3D 引擎。
+    // 视觉方案继续使用已验证的 strict-schema 模型，避免对话模型协议影响后续链路。
+    "CREATION_CONCEPT_MODEL": "gpt-5.6-sol",
     "CREATION_CONCEPT_REASONING_EFFORT": "low",
     "CREATION_CONCEPT_TIMEOUT_MS": "60000",
     "CREATION_CONCEPT_MAX_OUTPUT_TOKENS": "3500",

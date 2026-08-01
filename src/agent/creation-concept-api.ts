@@ -4,6 +4,7 @@ import type {
   CreationConceptApiSuccess,
   CreationConceptApiOutput,
 } from './creation-concept-api-types';
+import { isJsonApiResponse, serviceVersionMismatchMessage } from './api-response';
 
 export class CreationConceptApiError extends Error {
   constructor(readonly code: string, message: string) {
@@ -24,6 +25,12 @@ export async function requestCreationConcepts(
       body: JSON.stringify(request),
       signal: controller.signal,
     });
+    if (!isJsonApiResponse(response)) {
+      throw new CreationConceptApiError(
+        'service_version_mismatch',
+        serviceVersionMismatchMessage('视觉方案服务'),
+      );
+    }
     let body: unknown;
     try {
       body = await response.json();

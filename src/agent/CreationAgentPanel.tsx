@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { GenPanel } from '../ai/GenPanel';
 import { requestCreationAgent } from './creation-agent-api';
 import { requestCreationConcepts } from './creation-concept-api';
 import type { CreationConceptApiOutput } from './creation-concept-api-types';
@@ -16,6 +17,8 @@ import type {
   CreationAgentApiOutput,
   CreationAgentBrief,
   CreationAgentHistoryItem,
+  CreationAgentQuestion,
+  CreationAgentQuestionOption,
   CreationProjectType,
   CreationPurpose,
 } from './creation-agent-api-types';
@@ -82,11 +85,10 @@ function initialSession(): SavedSession {
   };
 }
 
-export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentGenerationHandoff) => void }) {
+export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) {
   const [session, setSession] = useState<SavedSession>(initialSession);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [serviceLabel, setServiceLabel] = useState('等待首次对话');
   const [conceptBusy, setConceptBusy] = useState(false);
@@ -98,6 +100,7 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
   const [visual, setVisual] = useState<GeneratedVisual | null>(null);
   const [visualBusy, setVisualBusy] = useState(false);
   const [visualError, setVisualError] = useState<string | null>(null);
+  const [handoff, setHandoff] = useState<AgentGenerationHandoff | null>(null);
 
   useEffect(() => {
     try {
@@ -150,6 +153,7 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
     const message = rawMessage.trim();
     if (!message || busy) return;
     const currentBrief = briefOverride ?? session.brief;
+    setHandoff(null);
     const userMessage: ChatMessage = { id: nextId('user'), role: 'user', content: message };
     setSession((current) => ({
       ...current,
@@ -183,7 +187,6 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
         messages: [...current.messages, assistant],
       }));
       setServiceLabel(`${response.meta.provider} · ${response.meta.model}`);
-      setAnswers({});
     } catch (error) {
       const local = buildLocalCreationTurn(currentBrief, message);
       const assistant: ChatMessage = { id: nextId('assistant'), role: 'assistant', source: 'local', content: local.message };
@@ -196,19 +199,22 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
       }));
       setServiceLabel('本地引导');
       setFallbackNotice(`${error instanceof Error ? error.message : 'AI 服务暂时不可用'} 本轮使用本地规则整理，没有调用付费生成。`);
-      setAnswers({});
     } finally {
       setBusy(false);
     }
   };
 
-  const submitAnswers = () => {
-    if (!session.output?.questions.length || session.output.questions.some((question) => !answers[question.questionId])) return;
-    const applied = applyQuestionAnswers(session.brief, answers);
-    void sendMessage(`我的选择是：${applied.summary}`, applied.brief);
+  const submitQuickAnswer = (question: CreationAgentQuestion, option: CreationAgentQuestionOption) => {
+    const applied = applyQuestionAnswers(session.brief, { [question.questionId]: option.value }, [question]);
+    void sendMessage(applied.summary, applied.brief);
+  };
+
+  const delegateQuestion = (question: CreationAgentQuestion) => {
+    void sendMessage(`关于“${question.question}”，请你根据当前用途和可打印性做一个合理决定，并把这个假设写入 Brief。`);
   };
 
   const updateBrief = (patch: Partial<CreationAgentBrief>) => {
+    setHandoff(null);
     setSession((current) => ({
       ...current,
       brief: { ...current.brief, ...patch },
@@ -221,24 +227,17 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
     setConceptError(null);
   };
 
-  const confirmBrief = () => {
-    if (!canConfirm) return;
-    const assistant: ChatMessage = {
-      id: nextId('confirmed'),
-      role: 'assistant',
-      source: 'system',
-      content: '创作需求已确认。现在可以让 Agent 规划三套视觉方向；这一步只生成文字方案，不会生成图片或 3D 模型。',
-    };
-    setSession((current) => ({
-      ...current, confirmed: true, concepts: null, selectedSchemeId: null, conceptConfirmed: false,
-      messages: [...current.messages, assistant],
-    }));
-  };
-
   const generateConcepts = async () => {
-    if (!session.confirmed || conceptBusy) return;
+    if (!canConfirm || conceptBusy) return;
     setConceptBusy(true);
     setConceptError(null);
+    setSession((current) => ({
+      ...current,
+      confirmed: true,
+      concepts: null,
+      selectedSchemeId: null,
+      conceptConfirmed: false,
+    }));
     try {
       const response = await requestCreationConcepts({
         schemaVersion: 'creation-concept-input.v1',
@@ -267,19 +266,22 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
   };
 
   const selectScheme = (schemeId: string) => {
+    setHandoff(null);
     setSession((current) => ({ ...current, selectedSchemeId: schemeId, conceptConfirmed: false }));
   };
 
-  const confirmScheme = () => {
+  const confirmSchemeAndGenerate = () => {
     const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
     if (!scheme) return;
     const assistant: ChatMessage = {
       id: nextId('scheme-confirmed'), role: 'assistant', source: 'system',
-      content: `已确认视觉方向“${scheme.title}”。下一步可以生成一张效果图；这是独立付费节点，不会自动提交 3D 任务。`,
+      content: `已确认视觉方向“${scheme.title}”，现在生成一张效果图。此操作不会自动提交 3D 任务。`,
     };
     setSession((current) => ({ ...current, conceptConfirmed: true, messages: [...current.messages, assistant] }));
+    setHandoff(null);
     setVisual(null);
     setVisualError(null);
+    void generateVisual('concept', scheme);
   };
 
   const setReferences = (files: File[]) => {
@@ -290,6 +292,7 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
     setReferenceFiles(next);
     setReferenceError(valid.length === files.slice(0, 3).length ? null : '仅支持 1–3 张 PNG、JPG 或 WebP，单张不超过 10MB。');
     setVisual(null);
+    setHandoff(null);
   };
 
   const analyzeReferences = async () => {
@@ -327,11 +330,12 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
     ? `${session.referenceAnalysis.summary}；轮廓：${session.referenceAnalysis.silhouette}；配色：${session.referenceAnalysis.colorPalette.join('、')}；材质：${session.referenceAnalysis.materials.join('、')}；特征：${session.referenceAnalysis.distinctiveFeatures.join('、')}`
     : null;
 
-  const generateVisual = async (mode: CreationImageMode) => {
-    const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
-    if (!session.conceptConfirmed || !scheme || visualBusy) return;
+  const generateVisual = async (mode: CreationImageMode, schemeOverride?: CreationConceptApiOutput['schemes'][number]) => {
+    const scheme = schemeOverride ?? session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
+    if ((!session.conceptConfirmed && !schemeOverride) || !scheme || visualBusy) return;
     setVisualBusy(true);
     setVisualError(null);
+    setHandoff(null);
     try {
       const response = await requestCreationImage({
         schemaVersion: 'creation-image-input.v1', requestId: `image_${Date.now()}`, locale: 'zh-CN', mode,
@@ -346,7 +350,7 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
 
   const handoffVisual = async () => {
     const scheme = session.concepts?.schemes.find((item) => item.schemeId === session.selectedSchemeId);
-    if (!visual || !scheme || !onHandoff) return;
+    if (!visual || !scheme) return;
     setVisualBusy(true);
     setVisualError(null);
     try {
@@ -354,7 +358,7 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
       const images = visual.mode === 'turntable_sheet'
         ? await splitTurntableSheet(visual.base64, stem)
         : [{ view: 'front' as const, file: await base64PngToFile(visual.base64, `${stem}-concept.png`) }];
-      onHandoff({
+      setHandoff({
         id: `handoff_${Date.now()}`,
         type: visual.mode === 'turntable_sheet' ? 'multiview' : 'image',
         prompt: `${session.brief.subject || scheme.title} · ${scheme.title}`,
@@ -369,7 +373,6 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
   const reset = () => {
     setSession(initialSession());
     setDraft('');
-    setAnswers({});
     setFallbackNotice(null);
     setServiceLabel('等待首次对话');
     setConceptBusy(false);
@@ -382,7 +385,83 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
     setVisual(null);
     setVisualBusy(false);
     setVisualError(null);
+    setHandoff(null);
   };
+
+  const stage = handoff ? 'model' : session.conceptConfirmed ? 'visual' : session.concepts ? 'concept' : 'brief';
+  const stageIndex = ['brief', 'concept', 'visual', 'model'].indexOf(stage);
+
+  const conceptStage = session.concepts ? (
+    <section className="creation-concepts" aria-label="视觉方案比较">
+      <div className="creation-concepts__head">
+        <div><strong>选择视觉方向</strong><span>{session.concepts.summary}</span></div>
+        <button type="button" disabled={conceptBusy} onClick={() => void generateConcepts()}>重新规划（1 次）</button>
+      </div>
+      <div className="creation-concepts__grid">
+        {session.concepts.schemes.map((scheme, index) => {
+          const selected = session.selectedSchemeId === scheme.schemeId;
+          const recommended = session.concepts?.recommendedSchemeId === scheme.schemeId;
+          return (
+            <article key={scheme.schemeId} className={`${selected ? 'is-selected' : ''}${recommended ? ' is-recommended' : ''}`}>
+              <header><span>方案 {String.fromCharCode(65 + index)}</span>{recommended && <em>Agent 推荐</em>}</header>
+              <h3>{scheme.title}</h3>
+              <p>{scheme.tagline}</p>
+              <div className="creation-concepts__scores">
+                <span><b>{scheme.scores.briefFit}</b>契合</span>
+                <span><b>{scheme.scores.distinctiveness}</b>辨识</span>
+                <span><b>{scheme.scores.printability}</b>打印</span>
+              </div>
+              <p className="creation-concepts__description">{scheme.description}</p>
+              <div className="creation-concepts__keywords">{scheme.visualKeywords.slice(0, 5).map((keyword) => <i key={keyword}>{keyword}</i>)}</div>
+              <dl>
+                <div><dt>优势</dt><dd>{scheme.strengths[0]}</dd></div>
+                <div><dt>取舍</dt><dd>{scheme.tradeoffs[0]}</dd></div>
+                <div><dt>打印倾向</dt><dd>{scheme.printableStrategy}</dd></div>
+              </dl>
+              <button type="button" onClick={() => selectScheme(scheme.schemeId)}>{selected ? '✓ 已选择' : '选择此方向'}</button>
+            </article>
+          );
+        })}
+      </div>
+      <small>这是 LLM 规划结果，不是效果图；“打印”评分也不是网格检查结论。</small>
+    </section>
+  ) : null;
+
+  const visualStage = session.conceptConfirmed ? (
+    <section className="creation-visual" aria-label="效果图与三视图生成">
+      <div className="creation-visual__head">
+        <div><strong>确认视觉结果</strong><span>检查造型方向后，再交给 Hi3D 成模</span></div>
+        <em>独立付费节点</em>
+      </div>
+      {!visual && (
+        <div className="creation-visual__empty">
+          <span className="creation-stage__symbol">◇</span>
+          <h3>视觉方向已确认</h3>
+          <p>生成一张低质量预览图检查造型。此操作不会自动提交 3D，也不会修改场景。</p>
+          <button type="button" disabled={visualBusy} onClick={() => void generateVisual('concept')}>
+            {visualBusy ? '生成中…' : '生成效果图 · 1 次'}
+          </button>
+        </div>
+      )}
+      {visual && (
+        <div className="creation-visual__result">
+          <img src={`data:image/png;base64,${visual.base64}`} alt={visual.mode === 'concept' ? 'Agent 生成效果图' : 'Agent 生成三视图参考表'} />
+          <div>
+            <strong>{visual.mode === 'concept' ? '效果图已生成' : '三视图参考表已生成'}</strong>
+            <p>{visual.warning}</p>
+            <small>{visual.model} · 图片只保留在当前页面内存中</small>
+            <div className="creation-visual__actions">
+              <button type="button" disabled={visualBusy} onClick={() => void handoffVisual()}>
+                {visual.mode === 'concept' ? '用此图进入 3D' : '用三视图进入 3D'}
+              </button>
+              {visual.mode === 'concept' && <button type="button" disabled={visualBusy} onClick={() => void generateVisual('turntable_sheet')}>再生成三视图</button>}
+              <button type="button" disabled={visualBusy} onClick={() => void generateVisual(visual.mode)}>重新生成</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  ) : null;
 
   return (
     <div className="creation-agent" data-testid="creation-agent-panel">
@@ -433,111 +512,33 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
 
         {!!session.output?.questions.length && (
           <div className="creation-agent__questions">
-            <div className="creation-agent__section-title">还需确认 {session.output.questions.length} 项</div>
-            {session.output.questions.map((question, index) => (
+            <div className="creation-agent__section-title">
+              <strong>Agent 只追问 1 个关键点</strong>
+              <span>点一个建议直接回复，也可以忽略选项在下方自由输入。</span>
+            </div>
+            {session.output.questions.map((question) => (
               <fieldset key={question.questionId}>
-                <legend>{index + 1}. {question.question}</legend>
+                <legend>{question.question}</legend>
                 <div className="creation-agent__options">
                   {question.options.map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      className={answers[question.questionId] === option.value ? 'is-selected' : ''}
-                      onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: option.value }))}
+                      disabled={busy}
+                      onClick={() => submitQuickAnswer(question, option)}
                     >
                       <strong>{option.label}{option.recommended ? <em>推荐</em> : null}</strong>
                       <small>{option.description}</small>
                     </button>
                   ))}
                 </div>
+                <button className="creation-agent__delegate" type="button" disabled={busy} onClick={() => delegateQuestion(question)}>
+                  ✦ 交给 Agent 决定
+                </button>
               </fieldset>
             ))}
-            <button
-              className="creation-agent__answer-submit"
-              type="button"
-              disabled={session.output.questions.some((question) => !answers[question.questionId]) || busy}
-              onClick={submitAnswers}
-            >
-              提交选择
-            </button>
           </div>
         )}
-
-        {conceptError && <div className="creation-agent__fallback">{conceptError}</div>}
-
-        {session.concepts && (
-          <section className="creation-concepts" aria-label="视觉方案比较">
-            <div className="creation-concepts__head">
-              <div><strong>视觉方向</strong><span>{session.concepts.summary}</span></div>
-              <button type="button" disabled={conceptBusy} onClick={() => void generateConcepts()}>重新规划（1 次）</button>
-            </div>
-            <div className="creation-concepts__grid">
-              {session.concepts.schemes.map((scheme, index) => {
-                const selected = session.selectedSchemeId === scheme.schemeId;
-                const recommended = session.concepts?.recommendedSchemeId === scheme.schemeId;
-                return (
-                  <article key={scheme.schemeId} className={`${selected ? 'is-selected' : ''}${recommended ? ' is-recommended' : ''}`}>
-                    <header>
-                      <span>方案 {String.fromCharCode(65 + index)}</span>
-                      {recommended && <em>Agent 推荐</em>}
-                    </header>
-                    <h3>{scheme.title}</h3>
-                    <p>{scheme.tagline}</p>
-                    <div className="creation-concepts__scores">
-                      <span><b>{scheme.scores.briefFit}</b>契合</span>
-                      <span><b>{scheme.scores.distinctiveness}</b>辨识</span>
-                      <span><b>{scheme.scores.printability}</b>打印</span>
-                    </div>
-                    <p className="creation-concepts__description">{scheme.description}</p>
-                    <div className="creation-concepts__keywords">{scheme.visualKeywords.slice(0, 5).map((keyword) => <i key={keyword}>{keyword}</i>)}</div>
-                    <dl>
-                      <div><dt>优势</dt><dd>{scheme.strengths[0]}</dd></div>
-                      <div><dt>取舍</dt><dd>{scheme.tradeoffs[0]}</dd></div>
-                      <div><dt>打印倾向</dt><dd>{scheme.printableStrategy}</dd></div>
-                    </dl>
-                    <button type="button" onClick={() => selectScheme(scheme.schemeId)}>{selected ? '✓ 已选择' : '选择此方向'}</button>
-                  </article>
-                );
-              })}
-            </div>
-            <small>这里是 LLM 规划结果，不是已生成的效果图；“打印”评分也不是几何检查结论。</small>
-          </section>
-        )}
-
-        {session.conceptConfirmed && (
-          <section className="creation-visual" aria-label="效果图与三视图生成">
-            <div className="creation-visual__head">
-              <div><strong>视觉生成</strong><span>先确认效果，再交给 Hi3D 成模</span></div>
-              <em>独立付费节点</em>
-            </div>
-            {!visual && (
-              <div className="creation-visual__empty">
-                <p>生成 1 张低质量预览图，用来检查造型方向；不会自动提交 3D，也不会修改场景。</p>
-                <button type="button" disabled={visualBusy} onClick={() => void generateVisual('concept')}>
-                  {visualBusy ? '生成中…' : '生成效果图 · 1 次'}
-                </button>
-              </div>
-            )}
-            {visual && (
-              <div className="creation-visual__result">
-                <img src={`data:image/png;base64,${visual.base64}`} alt={visual.mode === 'concept' ? 'Agent 生成效果图' : 'Agent 生成三视图参考表'} />
-                <div>
-                  <strong>{visual.mode === 'concept' ? '效果图已生成' : '三视图参考表已生成'}</strong>
-                  <p>{visual.warning}</p>
-                  <small>{visual.model} · 图片只保留在当前页面内存中</small>
-                  <div className="creation-visual__actions">
-                    <button type="button" disabled={visualBusy || !onHandoff} onClick={() => void handoffVisual()}>
-                      {visual.mode === 'concept' ? '用此图进入 3D' : '用三视图进入 3D'}
-                    </button>
-                    {visual.mode === 'concept' && <button type="button" disabled={visualBusy} onClick={() => void generateVisual('turntable_sheet')}>再生成三视图</button>}
-                    <button type="button" disabled={visualBusy} onClick={() => void generateVisual(visual.mode)}>重新生成</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-        {visualError && <div className="creation-agent__fallback">{visualError}</div>}
 
         <div className="creation-agent__composer">
           <textarea
@@ -557,6 +558,43 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
         </div>
         <small className="creation-agent__boundary">Agent 分阶段调用 LLM / VLM / 生图 · 付费生成需点击确认 · Hi3D 提交仍在下一步确认 · 不自动修改场景</small>
       </section>
+
+      <main className="creation-agent__stage" aria-label="创作阶段与生成结果">
+        <nav className="creation-stage__steps" aria-label="Agent 创作阶段">
+          {['需求确认', '视觉方案', '效果图', '3D 成模'].map((label, index) => (
+            <span key={label} className={`${index === stageIndex ? 'is-current' : ''}${index < stageIndex ? ' is-complete' : ''}`}>
+              <i>{index < stageIndex ? '✓' : index + 1}</i>{label}
+            </span>
+          ))}
+        </nav>
+        <div className={`creation-stage__body is-${stage}`}>
+          {stage === 'brief' && (
+            <section className="creation-stage__welcome">
+              <span className="creation-stage__symbol">✦</span>
+              <h3>{session.brief.subject ? '继续完善创作需求' : '从一句想法开始'}</h3>
+              <p>{session.referenceAnalysis
+                ? `已从参考图识别：${session.referenceAnalysis.summary}`
+                : '在左侧对话，或添加参考图。Agent 会把讨论整理成右侧可编辑 Brief。'}</p>
+              <div>
+                <span>文字需求</span><b>→</b><span>参考图理解</span><b>→</b><span>确认 Brief</span>
+              </div>
+            </section>
+          )}
+          {stage === 'concept' && conceptStage}
+          {stage === 'visual' && visualStage}
+          {stage === 'model' && handoff && (
+            <section className="creation-model-stage">
+              <header>
+                <div><strong>提交 Hi3D 成模</strong><span>Agent 图片已自动装入；检查图片后再确认消耗 Hi3D 额度。</span></div>
+                <button type="button" onClick={() => setHandoff(null)}>返回效果图</button>
+              </header>
+              <GenPanel allowedTypes={['image', 'multiview']} initialHandoff={handoff} onAccepted={onComplete} />
+            </section>
+          )}
+          {conceptError && <div className="creation-agent__fallback creation-stage__error">{conceptError}</div>}
+          {visualError && <div className="creation-agent__fallback creation-stage__error">{visualError}</div>}
+        </div>
+      </main>
 
       <aside className="creation-agent__brief" aria-label="创作需求 Brief">
         <div className="creation-agent__brief-head">
@@ -585,36 +623,42 @@ export function CreationAgentPanel({ onHandoff }: { onHandoff?: (handoff: AgentG
           <div className="creation-agent__missing">仍需确认：{session.output.readiness.missingFields.join('、')}</div>
         )}
         <div className="creation-agent__next">
-          <strong>{session.conceptConfirmed
+          <strong>{handoff
+            ? '下一步：提交并接受 3D 结果'
+            : session.conceptConfirmed
             ? '视觉方向已锁定'
             : session.concepts
               ? session.selectedSchemeId ? '下一步：确认视觉方向' : '请选择一套视觉方向'
-              : session.confirmed ? '下一步：规划视觉方向' : '下一步：确认创作需求'}</strong>
-          <p>{session.conceptConfirmed
+              : session.confirmed ? '正在规划视觉方向' : canConfirm ? '下一步：生成视觉方案' : '继续对话完善关键需求'}</strong>
+          <p>{handoff
+            ? '请在中间成模面板检查图片、提交 Hi3D；生成成功后点击“接受”才会进入场景。'
+            : session.conceptConfirmed
             ? visual ? '检查效果图后，可进入现有 Hi3D 单图/多图成模流程。' : '点击生成效果图才会调用付费生图，不会自动提交 Hi3D。'
             : session.concepts
               ? '选择不会生成图片；确认后才进入下一阶段准备状态。'
               : session.confirmed
-                ? '调用一次 LLM 生成三套文字视觉方案，不会调用生图。'
-                : '确认只保存 Brief，不会立即调用任何生成服务。'}</p>
+                ? 'Agent 正在把 Brief 转成三套可比较的视觉方向。'
+                : canConfirm
+                  ? '点击后确认当前 Brief，并调用一次 LLM 生成三套文字视觉方案；不会调用生图。'
+                  : '可以点击快捷建议，也可以直接用自然语言继续聊。'}</p>
         </div>
-        {!session.confirmed && (
-          <button className="creation-agent__confirm" type="button" disabled={!canConfirm} onClick={confirmBrief}>确认创作需求</button>
-        )}
-        {session.confirmed && !session.concepts && (
-          <button className="creation-agent__confirm" type="button" disabled={conceptBusy} onClick={() => void generateConcepts()}>
-            {conceptBusy ? 'Agent 正在规划…' : '生成 3 套视觉方案'}
+        {!session.concepts && (
+          <button className="creation-agent__confirm" type="button" disabled={!canConfirm || conceptBusy} onClick={() => void generateConcepts()}>
+            {conceptBusy ? 'Agent 正在规划…' : '确认 Brief 并生成视觉方案'}
           </button>
         )}
         {session.concepts && !session.conceptConfirmed && (
-          <button className="creation-agent__confirm" type="button" disabled={!session.selectedSchemeId} onClick={confirmScheme}>确认选用此方案</button>
+          <button className="creation-agent__confirm" type="button" disabled={!session.selectedSchemeId || visualBusy} onClick={confirmSchemeAndGenerate}>
+            {visualBusy ? '效果图生成中…' : '确认方案并生成效果图 · 1 次'}
+          </button>
         )}
-        {session.conceptConfirmed && (
+        {session.conceptConfirmed && !handoff && (
           <button className="creation-agent__confirm" type="button" disabled={visualBusy} onClick={() => void (visual ? handoffVisual() : generateVisual('concept'))}>
             {visualBusy ? '处理中…' : visual ? '继续到 Hi3D 成模' : '生成效果图 · 1 次'}
           </button>
         )}
-        {session.confirmed && !session.concepts && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗 Hi3D 额度</small>}
+        {handoff && <button className="creation-agent__confirm" type="button" disabled>在中间面板继续</button>}
+        {!session.concepts && canConfirm && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗生图或 Hi3D 额度</small>}
       </aside>
     </div>
   );
