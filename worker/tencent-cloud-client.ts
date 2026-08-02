@@ -27,7 +27,6 @@ export class TencentCloudApiError extends Error {
     this.name = 'TencentCloudApiError';
   }
 }
-
 const encoder = new TextEncoder();
 
 function bytes(value: string | Uint8Array): Uint8Array {
@@ -123,4 +122,3 @@ export class TencentCloudClient {
     return result;
   }
 }
-

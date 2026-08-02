@@ -68,7 +68,6 @@ export function mapHunyuanGenerateTask(data: HunyuanQueryData, taskId: string): 
       return { taskId, status: 'failed', progress: 0, failReason: 'timeout', ...(requestId ? { requestId } : {}) };
   }
 }
-
 function base64Of(buffer: ArrayBuffer): string {
   const data = new Uint8Array(buffer);
   let binary = '';
@@ -169,4 +168,3 @@ export class HunyuanEngine {
     return files?.find((file) => file.Type?.toUpperCase() === type && file.Url) ?? null;
   }
 }
-
