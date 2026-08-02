@@ -255,7 +255,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
     switchMode(initialHandoff.type);
     assignImages('front', initialHandoff.images.map((image) => image.file));
     const next = genRef.current;
-    commit(idleState({ ...next.context, prompt: initialHandoff.prompt }, '已接收 Agent 生成图；请检查图片和模式后，再提交 Hi3D。'));
+    commit(idleState({ ...next.context, prompt: initialHandoff.prompt }, '已接收 Agent 生成图；请检查图片和模式后，再提交 3D 成模。'));
   }, [assignImages, commit, initialHandoff, switchMode]);
 
   // ---- 配额 ----
@@ -482,7 +482,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
         const nextEngine = typeof hj?.config?.engineName === 'string' ? hj.config.engineName : null;
         engineNameRef.current = nextEngine;
         setEngineName(nextEngine);
-        if (nextEngine === 'hi3d') setHasOwnKey(false);
+        if (nextEngine === 'hi3d' || nextEngine === 'hunyuan') setHasOwnKey(false);
         const providerModes: GenerateType[] = Array.isArray(hj?.config?.generationTypes)
           ? hj.config.generationTypes.filter(
               (type): type is GenerateType => type === 'text' || type === 'image' || type === 'multiview',
@@ -493,7 +493,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
           setSupportedTypes(modes);
           const current = genRef.current;
           if (current.phase === 'idle' && !modes.includes(current.context.type)) {
-            commit(idleState({ type: modes[0], prompt: '', images: [] }, 'Hi3D 使用图片生成模型，请添加主体图片。'));
+            commit(idleState({ type: modes[0], prompt: '', images: [] }, '当前 3D 服务需要图片输入，请添加主体图片。'));
           }
         }
         if (typeof m === 'number' && m > 0) {
@@ -554,7 +554,7 @@ export function GenPanel({ allowedTypes = ALL_GENERATE_TYPES, initialHandoff = n
   // ---- 派生读数 ----
   const remaining = quota?.visitor.remaining ?? null;
   const breakerOpen = quota?.breaker.open ?? false;
-  const allowOwnKey = engineName !== 'hi3d';
+  const allowOwnKey = engineName !== 'hi3d' && engineName !== 'hunyuan';
   const blocked = !(allowOwnKey && hasOwnKey) && (breakerOpen || remaining === 0); // 提交前拦截(AI-07:不进入扣减)
   const p = gen.context.prompt;
   const overLimit = gen.context.type === 'text' && p.trim().length > promptMax;

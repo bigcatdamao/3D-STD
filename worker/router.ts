@@ -14,6 +14,7 @@ import type {
   ImageView,
   QuotaResponse,
   SplitLevel,
+  SplitResultManifestResponse,
   SplitSubmitResponse,
   SplitTaskResponse,
   TaskResponse,
@@ -25,6 +26,8 @@ import {
   HI3D_MESH_MAX_BYTES,
   Hi3DSplitEngine,
 } from './hi3d-split-engine';
+import { HunyuanSplitEngine, isHunyuanSplitTask } from './hunyuan-split-engine';
+import { TencentCloudApiError } from './tencent-cloud-client';
 import { parseDemoCodes, verifyTurnstile, visitorKeyOf } from './guards';
 import type { DeductResult, RefundResult, StatusResult } from './quota-core';
 import type { QuotaOp } from './quota-do';
@@ -92,6 +95,12 @@ export interface WorkerEnv {
   HI3D_RESOLUTION?: string;
   HI3D_FACE_COUNT?: string;
   HI3D_TIMEOUT_MS?: string;
+  TENCENTCLOUD_SECRET_ID?: string; // M1.17a,Workers Secret
+  TENCENTCLOUD_SECRET_KEY?: string; // M1.17a,Workers Secret
+  HUNYUAN_REGION?: string;
+  HUNYUAN_MODEL?: string;
+  HUNYUAN_TIMEOUT_MS?: string;
+  HUNYUAN_SPLIT_MODEL?: string;
   OPENAI_API_KEY?: string; // 官方 OpenAI 回滚通道，只允许 Workers Secret
   AIHUBMIX_API_KEY?: string; // AIHubMix 通道，只允许 Workers Secret
   OPENAI_SPLIT_MODEL?: string; // 旧配置兼容，优先使用 SPLIT_ANALYSIS_MODEL
@@ -146,6 +155,9 @@ export interface WorkerEnv {
   HI3D_SPLIT_DAILY_LIMIT?: string;
   HI3D_SPLIT_BREAKER_CREDITS?: string;
   HI3D_SPLIT_COST_CREDITS?: string;
+  HUNYUAN_SPLIT_DAILY_LIMIT?: string;
+  HUNYUAN_SPLIT_BREAKER_CREDITS?: string;
+  HUNYUAN_SPLIT_COST_CREDITS?: string;
 }
 
 export interface RouterDeps {
@@ -190,6 +202,19 @@ function hi3dSplitEngineOf(env: WorkerEnv, deps: RouterDeps): Hi3DSplitEngine | 
   return new Hi3DSplitEngine({
     accessKey: env.HI3D_ACCESS_KEY,
     secretKey: env.HI3D_SECRET_KEY,
+    fetchImpl: deps.fetchImpl,
+    now: deps.now,
+    taskMap: taskMapOf(env),
+  });
+}
+
+function hunyuanSplitEngineOf(env: WorkerEnv, deps: RouterDeps): HunyuanSplitEngine | null {
+  if (!env.TENCENTCLOUD_SECRET_ID?.trim() || !env.TENCENTCLOUD_SECRET_KEY?.trim()) return null;
+  return new HunyuanSplitEngine({
+    secretId: env.TENCENTCLOUD_SECRET_ID,
+    secretKey: env.TENCENTCLOUD_SECRET_KEY,
+    region: env.HUNYUAN_REGION || 'ap-guangzhou',
+    model: env.HUNYUAN_SPLIT_MODEL || '1.5',
     fetchImpl: deps.fetchImpl,
     now: deps.now,
     taskMap: taskMapOf(env),
@@ -693,7 +718,16 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   // 而非提交后由上游打回(那会走「扣减 → 返还」白绕一圈,且报错含糊)
   const engine = engineOf(env, deps);
   if (engine?.supportedTypes && !engine.supportedTypes.includes(body.type)) {
-    return err(400, 'generation_type_unsupported', 'validation', '当前 Hi3D 服务仅支持单图或多图生成，请先添加图片。');
+    return err(400, 'generation_type_unsupported', 'validation', `当前 ${engine.name} 服务不支持这种生成输入。`);
+  }
+  if (engine?.name === 'hunyuan' && body.type !== 'text') {
+    const totalImageBytes = images.reduce((sum, image) => sum + image.file.size, 0);
+    if (totalImageBytes > 6 * 1024 * 1024) {
+      return err(400, 'hunyuan_images_too_large', 'validation', '混元输入图片原文件总大小不能超过 6MB。');
+    }
+    if (body.type === 'multiview' && images.some((image) => image.file.type === 'image/webp')) {
+      return err(400, 'hunyuan_multiview_format', 'validation', '混元多视图仅支持 JPG/JPEG 或 PNG。');
+    }
   }
   const promptMax = engine?.promptMaxLength ?? 2000;
   if (body.type === 'text' && prompt.length > promptMax) {
@@ -716,7 +750,7 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
   const requestedOwnKey = req.headers.get('x-engine-key')?.trim() || undefined;
   const ownKey = engine?.acceptsOwnKey === false ? undefined : requestedOwnKey;
   const ctx = await visitorCtxOf(req, env);
-  const credits = CREDITS_BY_TYPE[body.type];
+  const credits = engine?.creditCost?.(body.type) ?? CREDITS_BY_TYPE[body.type];
   const taskId = `t_${crypto.randomUUID()}`;
   let charged = false;
 
@@ -773,6 +807,8 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
         ? 'Hi3D 鉴权失败：AK/SK 无效、已停用或复制时混入空白字符'
         : reason.includes('tripo_key_missing')
       ? '服务端未配置 TRIPO_API_KEY(检查 Secret 名与是否重新部署)'
+      : reason.includes('tencent_credentials_missing')
+        ? '服务端未配置腾讯云 SecretId / SecretKey（检查 Workers Secrets）'
       : /http=40[13]/.test(reason)
         ? '引擎鉴权失败:API key 无效、过期或复制时混入空白字符'
         : reason;
@@ -783,6 +819,7 @@ async function generate(req: Request, env: WorkerEnv, deps: RouterDeps): Promise
 // —— /api/split (M1.13a: Hi3D 真实语义拆件) ——
 
 const HI3D_SPLIT_SCOPE = 'hi3d-split';
+const HUNYUAN_SPLIT_SCOPE = 'hunyuan-split';
 
 function meshExtension(name: string): string {
   return name.split('.').pop()?.toLowerCase() ?? '';
@@ -864,27 +901,117 @@ async function hi3dSplitSubmit(req: Request, env: WorkerEnv, deps: RouterDeps): 
   }
 }
 
-async function hi3dSplitQuery(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
-  const engine = hi3dSplitEngineOf(env, deps);
-  if (!engine) return err(503, 'hi3d_split_unconfigured', 'service', 'Hi3D 拆件凭证尚未配置。');
+async function hunyuanSplitSubmit(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  let body: { sourceTaskId?: string; level?: SplitLevel; turnstileToken?: string };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return err(400, 'split_json_invalid', 'validation', '混元组件生成请求无法解析。');
+  }
+  const sourceTaskId = body.sourceTaskId?.trim() ?? '';
+  if (!sourceTaskId.startsWith('hy3d_')) {
+    return err(400, 'hunyuan_source_required', 'validation', '仅混元生成并保留 FBX 来源的模型可直接组件生成。');
+  }
+  const turnstileToken = body.turnstileToken?.trim() ?? '';
+  if (!turnstileToken) return err(403, 'turnstile_required', 'turnstile', '缺少人机验证 token。');
+  if (!env.TURNSTILE_SECRET_KEY) return err(503, 'turnstile_unconfigured', 'service', '服务端人机验证尚未配置。');
+  const verdict = await verifyTurnstile(
+    env.TURNSTILE_SECRET_KEY,
+    turnstileToken,
+    req.headers.get('cf-connecting-ip') ?? '',
+    deps.fetchImpl ?? fetch,
+  );
+  if (!verdict.ok) return err(403, 'turnstile_failed', 'turnstile', '人机验证未通过。', { codes: verdict.codes });
+
+  const engine = hunyuanSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'hunyuan_split_unconfigured', 'service', '混元组件生成凭证尚未配置。');
+  const ctx = await visitorCtxOf(req, env);
+  const serviceTaskId = `hys_${crypto.randomUUID()}`;
+  const costCredits = Math.max(1, Math.min(100, num(env.HUNYUAN_SPLIT_COST_CREDITS, 30)));
+  const deduct = await quotaCall<DeductResult>(env, {
+    op: 'deduct',
+    visitorKey: ctx.visitorKey,
+    taskId: serviceTaskId,
+    credits: costCredits,
+    limitTimes: Math.max(1, Math.min(10, num(env.HUNYUAN_SPLIT_DAILY_LIMIT, 2))),
+    breakerLimitCredits: Math.max(costCredits, num(env.HUNYUAN_SPLIT_BREAKER_CREDITS, 300)),
+    demoCode: ctx.demoCode,
+  }, HUNYUAN_SPLIT_SCOPE);
+  if (!deduct.ok) {
+    return deduct.error === 'budget_exhausted'
+      ? err(429, 'split_budget_exhausted', 'quota', '今日混元组件生成总额度已用完。')
+      : err(429, 'split_quota_exhausted', 'quota', '今日混元组件生成次数已用完。');
+  }
+  try {
+    const task = await engine.submitFromGeneration(sourceTaskId, serviceTaskId);
+    return Response.json({ ok: true, engine: 'hunyuan', task } satisfies SplitSubmitResponse);
+  } catch (error) {
+    const refund = await quotaCall<RefundResult>(env, { op: 'refund', taskId: serviceTaskId }, HUNYUAN_SPLIT_SCOPE);
+    const reason = error instanceof Error ? error.message.slice(0, 160) : 'unknown';
+    console.error(`[hunyuan-split-submit-fail] task=${serviceTaskId} reason=${reason}`);
+    const message = reason.includes('source_fbx_unavailable')
+      ? '原混元任务的 FBX 已过期或不可用，请重新生成模型后再拆件。'
+      : '混元组件生成任务提交失败，本次额度已返还。';
+    return err(502, 'hunyuan_split_submit_failed', 'service', message, {
+      refunded: refund.refunded,
+      taskId: serviceTaskId,
+      ...(error instanceof TencentCloudApiError ? { providerCode: error.code } : {}),
+    });
+  }
+}
+
+async function splitSubmit(req: Request, env: WorkerEnv, deps: RouterDeps): Promise<Response> {
+  const contentType = req.headers.get('content-type') ?? '';
+  return contentType.includes('application/json')
+    ? hunyuanSplitSubmit(req, env, deps)
+    : hi3dSplitSubmit(req, env, deps);
+}
+
+async function splitQuery(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
+  const hunyuan = isHunyuanSplitTask(taskId);
+  const engine = hunyuan ? hunyuanSplitEngineOf(env, deps) : hi3dSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'split_unconfigured', 'service', `${hunyuan ? '混元' : 'Hi3D'} 拆件凭证尚未配置。`);
   let task: EngineTask;
   try {
     task = await engine.query(taskId);
   } catch {
-    return err(502, 'hi3d_split_query_failed', 'service', 'Hi3D 拆件状态查询失败，请稍后重试。');
+    return err(502, 'split_query_failed', 'service', '拆件状态查询失败，请稍后重试。');
   }
   let refunded: boolean | undefined;
   if (task.status === 'failed') {
     const billingId = await engine.billingIdOf(taskId);
     if (billingId) {
-      const result = await quotaCall<RefundResult>(env, { op: 'refund', taskId: billingId }, HI3D_SPLIT_SCOPE);
+      const result = await quotaCall<RefundResult>(
+        env,
+        { op: 'refund', taskId: billingId },
+        hunyuan ? HUNYUAN_SPLIT_SCOPE : HI3D_SPLIT_SCOPE,
+      );
       refunded = result.refunded;
     }
   }
   return Response.json({ ok: true, task, ...(refunded === undefined ? {} : { refunded }) } satisfies SplitTaskResponse);
 }
 
-async function hi3dSplitResult(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
+async function splitResult(env: WorkerEnv, deps: RouterDeps, taskId: string): Promise<Response> {
+  if (isHunyuanSplitTask(taskId)) {
+    const engine = hunyuanSplitEngineOf(env, deps);
+    if (!engine) return err(503, 'hunyuan_split_unconfigured', 'service', '混元组件生成凭证尚未配置。');
+    let assets: Array<{ name: string; url: string }>;
+    try {
+      assets = await engine.resultAssets(taskId);
+    } catch {
+      return err(502, 'hunyuan_split_query_failed', 'service', '混元组件结果查询失败。');
+    }
+    if (assets.length < 2) return err(404, 'hunyuan_split_result_unavailable', 'validation', '组件结果尚未生成或不足两个零件。');
+    return Response.json({
+      ok: true,
+      engine: 'hunyuan',
+      parts: assets.map((asset, index) => ({
+        name: asset.name,
+        url: `/api/split/${encodeURIComponent(taskId)}/result/${index}`,
+      })),
+    } satisfies SplitResultManifestResponse, { headers: { 'cache-control': 'private, no-store' } });
+  }
   const engine = hi3dSplitEngineOf(env, deps);
   if (!engine) return err(503, 'hi3d_split_unconfigured', 'service', 'Hi3D 拆件凭证尚未配置。');
   let asset: { url: string } | null;
@@ -907,6 +1034,43 @@ async function hi3dSplitResult(env: WorkerEnv, deps: RouterDeps, taskId: string)
     headers: {
       'content-type': upstream.headers.get('content-type') ?? 'model/gltf-binary',
       'content-disposition': 'inline; filename="hi3d-split.glb"',
+      'cache-control': 'private, no-store',
+    },
+  });
+}
+
+async function hunyuanSplitPartResult(
+  env: WorkerEnv,
+  deps: RouterDeps,
+  taskId: string,
+  index: number,
+): Promise<Response> {
+  if (!isHunyuanSplitTask(taskId) || !Number.isInteger(index) || index < 0) {
+    return err(404, 'split_part_not_found', 'validation', '组件结果不存在。');
+  }
+  const engine = hunyuanSplitEngineOf(env, deps);
+  if (!engine) return err(503, 'hunyuan_split_unconfigured', 'service', '混元组件生成凭证尚未配置。');
+  let assets: Array<{ name: string; url: string }>;
+  try {
+    assets = await engine.resultAssets(taskId);
+  } catch {
+    return err(502, 'hunyuan_split_query_failed', 'service', '混元组件结果查询失败。');
+  }
+  const asset = assets[index];
+  if (!asset) return err(404, 'split_part_not_found', 'validation', '组件结果不存在或地址已过期。');
+  let upstream: Response;
+  try {
+    upstream = await (deps.fetchImpl ?? fetch)(asset.url);
+  } catch {
+    return err(502, 'split_part_fetch_failed', 'service', '组件结果下载失败。');
+  }
+  if (!upstream.ok || !upstream.body) {
+    return err(502, 'split_part_fetch_failed', 'service', `组件结果下载失败（上游 ${upstream.status}）。`);
+  }
+  return new Response(upstream.body, {
+    headers: {
+      'content-type': upstream.headers.get('content-type') ?? 'model/gltf-binary',
+      'content-disposition': `inline; filename="${asset.name.replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
       'cache-control': 'private, no-store',
     },
   });
@@ -943,6 +1107,11 @@ async function taskCancel(env: WorkerEnv, deps: RouterDeps, id: string, ownKey?:
     await engine.cancel(id, ownKey);
   } catch {
     // 引擎侧取消失败不阻塞返还:成本归因看用户意图,不看上游配合度(AI-07)
+  }
+  // 混元当前没有可调用的取消动作；这里只停止客户端继续等待，上游任务仍可能执行并计费。
+  // 因此不能返还站内额度，否则会制造“上游已取消”的错误账务承诺。
+  if (engine.name === 'hunyuan') {
+    return Response.json({ ok: true, canceled: true, refunded: false } satisfies CancelResponse);
   }
   const billingId = await engine.billingIdOf(id);
   let refunded = false;
@@ -1001,17 +1170,26 @@ export async function handleRequest(req: Request, env: WorkerEnv, deps: RouterDe
   if (path === '/api/health' && req.method === 'GET') return health(env, deps);
   if (path === '/api/quota' && req.method === 'GET') return quota(req, env);
   if (path === '/api/generate' && req.method === 'POST') return generate(req, env, deps);
-  if (path === '/api/split' && req.method === 'POST') return hi3dSplitSubmit(req, env, deps);
+  if (path === '/api/split' && req.method === 'POST') return splitSubmit(req, env, deps);
   if (path === '/api/agent/split-analysis' && req.method === 'POST') return splitAnalysis(req, env, deps);
   if (path === '/api/agent/creation' && req.method === 'POST') return creationAgent(req, env, deps);
   if (path === '/api/agent/creation/concepts' && req.method === 'POST') return creationConcepts(req, env, deps);
   if (path === '/api/agent/creation/reference-analysis' && req.method === 'POST') return creationReferenceAnalysis(req, env, deps);
   if (path === '/api/agent/creation/images' && req.method === 'POST') return creationImages(req, env, deps);
 
+  const splitPartResultM = /^\/api\/split\/([^/]+)\/result\/(\d+)$/.exec(path);
+  if (splitPartResultM && req.method === 'GET') {
+    return hunyuanSplitPartResult(
+      env,
+      deps,
+      decodeURIComponent(splitPartResultM[1]),
+      Number(splitPartResultM[2]),
+    );
+  }
   const splitResultM = /^\/api\/split\/([^/]+)\/result$/.exec(path);
-  if (splitResultM && req.method === 'GET') return hi3dSplitResult(env, deps, decodeURIComponent(splitResultM[1]));
+  if (splitResultM && req.method === 'GET') return splitResult(env, deps, decodeURIComponent(splitResultM[1]));
   const splitGetM = /^\/api\/split\/([^/]+)$/.exec(path);
-  if (splitGetM && req.method === 'GET') return hi3dSplitQuery(env, deps, decodeURIComponent(splitGetM[1]));
+  if (splitGetM && req.method === 'GET') return splitQuery(env, deps, decodeURIComponent(splitGetM[1]));
 
   const ownKey = req.headers.get('x-engine-key')?.trim() || undefined;
   const taskResultM = /^\/api\/task\/([^/]+)\/result$/.exec(path);

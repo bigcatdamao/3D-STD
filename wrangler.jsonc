@@ -25,7 +25,15 @@
     "BREAKER_DAILY_CREDITS": "3000",
     // T13a:真实引擎上线('tripo')。回退演示/降级通道:改回 "mock" 后 push(@mock 指令随之可用);
     // 置空即回到「未接入 → 扣减立返」的 T3 行为。成本护栏:访客配额 3 次/日 + 全局熔断 3000 credits/日。
-    "ENGINE_MODE": "hi3d",
+    "ENGINE_MODE": "hunyuan",
+    // M1.17a: 腾讯云 SecretId/SecretKey 仅存在 Workers Secrets；混元 3.1 输出 FBX 供组件生成复用，GLB 供浏览器预览。
+    "HUNYUAN_REGION": "ap-guangzhou",
+    "HUNYUAN_MODEL": "3.1",
+    "HUNYUAN_TIMEOUT_MS": "900000",
+    "HUNYUAN_SPLIT_MODEL": "1.5",
+    "HUNYUAN_SPLIT_DAILY_LIMIT": "2",
+    "HUNYUAN_SPLIT_BREAKER_CREDITS": "300",
+    "HUNYUAN_SPLIT_COST_CREDITS": "30",
     // M1.13a: Hi3D 图生3D。AK/SK 必须使用 Workers Secrets，禁止写入 vars/Git。
     "HI3D_MODEL": "hitem3dv2.1",
     "HI3D_RESOLUTION": "1536fast",

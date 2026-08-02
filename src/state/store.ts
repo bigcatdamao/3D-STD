@@ -300,6 +300,28 @@ export function bootstrapComponentPreviewQaScene(): boolean {
   return true;
 }
 
+/** M1.17a 隐藏 QA 场景：模拟一项已由混元生成且保留供应商 FBX 的资产，
+ *  只用于验收组件生成入口与费用说明；不会提交真实 API 或消耗额度。 */
+export function bootstrapHunyuanAutoSplitQaScene(): boolean {
+  const instanceId = 'ins_qa_hunyuan_auto_split';
+  if (doc.nodes.has(instanceId)) return false;
+  const assetId = 'ast_qa_hunyuan_auto_split';
+  const geometry = makeComponentPreviewQaGeometry();
+  const asset: Asset = {
+    ...demoAsset(assetId, '混元三连通壳 QA 样件', geometry, 36),
+    source: 'ai',
+    genParams: {
+      engine: 'hunyuan',
+      taskId: 'hy3d_qa_fixture',
+      qaFixture: true,
+    },
+  };
+  const instance = demoInstance(instanceId, assetId, '混元三连通壳 · 组件生成入口', [0, 0, 0]);
+  doc.hydrate([asset], [instance]);
+  useUi.getState().bump();
+  return true;
+}
+
 /** M1.7.4 隐藏 QA 场景：300×80×80mm 单一封闭壳沿 X 中切后，两侧均可放入 256mm 打印床。 */
 export function bootstrapPlaneCutPreviewQaScene(): boolean {
   const instanceId = 'ins_qa_plane_cut_preview';

@@ -39,7 +39,7 @@ export function AutoSplitPanel() {
 
   return (
     <section className="auto-split-panel" data-testid="auto-split-panel">
-      <div className="auto-split-panel__version">M1.13b · 真实自动拆件</div>
+      <div className="auto-split-panel__version">M1.17a · {state.sourceProvider === 'hunyuan' ? '混元组件生成' : 'Hi3D 自动拆件'}</div>
       <h2>把当前模型拆成独立零件</h2>
       <p className="auto-split-panel__source" title={state.sourceName}>{state.sourceName}</p>
 
@@ -52,26 +52,35 @@ export function AutoSplitPanel() {
         <>
           <div className="auto-split-summary">
             <span><b>{state.sourceFaces.toLocaleString()}</b> 面</span>
-            <span><b>{formatSize(state.uploadBytes)}</b> 临时 STL</span>
-            <span><b>20</b> Credits</span>
+            <span><b>{state.sourceMode === 'provider-fbx' ? '原始' : formatSize(state.uploadBytes)}</b> {state.sourceMode === 'provider-fbx' ? '混元 FBX' : '临时 STL'}</span>
+            <span><b>{state.sourceProvider === 'hunyuan' ? 30 : 20}</b> Credits</span>
           </div>
 
-          <fieldset className="auto-split-level" disabled={busy}>
-            <legend>拆件粒度</legend>
-            {([
-              ['low', '大部件', '零件更少'],
-              ['medium', '标准', '推荐'],
-              ['high', '细拆', '零件更多'],
-            ] as const).map(([value, label, note]) => (
-              <button key={value} type="button" className={state.level === value ? 'is-active' : ''} onClick={() => setAutoSplitLevel(value)}>
-                <b>{label}</b><span>{note}</span>
-              </button>
-            ))}
-          </fieldset>
+          {state.sourceProvider === 'hunyuan' ? (
+            <div className="auto-split-consent">
+              <strong>组件模式 · 混元 1.5 自动识别</strong>
+              <span>当前接口不提供拆件粒度参数；会按模型结构生成多个独立 GLB 零件。</span>
+            </div>
+          ) : (
+            <fieldset className="auto-split-level" disabled={busy}>
+              <legend>拆件粒度</legend>
+              {([
+                ['low', '大部件', '零件更少'],
+                ['medium', '标准', '推荐'],
+                ['high', '细拆', '零件更多'],
+              ] as const).map(([value, label, note]) => (
+                <button key={value} type="button" className={state.level === value ? 'is-active' : ''} onClick={() => setAutoSplitLevel(value)}>
+                  <b>{label}</b><span>{note}</span>
+                </button>
+              ))}
+            </fieldset>
+          )}
 
           <div className="auto-split-consent">
             <strong>提交前确认</strong>
-            <span>模型会上传至 Hi3D 处理；当前场景不在云端修改。结果回来后才替换为独立零件，源资产保留。</span>
+            <span>{state.sourceProvider === 'hunyuan'
+              ? '会复用混元生成阶段保留的 FBX，不重复上传浏览器中的网格。结果返回后才建立独立零件，源资产保留。'
+              : '模型会上传至 Hi3D 处理；当前场景不在云端修改。结果回来后才替换为独立零件，源资产保留。'}</span>
           </div>
 
           {busy && (

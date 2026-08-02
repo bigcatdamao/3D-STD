@@ -75,6 +75,8 @@ export interface EngineTask {
   resultUrl?: string;
   failReason?: EngineFailReason;
   queuePosition?: number; // 排队位置反馈(PRD AI-03;技术方案 v1.3 协议补充,引擎可选供给)
+  requestId?: string; // 第三方服务的脱敏诊断 ID，不含请求输入或凭证
+  providerCode?: string; // 第三方服务机器错误码，用于失败定位
 }
 
 // AI-05 失败三分类三出路(前后端共用文案权威源;T12 状态机按 outlet 渲染出路按钮)。
@@ -111,7 +113,7 @@ export type SplitLevel = 'low' | 'medium' | 'high';
 
 export interface SplitSubmitResponse {
   ok: true;
-  engine: 'hi3d';
+  engine: string;
   task: EngineTask;
 }
 
@@ -119,6 +121,12 @@ export interface SplitTaskResponse {
   ok: true;
   task: EngineTask;
   refunded?: boolean;
+}
+
+export interface SplitResultManifestResponse {
+  ok: true;
+  engine: string;
+  parts: Array<{ name: string; url: string }>;
 }
 
 // Tripo credit 价(技术方案 D2,核实于 2026-07):文生 $0.20 = 20 credits,图生带纹理 $0.30 = 30 credits。

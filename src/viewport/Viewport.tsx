@@ -110,7 +110,7 @@ export function Toolbar({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => v
           style={{ ...btn, border: '1px solid #63d3ac', color: '#bff7df', background: '#19332d', fontWeight: 750 }}
           onClick={onOpenAutoSplit}
           title={selectedInstances.length === 1
-            ? '把所选模型上传至 Hi3D 并拆成独立零件'
+            ? '使用当前 3D 服务把所选模型拆成独立零件'
             : '先选中一个对象，再启动自动拆件'}
         >
           ✦ 自动拆件

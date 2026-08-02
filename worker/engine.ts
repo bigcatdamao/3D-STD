@@ -11,6 +11,7 @@
 
 import type { EngineTask, GenerateRequest, GenerateType } from './api-types';
 import { Hi3DEngine } from './hi3d-engine';
+import { HunyuanEngine } from './hunyuan-engine';
 import { MockEngine } from './mock-engine';
 import { TripoEngine } from './tripo-engine';
 
@@ -34,6 +35,8 @@ export interface Engine {
    * (上游 CORS 姿态不可控,一律经服务层代理;mock 结果本就同源,无需实现)。
    */
   resultAsset?(taskId: string, ownKey?: string): Promise<{ url: string } | null>;
+  /** Provider-specific generation price expressed in the product's existing credit ledger. */
+  creditCost?(type: GenerateType): number;
 }
 
 /**
@@ -57,6 +60,11 @@ export interface EngineEnv {
   HI3D_RESOLUTION?: string;
   HI3D_FACE_COUNT?: string;
   HI3D_TIMEOUT_MS?: string;
+  TENCENTCLOUD_SECRET_ID?: string;
+  TENCENTCLOUD_SECRET_KEY?: string;
+  HUNYUAN_REGION?: string;
+  HUNYUAN_MODEL?: string;
+  HUNYUAN_TIMEOUT_MS?: string;
   MOCK_QUEUE_MS?: string; // mock 默认排队时长(dashboard 可覆盖)
   MOCK_RUN_MS?: string; // mock 默认生成时长
   MOCK_FAIL_RATE?: string; // mock 随机失败率 0–1(演示混沌注入;prompt 指令优先)
@@ -108,6 +116,18 @@ export function getEngine(env: EngineEnv, opts: EngineOpts = {}): Engine | null 
       resolution: env.HI3D_RESOLUTION || '1536fast',
       faceCount: Math.max(100_000, Math.min(2_000_000, numOr(env.HI3D_FACE_COUNT, 500_000))),
       timeoutMs: numOr(env.HI3D_TIMEOUT_MS, 900_000),
+      taskMap: opts.taskMap,
+      fetchImpl: opts.fetchImpl,
+      now: opts.now,
+    });
+  }
+  if (env.ENGINE_MODE === 'hunyuan') {
+    return new HunyuanEngine({
+      secretId: env.TENCENTCLOUD_SECRET_ID,
+      secretKey: env.TENCENTCLOUD_SECRET_KEY,
+      region: env.HUNYUAN_REGION || 'ap-guangzhou',
+      model: env.HUNYUAN_MODEL || '3.1',
+      timeoutMs: numOr(env.HUNYUAN_TIMEOUT_MS, 900_000),
       taskMap: opts.taskMap,
       fetchImpl: opts.fetchImpl,
       now: opts.now,

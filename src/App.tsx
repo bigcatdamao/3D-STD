@@ -20,6 +20,7 @@ import {
 import {
   bootstrapComponentPreviewQaScene,
   bootstrapDemoScene,
+  bootstrapHunyuanAutoSplitQaScene,
   bootstrapPlaneCutPreviewQaScene,
   bootstrapSurfaceCutPreviewQaScene,
   bootstrapSelfIntersectionQaScene,
@@ -105,12 +106,13 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
   const issueCount = issues.filter((issue) => issue.level !== 'info').length;
   const history = doc.history;
   const autoSplitPhase = useAutoSplit((state) => state.phase);
+  const autoSplitProvider = useAutoSplit((state) => state.sourceProvider);
   if (autoSplitPhase !== 'idle') {
     return (
       <div className="inspector-shell">
         <div className="inspector-tabs" role="tablist" aria-label="自动拆件">
           <button className="inspector-tab is-active" role="tab" aria-selected="true">自动拆件</button>
-          <span className="inspector-mode-note">Hi3D</span>
+          <span className="inspector-mode-note">{autoSplitProvider === 'hunyuan' ? '混元' : 'Hi3D'}</span>
         </div>
         <div className="inspector-content"><AutoSplitPanel /></div>
       </div>
@@ -199,9 +201,9 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
       <section className="creation-panel creation-panel--agent" aria-label="3D 创作 Agent 工作台">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.16b</div>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.17a</div>
             <h2>从想法与参考图，推进到可打印模型</h2>
-            <p>对话、视觉方案、效果图和 Hi3D 成模共享同一工作台，阶段变化不再改变页面尺寸。</p>
+            <p>对话、视觉方案、效果图和 3D 成模共享同一工作台，阶段变化不再改变页面尺寸。</p>
           </div>
           <div className="creation-panel__header-actions">
             <ImportButton target="viewport" label="导入本地模型" className="creation-panel__secondary" />
@@ -240,6 +242,8 @@ export function App() {
       ? bootstrapSelfIntersectionQaScene()
       : qa === 'component-preview'
         ? bootstrapComponentPreviewQaScene()
+        : qa === 'hunyuan-auto-split'
+          ? bootstrapHunyuanAutoSplitQaScene()
         : qa === 'plane-cut-preview'
           ? bootstrapPlaneCutPreviewQaScene()
           : qa === 'surface-cut-preview' || qa === 'manual-split-entry' || qa === 'manual-surface-cut'
@@ -256,6 +260,20 @@ export function App() {
     let previewTimer: number | undefined;
     const timer = window.setTimeout(() => {
       sendCam({ kind: 'focus' });
+      if (qa === 'hunyuan-auto-split') {
+        const instance = [...doc.nodes.values()].find((node) => node.kind === 'instance');
+        if (instance?.kind === 'instance') {
+          dispatch((scene) => scene.select([instance.id]));
+          startAutoSplit(instance.id);
+          setLayout((current) => ({
+            ...current,
+            inspectorOpen: true,
+            inspectorTab: 'properties',
+            creationOpen: false,
+          }));
+        }
+        return;
+      }
       if (qa === 'manual-surface-cut') {
         const instance = [...doc.nodes.values()].find((node) => node.kind === 'instance');
         if (instance?.kind === 'instance') {

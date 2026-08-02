@@ -430,7 +430,7 @@ export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) 
   const visualStage = session.conceptConfirmed ? (
     <section className="creation-visual" aria-label="效果图与三视图生成">
       <div className="creation-visual__head">
-        <div><strong>确认视觉结果</strong><span>检查造型方向后，再交给 Hi3D 成模</span></div>
+        <div><strong>确认视觉结果</strong><span>检查造型方向后，再交给 3D 成模服务</span></div>
         <em>独立付费节点</em>
       </div>
       {!visual && (
@@ -556,7 +556,7 @@ export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) 
           />
           <button type="button" disabled={!draft.trim() || busy} onClick={() => void sendMessage(draft)}>{busy ? '整理中' : '发送'}</button>
         </div>
-        <small className="creation-agent__boundary">Agent 分阶段调用 LLM / VLM / 生图 · 付费生成需点击确认 · Hi3D 提交仍在下一步确认 · 不自动修改场景</small>
+        <small className="creation-agent__boundary">Agent 分阶段调用 LLM / VLM / 生图 · 付费生成需点击确认 · 3D 成模仍在下一步确认 · 不自动修改场景</small>
       </section>
 
       <main className="creation-agent__stage" aria-label="创作阶段与生成结果">
@@ -585,7 +585,7 @@ export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) 
           {stage === 'model' && handoff && (
             <section className="creation-model-stage">
               <header>
-                <div><strong>提交 Hi3D 成模</strong><span>Agent 图片已自动装入；检查图片后再确认消耗 Hi3D 额度。</span></div>
+                <div><strong>提交 3D 成模</strong><span>Agent 图片已自动装入；检查图片后再确认消耗成模额度。</span></div>
                 <button type="button" onClick={() => setHandoff(null)}>返回效果图</button>
               </header>
               <GenPanel allowedTypes={['image', 'multiview']} initialHandoff={handoff} onAccepted={onComplete} />
@@ -631,9 +631,9 @@ export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) 
               ? session.selectedSchemeId ? '下一步：确认视觉方向' : '请选择一套视觉方向'
               : session.confirmed ? '正在规划视觉方向' : canConfirm ? '下一步：生成视觉方案' : '继续对话完善关键需求'}</strong>
           <p>{handoff
-            ? '请在中间成模面板检查图片、提交 Hi3D；生成成功后点击“接受”才会进入场景。'
+            ? '请在中间成模面板检查图片并提交；生成成功后点击“接受”才会进入场景。'
             : session.conceptConfirmed
-            ? visual ? '检查效果图后，可进入现有 Hi3D 单图/多图成模流程。' : '点击生成效果图才会调用付费生图，不会自动提交 Hi3D。'
+            ? visual ? '检查效果图后，可进入单图/多图 3D 成模流程。' : '点击生成效果图才会调用付费生图，不会自动提交 3D 成模。'
             : session.concepts
               ? '选择不会生成图片；确认后才进入下一阶段准备状态。'
               : session.confirmed
@@ -654,11 +654,11 @@ export function CreationAgentPanel({ onComplete }: { onComplete?: () => void }) 
         )}
         {session.conceptConfirmed && !handoff && (
           <button className="creation-agent__confirm" type="button" disabled={visualBusy} onClick={() => void (visual ? handoffVisual() : generateVisual('concept'))}>
-            {visualBusy ? '处理中…' : visual ? '继续到 Hi3D 成模' : '生成效果图 · 1 次'}
+            {visualBusy ? '处理中…' : visual ? '继续到 3D 成模' : '生成效果图 · 1 次'}
           </button>
         )}
         {handoff && <button className="creation-agent__confirm" type="button" disabled>在中间面板继续</button>}
-        {!session.concepts && canConfirm && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗生图或 Hi3D 额度</small>}
+        {!session.concepts && canConfirm && <small className="creation-agent__quota-note">消耗 1 次视觉规划额度 · 不消耗生图或 3D 成模额度</small>}
       </aside>
     </div>
   );

@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import { useEffect, useState } from 'react';
-import type { ApiError, EngineTask, SplitLevel, SplitSubmitResponse, SplitTaskResponse } from '../../worker/api-types';
+import type {
+  ApiError,
+  SplitLevel,
+  SplitResultManifestResponse,
+  SplitSubmitResponse,
+  SplitTaskResponse,
+} from '../../worker/api-types';
 import { runPrintCheck } from '../check/check-state';
 import { extractGeometry, sanitizeName, writeBinarySTL } from '../export/export-core';
 import type { Asset, Vec3 } from '../kernel/types';
@@ -27,6 +33,9 @@ export interface AutoSplitState {
   statusText: string;
   error: string | null;
   partCount: number;
+  sourceMode: 'upload-stl' | 'provider-fbx';
+  sourceProvider: 'hi3d' | 'hunyuan';
+  sourceProviderTaskId: string | null;
 }
 
 const initialState: AutoSplitState = {
@@ -43,6 +52,9 @@ const initialState: AutoSplitState = {
   statusText: '',
   error: null,
   partCount: 0,
+  sourceMode: 'upload-stl',
+  sourceProvider: 'hi3d',
+  sourceProviderTaskId: null,
 };
 
 export const useAutoSplit = create<AutoSplitState>()(() => initialState);
@@ -77,8 +89,12 @@ export function startAutoSplit(instanceId: string): boolean {
   const asset = doc.assets.get(node.assetId);
   if (!asset || !geometryRegistry.has(asset.id)) return false;
   try {
-    const file = sourceFile(instanceId);
-    if (file.size > 200 * 1024 * 1024) throw new Error('模型超过 Hi3D 拆件 200MB 上限');
+    const sourceProviderTaskId = asset.genParams?.engine === 'hunyuan' && typeof asset.genParams.taskId === 'string'
+      ? asset.genParams.taskId
+      : null;
+    const sourceMode = sourceProviderTaskId?.startsWith('hy3d_') ? 'provider-fbx' : 'upload-stl';
+    const file = sourceMode === 'upload-stl' ? sourceFile(instanceId) : null;
+    if (file && file.size > 200 * 1024 * 1024) throw new Error('模型超过 Hi3D 拆件 200MB 上限');
     useAutoSplit.setState({
       ...initialState,
       phase: 'ready',
@@ -87,7 +103,10 @@ export function startAutoSplit(instanceId: string): boolean {
       sourceEditVersion: doc.editVersion,
       sourceName: node.name,
       sourceFaces: asset.meta.faces,
-      uploadBytes: file.size,
+      uploadBytes: file?.size ?? 0,
+      sourceMode,
+      sourceProvider: sourceMode === 'provider-fbx' ? 'hunyuan' : 'hi3d',
+      sourceProviderTaskId,
     }, true);
     return true;
   } catch (error) {
@@ -140,7 +159,7 @@ interface ParsedPart {
   bbox: { min: Vec3; max: Vec3 };
 }
 
-function parseResult(file: Blob, sourceBounds: { min: Vec3; max: Vec3 }): Promise<ParsedPart[]> {
+function parseResult(files: Blob[], sourceBounds: { min: Vec3; max: Vec3 }): Promise<ParsedPart[]> {
   if (typeof Worker === 'undefined') return Promise.reject(new Error('当前浏览器不支持后台解析 Worker'));
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./auto-split-result.worker.ts', import.meta.url), { type: 'module' });
@@ -167,7 +186,7 @@ function parseResult(file: Blob, sourceBounds: { min: Vec3; max: Vec3 }): Promis
       worker.terminate();
       reject(new Error('拆件结果解析 Worker 异常'));
     };
-    worker.postMessage({ jobId, file, sourceBounds });
+    worker.postMessage({ jobId, files, sourceBounds });
   });
 }
 
@@ -184,18 +203,34 @@ function geometryOf(part: ParsedPart): THREE.BufferGeometry {
   return geometry;
 }
 
-async function importResult(taskId: string): Promise<void> {
+async function resultBlobs(response: Response): Promise<Blob[]> {
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) return [await response.blob()];
+  const manifest = (await response.json()) as SplitResultManifestResponse | ApiError;
+  if (!manifest.ok || !('parts' in manifest) || manifest.parts.length < 2) {
+    throw new Error(apiError(manifest, '拆件结果不足两个独立零件'));
+  }
+  const blobs: Blob[] = [];
+  for (const part of manifest.parts) {
+    const responsePart = await fetch(part.url, { headers: apiHeaders() });
+    if (!responsePart.ok) throw new Error(`零件结果下载失败：${part.name}`);
+    blobs.push(await responsePart.blob());
+  }
+  return blobs;
+}
+
+async function importResult(taskId: string, resultUrl?: string): Promise<void> {
   const state = useAutoSplit.getState();
   const source = state.sourceAssetId ? doc.assets.get(state.sourceAssetId) : null;
   if (!source || !state.instanceId) throw new Error('源模型已不存在，未导入拆件结果');
   useAutoSplit.setState({ phase: 'importing', progress: 86, statusText: '下载并解析独立零件' });
-  const response = await fetch(`/api/split/${encodeURIComponent(taskId)}/result`, { headers: apiHeaders() });
+  const response = await fetch(resultUrl || `/api/split/${encodeURIComponent(taskId)}/result`, { headers: apiHeaders() });
   if (!response.ok) {
     let body: unknown = null;
     try { body = await response.json(); } catch { /* 非 JSON 上游错误 */ }
     throw new Error(apiError(body, '拆件结果下载失败'));
   }
-  const parts = await parseResult(await response.blob(), source.meta.bbox);
+  const parts = await parseResult(await resultBlobs(response), source.meta.bbox);
   const fresh = useAutoSplit.getState();
   if (!sourceIsCurrent(fresh)) throw new Error('等待期间场景已被编辑。为保护现有工作，结果未自动导入，请重新拆件');
   const createdAt = Date.now();
@@ -214,7 +249,15 @@ async function importResult(taskId: string): Promise<void> {
     },
     genParams: {
       ...(source.genParams ?? {}),
-      split: { kind: 'hi3d_semantic_split', fromAssetId: source.id, taskId, level: fresh.level, part: index + 1, createdAt },
+      split: {
+        kind: fresh.sourceProvider === 'hunyuan' ? 'hunyuan_component_split' : 'hi3d_semantic_split',
+        provider: fresh.sourceProvider,
+        fromAssetId: source.id,
+        taskId,
+        level: fresh.level,
+        part: index + 1,
+        createdAt,
+      },
     },
   }));
   const result = dispatch((scene) => scene.splitInstanceWithDerivedPartsMany(
@@ -247,15 +290,23 @@ async function pollTask(taskId: string, attempt = 0): Promise<void> {
     const body = await readApiJson<SplitTaskResponse | ApiError>(response, '拆件状态查询失败');
     if (!response.ok || !body.ok) throw new Error(apiError(body, '拆件状态查询失败'));
     const task = (body as SplitTaskResponse).task;
-    if (task.status === 'failed') throw new Error(task.failReason === 'timeout' ? 'Hi3D 拆件超时，本次额度已返还' : 'Hi3D 拆件失败，本次额度已返还');
+    if (task.status === 'failed') {
+      const provider = useAutoSplit.getState().sourceProvider === 'hunyuan' ? '混元组件生成' : 'Hi3D 拆件';
+      const code = task.providerCode ? `（${task.providerCode}）` : '';
+      throw new Error(task.failReason === 'timeout'
+        ? `${provider}超时，本次额度已返还${code}`
+        : `${provider}失败，本次额度已返还${code}`);
+    }
     if (task.status === 'success') {
-      await importResult(taskId);
+      await importResult(taskId, task.resultUrl);
       return;
     }
     useAutoSplit.setState({
       phase: task.status === 'queued' ? 'queued' : 'running',
       progress: Math.max(3, Math.min(84, task.progress || (task.status === 'queued' ? 5 : 20))),
-      statusText: task.status === 'queued' ? 'Hi3D 排队中' : 'Hi3D 正在识别语义零件',
+      statusText: task.status === 'queued'
+        ? `${useAutoSplit.getState().sourceProvider === 'hunyuan' ? '混元' : 'Hi3D'} 排队中`
+        : useAutoSplit.getState().sourceProvider === 'hunyuan' ? '混元正在生成独立组件' : 'Hi3D 正在识别语义零件',
     });
     window.setTimeout(() => void pollTask(taskId, attempt + 1), POLL_MS);
   } catch (error) {
@@ -275,21 +326,33 @@ export async function submitAutoSplit(turnstileToken: string): Promise<boolean> 
     return false;
   }
   try {
-    useAutoSplit.setState({ phase: 'submitting', progress: 2, statusText: '导出临时 STL 并上传', error: null, taskId: null });
-    const form = new FormData();
-    const mesh = sourceFile(state.instanceId);
-    form.set('mesh', mesh);
-    form.set('seg_level', state.level);
-    form.set('format', '2');
     const headers = new Headers(apiHeaders());
-    headers.set('x-turnstile-token', turnstileToken);
-    headers.set('x-mesh-name', encodeURIComponent(mesh.name));
-    headers.set('x-mesh-size', String(mesh.size));
-    headers.set('x-split-level', state.level);
-    const response = await fetch('/api/split', { method: 'POST', headers, body: form });
-    const body = await readApiJson<SplitSubmitResponse | ApiError>(response, '自动拆件提交失败');
-    if (!response.ok || !body.ok) throw new Error(apiError(body, '自动拆件提交失败'));
-    const task = (body as SplitSubmitResponse).task;
+    let body: BodyInit;
+    if (state.sourceMode === 'provider-fbx' && state.sourceProviderTaskId) {
+      useAutoSplit.setState({ phase: 'submitting', progress: 2, statusText: '复用混元 FBX 并提交组件生成', error: null, taskId: null });
+      headers.set('content-type', 'application/json');
+      body = JSON.stringify({
+        sourceTaskId: state.sourceProviderTaskId,
+        level: state.level,
+        turnstileToken,
+      });
+    } else {
+      useAutoSplit.setState({ phase: 'submitting', progress: 2, statusText: '导出临时 STL 并上传', error: null, taskId: null });
+      const form = new FormData();
+      const mesh = sourceFile(state.instanceId);
+      form.set('mesh', mesh);
+      form.set('seg_level', state.level);
+      form.set('format', '2');
+      headers.set('x-turnstile-token', turnstileToken);
+      headers.set('x-mesh-name', encodeURIComponent(mesh.name));
+      headers.set('x-mesh-size', String(mesh.size));
+      headers.set('x-split-level', state.level);
+      body = form;
+    }
+    const response = await fetch('/api/split', { method: 'POST', headers, body });
+    const result = await readApiJson<SplitSubmitResponse | ApiError>(response, '自动拆件提交失败');
+    if (!response.ok || !result.ok) throw new Error(apiError(result, '自动拆件提交失败'));
+    const task = (result as SplitSubmitResponse).task;
     useAutoSplit.setState({ taskId: task.taskId, phase: task.status === 'running' ? 'running' : 'queued', progress: task.progress || 5, statusText: '任务已提交' });
     void pollTask(task.taskId);
     return true;

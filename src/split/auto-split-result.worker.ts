@@ -4,7 +4,7 @@ import { prepareAutoSplitParts } from './auto-split-result-core';
 
 export interface AutoSplitWorkerJob {
   jobId: string;
-  file: Blob;
+  files: Blob[];
   sourceBounds: { min: Vec3; max: Vec3 };
 }
 
@@ -27,10 +27,11 @@ const post = (message: AutoSplitWorkerReply, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer);
 
 self.onmessage = async (event: MessageEvent<AutoSplitWorkerJob>) => {
-  const { jobId, file, sourceBounds } = event.data;
+  const { jobId, files, sourceBounds } = event.data;
   try {
     post({ t: 'progress', jobId, pct: 15, phase: '读取拆件结果' });
-    const decoded = await decodeGlbParts(await file.arrayBuffer());
+    const decoded = [];
+    for (const file of files) decoded.push(...await decodeGlbParts(await file.arrayBuffer()));
     post({ t: 'progress', jobId, pct: 58, phase: `识别到 ${decoded.length} 个候选零件` });
     const parts = prepareAutoSplitParts(decoded, sourceBounds);
     const transfer: Transferable[] = [];
