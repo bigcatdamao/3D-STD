@@ -39,7 +39,7 @@ export function AutoSplitPanel() {
 
   return (
     <section className="auto-split-panel" data-testid="auto-split-panel">
-      <div className="auto-split-panel__version">M1.17a · {state.sourceProvider === 'hunyuan' ? '混元组件生成' : 'Hi3D 自动拆件'}</div>
+      <div className="auto-split-panel__version">M1.17a.1 · {state.sourceProvider === 'hunyuan' ? '混元组件生成' : 'Hi3D 自动拆件'}</div>
       <h2>把当前模型拆成独立零件</h2>
       <p className="auto-split-panel__source" title={state.sourceName}>{state.sourceName}</p>
 

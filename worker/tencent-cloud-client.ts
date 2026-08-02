@@ -65,7 +65,11 @@ export class TencentCloudClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: TencentCloudClientOptions) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Cloudflare Workers 的全局 fetch 必须保留正确的接收者。若直接保存后再以
+    // `this.fetchImpl(...)` 调用，workerd 会把客户端实例作为 this，并抛出
+    // `Illegal invocation: function called with incorrect 'this' reference`。
+    // 注入的测试桩无需绑定；只有运行时全局 fetch 需要显式绑定 globalThis。
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   }
 
   get configured(): boolean {

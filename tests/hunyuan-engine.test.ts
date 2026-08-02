@@ -17,6 +17,30 @@ function apiResponse(body: object) {
 }
 
 describe('M1.17a Hunyuan provider', () => {
+  it('binds the default Worker fetch to globalThis instead of the Tencent client instance', async () => {
+    const originalFetch = globalThis.fetch;
+    let seenThis: unknown = 'unset';
+    globalThis.fetch = function (this: unknown) {
+      seenThis = this;
+      return Promise.resolve(apiResponse({ JobId: 'g-this', RequestId: 'r-this' }));
+    } as unknown as typeof fetch;
+
+    try {
+      const engine = new HunyuanEngine({
+        secretId: 'secret-id',
+        secretKey: 'secret-key',
+        now: () => Date.UTC(2026, 7, 3),
+        taskMap: taskMap(),
+      });
+
+      await expect(engine.submit({ type: 'text', prompt: 'worker fetch binding' }, 'bill-this'))
+        .resolves.toMatchObject({ taskId: 'hy3d_g-this', requestId: 'r-this' });
+      expect(seenThis === undefined || seenThis === globalThis).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('signs a Geometry+FBX request and exposes GLB preview plus FBX split source', async () => {
     const requests: Array<{ action: string; body: Record<string, unknown>; authorization: string }> = [];
     const fetchImpl: typeof fetch = async (_input, init) => {

@@ -201,7 +201,7 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
       <section className="creation-panel creation-panel--agent" aria-label="3D 创作 Agent 工作台">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.17a</div>
+            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.17a.1</div>
             <h2>从想法与参考图，推进到可打印模型</h2>
             <p>对话、视觉方案、效果图和 3D 成模共享同一工作台，阶段变化不再改变页面尺寸。</p>
           </div>
