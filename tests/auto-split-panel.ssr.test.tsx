@@ -3,24 +3,27 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AutoSplitPanel } from '../src/split/AutoSplitPanel';
 import { useAutoSplit } from '../src/split/auto-split-state';
 
-describe('M1.13b 自动拆件面板', () => {
+describe('M1.17a.2 混元自动拆件面板', () => {
   afterEach(() => useAutoSplit.setState({ phase: 'idle', instanceId: null, sourceAssetId: null }));
 
-  it('提交前把费用、外部处理、原资产保留和粒度讲清楚', () => {
+  it('提交前把费用、FBX 来源和原资产保留讲清楚', () => {
     useAutoSplit.setState({
       phase: 'ready',
       sourceName: '机甲测试件',
       sourceFaces: 646_976,
-      uploadBytes: 32 * 1024 * 1024,
+      uploadBytes: 0,
       level: 'medium',
       error: null,
+      sourceMode: 'provider-fbx',
+      sourceProvider: 'hunyuan',
+      sourceProviderTaskId: 'hy3d_model_1',
     });
     const html = renderToString(<AutoSplitPanel />);
     expect(html).toContain('机甲测试件');
-    expect(html).toContain('20');
-    expect(html).toContain('Hi3D');
+    expect(html).toContain('30');
+    expect(html).toContain('混元');
+    expect(html).toContain('FBX');
     expect(html).toContain('源资产保留');
-    expect(html).toContain('标准');
     expect(html).toContain('等待验证');
   });
 });

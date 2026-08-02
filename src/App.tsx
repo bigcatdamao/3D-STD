@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CreationAgentPanel } from './agent/CreationAgentPanel';
+import { GenPanel } from './ai/GenPanel';
 import { initPersistence } from './assets/persist';
 import { CheckPanel } from './check/CheckPanel';
 import { focusIssue, reportIsStale, runPrintCheck, useCheck } from './check/check-state';
@@ -187,7 +188,18 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
   );
 }
 
-function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose: () => void }) {
+type CreationRoute = 'agent' | 'image';
+
+export function CreationPanel({
+  dismissible,
+  onClose,
+  initialRoute = 'agent',
+}: {
+  dismissible: boolean;
+  onClose: () => void;
+  initialRoute?: CreationRoute;
+}) {
+  const [route, setRoute] = useState<CreationRoute>(initialRoute);
   const openExample = () => {
     if (bootstrapDemoScene()) {
       onClose();
@@ -201,9 +213,11 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
       <section className="creation-panel creation-panel--agent" aria-label="3D 创作 Agent 工作台">
         <header className="creation-panel__header">
           <div>
-            <div className="creation-panel__eyebrow">3D 创作 Agent · M1.17a.1</div>
-            <h2>从想法与参考图，推进到可打印模型</h2>
-            <p>对话、视觉方案、效果图和 3D 成模共享同一工作台，阶段变化不再改变页面尺寸。</p>
+            <div className="creation-panel__eyebrow">3D 创作工作台 · M1.17a.2</div>
+            <h2>{route === 'agent' ? '从想法与参考图，推进到可打印模型' : '已有图片，直接生成 3D 模型'}</h2>
+            <p>{route === 'agent'
+              ? 'Agent 帮你澄清需求、生成效果图，再把已确认图片提交给混元 3D。'
+              : '跳过需求对话和效果图生成，上传现有效果图或多视图，直接提交混元 3D。'}</p>
           </div>
           <div className="creation-panel__header-actions">
             <ImportButton target="viewport" label="导入本地模型" className="creation-panel__secondary" />
@@ -215,7 +229,59 @@ function CreationPanel({ dismissible, onClose }: { dismissible: boolean; onClose
             )}
           </div>
         </header>
-        <CreationAgentPanel onComplete={onClose} />
+        <div className="creation-panel__workspace">
+          <nav className="creation-panel__routes" role="tablist" aria-label="3D 创作起点">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={route === 'agent'}
+              className={route === 'agent' ? 'is-active' : ''}
+              onClick={() => setRoute('agent')}
+            >
+              <span><strong>✦ 3D 创作 Agent</strong><small>从模糊想法开始</small></span>
+              <small>对话规划 → 效果图 → 3D</small>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={route === 'image'}
+              className={route === 'image' ? 'is-active' : ''}
+              onClick={() => setRoute('image')}
+            >
+              <span><strong>▧ 已有图片成模</strong><small>跳过 Agent 与生图</small></span>
+              <small>单图 / 多视图 → 3D</small>
+            </button>
+          </nav>
+          {route === 'agent' ? (
+            <CreationAgentPanel onComplete={onClose} />
+          ) : (
+            <section className="creation-direct" aria-label="已有图片直接成模">
+              <aside className="creation-direct__guide">
+                <span className="creation-direct__badge">快速路径</span>
+                <h3>用已经确认的图片直接成模</h3>
+                <p>适合已经有角色效果图、产品图或三视图的用户，不再重复进行需求问答与视觉生成。</p>
+                <ol>
+                  <li><b>1</b><span><strong>添加主体图片</strong><small>正面清晰、主体完整、背景简洁</small></span></li>
+                  <li><b>2</b><span><strong>可选补充左右视图</strong><small>同一对象、角度一致，提升结构稳定性</small></span></li>
+                  <li><b>3</b><span><strong>确认后提交混元 3D</strong><small>生成完成后接受模型，自动进入场景</small></span></li>
+                </ol>
+                <div className="creation-direct__boundary">
+                  <strong>生成后还能做什么？</strong>
+                  <span>编辑摆盘 → 混元自动拆件 → 榫卯连接 → 打印检查 → STL 导出</span>
+                </div>
+              </aside>
+              <div className="creation-model-stage creation-direct__stage">
+                <header>
+                  <div>
+                    <strong>提交图片生成 3D</strong>
+                    <span>选择单图或多图；付费任务只有点击“生成模型”后才会提交。</span>
+                  </div>
+                </header>
+                <GenPanel allowedTypes={['image', 'multiview']} onAccepted={onClose} />
+              </div>
+            </section>
+          )}
+        </div>
       </section>
     </div>
   );
@@ -225,6 +291,11 @@ function initialLayout(): WorkspaceLayout {
   if (typeof window === 'undefined') return { ...DEFAULT_WORKSPACE_LAYOUT };
   const saved = window.localStorage.getItem(WORKSPACE_LAYOUT_KEY);
   return saved ? parseWorkspaceLayout(saved) : defaultWorkspaceLayoutForWidth(window.innerWidth);
+}
+
+function initialCreationRoute(): CreationRoute {
+  if (typeof window === 'undefined') return 'agent';
+  return new URLSearchParams(window.location.search).get('qa') === 'image-to-3d' ? 'image' : 'agent';
 }
 
 export function App() {
@@ -372,10 +443,9 @@ export function App() {
       return;
     }
     if (!startAutoSplit(targets[0].id)) {
-      useUi.getState().setToast('该对象无法启动自动拆件，请确认几何可读取且对象未锁定');
       return;
     }
-    useUi.getState().setToast('自动拆件已准备：选择粒度并确认上传后开始');
+    useUi.getState().setToast('混元组件生成已准备：确认费用后开始自动拆件');
   };
   const toggleCreation = () => {
     if (!hasInstance) {
@@ -458,6 +528,7 @@ export function App() {
           <CreationPanel
             dismissible={hasInstance}
             onClose={() => patchLayout({ creationOpen: false })}
+            initialRoute={initialCreationRoute()}
           />
         )}
       </main>

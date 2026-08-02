@@ -1783,6 +1783,7 @@ select:focus-visible {
 .creation-panel__routes button { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(17, 21, 28, .78); color: var(--muted); cursor: pointer; text-align: left; }
 .creation-panel__routes button strong { color: var(--text-2); font-size: 12px; }
 .creation-panel__routes button small { color: #687482; font-size: 10px; }
+.creation-panel__routes button > span { display: grid; gap: 2px; }
 .creation-panel__routes button.is-active { border-color: rgba(80, 202, 163, .7); background: rgba(35, 91, 73, .2); box-shadow: inset 0 0 0 1px rgba(80, 202, 163, .08); }
 .creation-panel__routes button.is-active strong { color: #85e4c4; }
 .creation-panel .gen-panel {
@@ -2053,6 +2054,45 @@ select:focus-visible {
   white-space: nowrap;
 }
 .creation-panel__header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; margin-left: auto; }
+.creation-panel__workspace { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
+.app-shell[data-creation-workspace="true"] .creation-panel__routes {
+  grid-template-columns: repeat(2, minmax(0, 310px));
+  justify-content: center;
+  gap: 9px;
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #11161d;
+}
+.app-shell[data-creation-workspace="true"] .creation-panel__routes button { min-height: 45px; padding: 6px 10px; }
+.app-shell[data-creation-workspace="true"] .creation-panel__routes button > small { text-align: right; }
+
+.creation-direct {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(230px, .58fr) minmax(520px, 1.75fr);
+  overflow: hidden;
+  background: #0e1218;
+}
+.creation-direct__guide { min-width: 0; overflow: auto; padding: 28px 24px; border-right: 1px solid var(--line); background: #12171e; }
+.creation-direct__badge { display: inline-flex; padding: 4px 7px; border: 1px solid rgba(86, 207, 166, .44); border-radius: 999px; background: rgba(48, 123, 97, .14); color: #7ce0bf; font-size: 9px; font-weight: 760; }
+.creation-direct__guide h3 { margin: 13px 0 7px; color: #e5ebe8; font-size: 19px; line-height: 1.3; }
+.creation-direct__guide > p { color: #84909c; font-size: 11px; line-height: 1.65; }
+.creation-direct__guide ol { display: grid; gap: 9px; margin: 22px 0; padding: 0; list-style: none; }
+.creation-direct__guide li { display: grid; grid-template-columns: 27px minmax(0, 1fr); align-items: start; gap: 9px; padding: 10px; border: 1px solid #2b343e; border-radius: 10px; background: #181e26; }
+.creation-direct__guide li > b { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 8px; background: rgba(67, 157, 126, .2); color: #82e2c1; font-size: 10px; }
+.creation-direct__guide li > span { display: grid; gap: 3px; }
+.creation-direct__guide li strong { color: #d7dee4; font-size: 10px; }
+.creation-direct__guide li small { color: #74808c; font-size: 9px; line-height: 1.45; }
+.creation-direct__boundary { display: grid; gap: 5px; padding: 11px; border: 1px solid #31483f; border-radius: 10px; background: rgba(37, 88, 70, .13); }
+.creation-direct__boundary strong { color: #8ce2c5; font-size: 10px; }
+.creation-direct__boundary span { color: #81918b; font-size: 9px; line-height: 1.55; }
+.creation-direct__stage { border-right: 0; }
+.app-shell[data-creation-workspace="true"] .creation-direct__stage .gen-panel { padding: 24px !important; }
+.app-shell[data-creation-workspace="true"] .creation-direct__stage .gen-input-row { min-height: 360px !important; }
+.app-shell[data-creation-workspace="true"] .creation-direct__stage .gen-image-slot--single { min-height: 350px; }
+.app-shell[data-creation-workspace="true"] .creation-direct__stage .gen-multiview__grid { min-height: 330px; }
 
 .app-shell[data-creation-workspace="true"] .creation-agent {
   display: grid;
@@ -2202,4 +2242,6 @@ select:focus-visible {
   .app-shell[data-creation-workspace="true"] .creation-agent__brief { display: none; }
   .app-shell[data-creation-workspace="true"] .creation-agent__stage { border-right: 0; }
   .app-shell[data-creation-workspace="true"] .creation-panel__header p { display: none; }
+  .creation-direct { grid-template-columns: 220px minmax(460px, 1fr); }
+  .creation-direct__guide { padding: 20px 16px; }
 }

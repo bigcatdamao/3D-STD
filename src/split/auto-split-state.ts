@@ -59,6 +59,13 @@ const initialState: AutoSplitState = {
 
 export const useAutoSplit = create<AutoSplitState>()(() => initialState);
 
+export function hunyuanSplitTaskIdOf(asset: Pick<Asset, 'genParams'>): string | null {
+  const taskId = asset.genParams?.engine === 'hunyuan' && typeof asset.genParams.taskId === 'string'
+    ? asset.genParams.taskId
+    : null;
+  return taskId?.startsWith('hy3d_') ? taskId : null;
+}
+
 /** SSR 与客户端首帧都读取当前会话，便于右侧面板测试与热更新恢复。 */
 export function useAutoSplitSnapshot(): AutoSplitState {
   const [state, setState] = useState(() => useAutoSplit.getState());
@@ -85,16 +92,25 @@ function sourceFile(instanceId: string): File {
 export function startAutoSplit(instanceId: string): boolean {
   if (autoSplitIsBusy()) return true;
   const node = doc.nodes.get(instanceId);
-  if (!node || node.kind !== 'instance' || doc.effectiveLocked(instanceId)) return false;
+  if (!node || node.kind !== 'instance') {
+    useUi.getState().setToast('没有找到可拆件对象，请重新选择模型');
+    return false;
+  }
+  if (doc.effectiveLocked(instanceId)) {
+    useUi.getState().setToast('对象已锁定，解锁后才能自动拆件');
+    return false;
+  }
   const asset = doc.assets.get(node.assetId);
-  if (!asset || !geometryRegistry.has(asset.id)) return false;
+  if (!asset || !geometryRegistry.has(asset.id)) {
+    useUi.getState().setToast('源模型几何不可读取，暂时不能自动拆件');
+    return false;
+  }
   try {
-    const sourceProviderTaskId = asset.genParams?.engine === 'hunyuan' && typeof asset.genParams.taskId === 'string'
-      ? asset.genParams.taskId
-      : null;
-    const sourceMode = sourceProviderTaskId?.startsWith('hy3d_') ? 'provider-fbx' : 'upload-stl';
-    const file = sourceMode === 'upload-stl' ? sourceFile(instanceId) : null;
-    if (file && file.size > 200 * 1024 * 1024) throw new Error('模型超过 Hi3D 拆件 200MB 上限');
+    const sourceProviderTaskId = hunyuanSplitTaskIdOf(asset);
+    if (!sourceProviderTaskId) {
+      throw new Error('当前模型缺少混元生成阶段的 FBX 来源，请使用「手动拆件」；本地模型自动转换已列入后续商业化选型');
+    }
+    const sourceMode = 'provider-fbx' as const;
     useAutoSplit.setState({
       ...initialState,
       phase: 'ready',
@@ -103,9 +119,9 @@ export function startAutoSplit(instanceId: string): boolean {
       sourceEditVersion: doc.editVersion,
       sourceName: node.name,
       sourceFaces: asset.meta.faces,
-      uploadBytes: file?.size ?? 0,
+      uploadBytes: 0,
       sourceMode,
-      sourceProvider: sourceMode === 'provider-fbx' ? 'hunyuan' : 'hi3d',
+      sourceProvider: 'hunyuan',
       sourceProviderTaskId,
     }, true);
     return true;
