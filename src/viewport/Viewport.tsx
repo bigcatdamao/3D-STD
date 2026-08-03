@@ -48,11 +48,14 @@ import { ManualFacePaintEditor } from '../split/ManualFacePaintEditor';
 import { ManualSurfaceStrokeEditor } from '../split/ManualSurfaceStrokeEditor';
 import { useSurfaceWorkflow } from '../split/surface-workflow-state';
 import { useAutoSplit } from '../split/auto-split-state';
+import { ConnectorViewport } from '../connector/ConnectorViewport';
+import { cancelConnector, useConnector } from '../connector/connector-state';
 
 function InteractionBridge() {
   const splitActive = useManualPlaneSplit((state) => state.phase !== 'idle');
   const autoSplitActive = useAutoSplit((state) => state.phase !== 'idle');
-  useViewportInteraction(splitActive || autoSplitActive);
+  const connectorActive = useConnector((state) => state.phase !== 'idle');
+  useViewportInteraction(splitActive || autoSplitActive || connectorActive);
   return null;
 }
 
@@ -66,13 +69,23 @@ const btn: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-export function Toolbar({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => void; onOpenAutoSplit: () => void }) {
+export function Toolbar({
+  onOpenSplit,
+  onOpenAutoSplit,
+  onOpenConnector = () => {},
+}: {
+  onOpenSplit: () => void;
+  onOpenAutoSplit: () => void;
+  onOpenConnector?: () => void;
+}) {
   const ortho = useUi((s) => s.ortho);
   const setOrtho = useUi((s) => s.setOrtho);
   const bed = useUi((s) => s.bed);
   const setBed = useUi((s) => s.setBed);
   const [custom, setCustom] = useState(false);
   const splitPhase = useManualPlaneSplit((state) => state.phase);
+  const autoSplitPhase = useAutoSplit((state) => state.phase);
+  const connectorPhase = useConnector((state) => state.phase);
   useUi((state) => state.rev);
   const selectedInstances = expandToInstances(doc.selection);
 
@@ -114,6 +127,26 @@ export function Toolbar({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => v
             : '先选中一个对象，再启动自动拆件'}
         >
           ✦ 自动拆件
+        </button>
+        <button
+          type="button"
+          data-testid="connector-tool-entry"
+          className={`viewport-tool viewport-tool--connector${connectorPhase !== 'idle' ? ' is-active' : ''}`}
+          style={{
+            ...btn,
+            border: `1px solid ${connectorPhase !== 'idle' || selectedInstances.length === 1 ? '#63d3ac' : '#34343e'}`,
+            color: connectorPhase !== 'idle' || selectedInstances.length === 1 ? '#d9fff2' : '#777781',
+            background: connectorPhase !== 'idle' ? '#285f50' : selectedInstances.length === 1 ? '#19332d' : '#26262e',
+            fontWeight: 750,
+            opacity: selectedInstances.length === 1 || connectorPhase !== 'idle' ? 1 : .55,
+          }}
+          disabled={(selectedInstances.length !== 1 && connectorPhase === 'idle') || splitPhase !== 'idle' || autoSplitPhase !== 'idle'}
+          onClick={onOpenConnector}
+          title={selectedInstances.length === 1
+            ? '为所选零件添加圆柱插销和配对圆孔'
+            : '先选中一个零件，按钮才会亮起'}
+        >
+          ＋ 添加连接
         </button>
         <button style={btn} onClick={() => setOrtho(!ortho)} title="快捷键 5">
           {ortho ? '正交' : '透视'}
@@ -180,9 +213,29 @@ function TransformTools() {
   const paintedFaceCount = useFacePaint((state) => state.paintedFaceCount);
   const seamStatus = useFacePaint((state) => state.seamStatus);
   const surfaceWorkflowMode = useSurfaceWorkflow((state) => state.mode);
+  const connectorPhase = useConnector((state) => state.phase);
   const splitActive = splitPhase !== 'idle';
   const mode = splitActive ? splitMode : objectMode;
   const targets = expandToInstances(doc.selection);
+
+  if (connectorPhase !== 'idle') {
+    const label = connectorPhase === 'pickFirst'
+      ? '选择第一连接点'
+      : connectorPhase === 'pickSecond'
+        ? '选择配对零件'
+        : connectorPhase === 'previewing'
+          ? '计算连接布尔'
+          : connectorPhase === 'previewReady'
+            ? '连接预览'
+            : '设置连接尺寸';
+    return (
+      <div className="viewport-toolbar__surface-curve" role="status">
+        <span>添加连接</span>
+        <strong>{label}</strong>
+        <small>{connectorPhase === 'previewReady' ? '绿 A · 紫 B · 右栏确认' : '左键定点 · 右键旋转视图'}</small>
+      </div>
+    );
+  }
 
   const modeBtn = (active: boolean): React.CSSProperties => ({
     ...btn,
@@ -318,8 +371,26 @@ function StatusBar() {
   const brushRadiusMm = useFacePaint((state) => state.brushRadiusMm);
   const seamStatus = useFacePaint((state) => state.seamStatus);
   const surfaceWorkflowMode = useSurfaceWorkflow((state) => state.mode);
+  const connectorPhase = useConnector((state) => state.phase);
   const sel = doc.selection.size;
   const h = doc.history;
+  if (connectorPhase !== 'idle') {
+    const text = connectorPhase === 'pickFirst'
+      ? '在所选零件表面点击第一个连接中心'
+      : connectorPhase === 'pickSecond'
+        ? '点击另一个零件的配对位置'
+        : connectorPhase === 'previewing'
+          ? '正在执行凸侧并集与凹侧差集'
+          : connectorPhase === 'previewReady'
+            ? '只读预览 · 右栏确认后才修改模型'
+            : '调整直径、深度与装配间隙';
+    return (
+      <div className="viewport-status-bar is-cutting" title="左键选择连接点 · 右键旋转 · 中键平移 · 滚轮缩放 · Esc 退出">
+        <span>🔗 添加连接 · {text}</span>
+        <span className="viewport-status-bar__shortcuts">左键定点 · 右键旋转 · Esc 退出</span>
+      </div>
+    );
+  }
   if (splitPhase !== 'idle') {
     const label = splitKind === 'surface'
       ? splitPhase === 'previewing'
@@ -385,12 +456,22 @@ function isTyping(e: KeyboardEvent): boolean {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 }
 
-export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => void; onOpenAutoSplit: () => void }) {
+export function Viewport({
+  onOpenSplit,
+  onOpenAutoSplit,
+  onOpenConnector,
+}: {
+  onOpenSplit: () => void;
+  onOpenAutoSplit: () => void;
+  onOpenConnector: () => void;
+}) {
   const setOrtho = useUi((s) => s.setOrtho);
   const splitPhase = useManualPlaneSplit((state) => state.phase);
   const splitKind = useManualPlaneSplit((state) => state.cutKind);
   const seamStatus = useFacePaint((state) => state.seamStatus);
   const splitActive = splitPhase !== 'idle';
+  const connectorPhase = useConnector((state) => state.phase);
+  const connectorActive = connectorPhase !== 'idle';
 
   // 全局快捷键(VIEW-03/04)
   useEffect(() => {
@@ -398,13 +479,14 @@ export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => 
       if (isTyping(e)) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && (e.key === 'a' || e.key === 'A')) {
-        if (splitActive) return;
+        if (splitActive || connectorActive) return;
         e.preventDefault();
         dispatch((d) => d.selectAll()); // 跳过锁定(VIEW-04)
         return;
       }
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
+        if (connectorActive) return;
         if (splitActive && splitKind === 'surface' && !e.shiftKey) {
           if (useSurfaceWorkflow.getState().mode === 'stroke') {
             undoManualSurfaceStrokeSegment();
@@ -423,13 +505,14 @@ export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => 
       }
       if (mod && (e.key === 'y' || e.key === 'Y')) {
         e.preventDefault();
+        if (connectorActive) return;
         dispatch((d) => d.history.redo());
         return;
       }
       if (mod) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         // TREE-04 删除:多选一步;组 = 组及内容整树(TREE 边界 1);拖拽/交互中不响应
-        if (!splitActive && !interactionState.active && doc.selection.size) {
+        if (!splitActive && !connectorActive && !interactionState.active && doc.selection.size) {
           e.preventDefault();
           dispatch((d) => d.removeNodes(d.topMost(d.selection)));
         }
@@ -491,6 +574,11 @@ export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => 
         case 'f': case 'F': sendCam({ kind: 'focus' }); break;
         case 'Home': sendCam({ kind: 'home' }); break;
         case 'Escape':
+          if (connectorActive) {
+            e.preventDefault();
+            cancelConnector();
+            break;
+          }
           if (splitActive) {
             e.preventDefault();
             cancelManualPlaneSplit();
@@ -503,7 +591,7 @@ export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [seamStatus, setOrtho, splitActive, splitKind, splitPhase]);
+  }, [connectorActive, seamStatus, setOrtho, splitActive, splitKind, splitPhase]);
 
   const bed = useUi((s) => s.bed);
   const dropProps = useImportDrop(); // IMP-02:拖入视口 = 入库 + 建实例(床中心 + 自动沉底)
@@ -528,11 +616,12 @@ export function Viewport({ onOpenSplit, onOpenAutoSplit }: { onOpenSplit: () => 
         <ManualPlaneCutManipulator />
         <ManualSurfaceCutPreview />
         <RepairPreviewMesh />
+        <ConnectorViewport />
         <GhostPreview />
-        <Gizmo />
+        {!connectorActive && <Gizmo />}
         <InteractionBridge />
       </Canvas>
-      <Toolbar onOpenSplit={onOpenSplit} onOpenAutoSplit={onOpenAutoSplit} />
+      <Toolbar onOpenSplit={onOpenSplit} onOpenAutoSplit={onOpenAutoSplit} onOpenConnector={onOpenConnector} />
       <MarqueeOverlay />
       <GizmoHud />
       <StatusBar />

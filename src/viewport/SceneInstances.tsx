@@ -7,6 +7,7 @@ import { InstanceNode } from '../kernel/types';
 import { doc, geometryRegistry, meshRegistry, useUi } from '../state/store';
 import { planeCutPreviewIsStale, usePlaneCutPreview } from '../split/plane-cut-state';
 import { manualPlaneSplitIsStale, useManualPlaneSplit } from '../split/manual-plane-split-state';
+import { connectorPreviewInstanceIds, useConnector } from '../connector/connector-state';
 
 const SELECT_OUTLINE = '#ffb454';
 const BODY_COLORS = ['#5dcaa5', '#6aa9e8', '#c98ee0', '#e8a15d'];
@@ -112,6 +113,8 @@ export function SceneInstances() {
   const hasFreshSurfacePreview = manualSplitKind === 'surface'
     && manualSplitPhase === 'previewReady'
     && !manualPlaneSplitIsStale();
+  useConnector((s) => s.phase);
+  const connectorPreviewIds = new Set(connectorPreviewInstanceIds());
   const nodes = [...doc.nodes.values()].filter(
     (n): n is InstanceNode => n.kind === 'instance' && doc.effectiveVisible(n.id), // C7:隐藏(含随组隐藏)= 不渲染
   );
@@ -125,7 +128,8 @@ export function SceneInstances() {
           locked={doc.effectiveLocked(n.id)}
           histHl={!!histHover?.includes(n.id)}
           planePreview={(hasFreshPlanePreview && planePreviewInstanceId === n.id)
-            || (hasFreshSurfacePreview && manualSplitInstanceId === n.id)}
+            || (hasFreshSurfacePreview && manualSplitInstanceId === n.id)
+            || connectorPreviewIds.has(n.id)}
         />
       ))}
     </group>

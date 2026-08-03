@@ -387,6 +387,27 @@ export function bootstrapSurfaceCutPreviewQaScene(): boolean {
   return true;
 }
 
+/** M1.18 隐藏 QA 场景：两个留有 8mm 接缝的封闭方块，便于旋转后点到相向表面。 */
+export function bootstrapConnectorQaScene(): boolean {
+  const firstInstanceId = 'ins_qa_connector_a';
+  if (doc.nodes.has(firstInstanceId)) return false;
+  const firstAssetId = 'ast_qa_connector_a';
+  const secondAssetId = 'ast_qa_connector_b';
+  const firstGeometry = new THREE.BoxGeometry(44, 44, 44);
+  const secondGeometry = new THREE.BoxGeometry(44, 44, 44);
+  const assets = [
+    demoAsset(firstAssetId, '连接测试件 A', firstGeometry, 12),
+    demoAsset(secondAssetId, '连接测试件 B', secondGeometry, 12),
+  ];
+  const nodes = [
+    demoInstance(firstInstanceId, firstAssetId, '连接测试件 A · 凸榫候选', [-26, 0, 22]),
+    demoInstance('ins_qa_connector_b', secondAssetId, '连接测试件 B · 凹槽候选', [26, 0, 22]),
+  ];
+  doc.hydrate(assets, nodes);
+  useUi.getState().bump();
+  return true;
+}
+
 function makeComponentPreviewQaGeometry(): THREE.BufferGeometry {
   const parts = [
     new THREE.BoxGeometry(28, 28, 28).toNonIndexed().translate(-34, 0, 14),

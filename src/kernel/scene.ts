@@ -288,6 +288,46 @@ export class SceneDocument {
     return derived;
   }
 
+  /** M1.18 配对连接落地：同时为两个既有实例创建派生资产并切换引用。
+   *  两个零件的凸榫/凹槽必须是同一条历史记录，避免只撤销一侧后得到不可装配状态。
+   *  原始资产始终保留；撤销恢复两侧原引用并移除派生资产，重做原子恢复。 */
+  replaceInstanceAssetsWithDerivedPair(
+    instanceIds: readonly [string, string],
+    data: readonly [Omit<Asset, 'id'>, Omit<Asset, 'id'>],
+    label = '添加圆柱连接',
+  ): [Asset, Asset] {
+    const [firstId, secondId] = instanceIds;
+    if (firstId === secondId) throw new Error('连接结构需要两个不同零件');
+    if (this.effectiveLocked(firstId) || this.effectiveLocked(secondId)) {
+      throw new Error('对象已锁定，不能添加连接结构');
+    }
+    const first = this.instance(firstId);
+    const second = this.instance(secondId);
+    const derived: [Asset, Asset] = [
+      { ...clone(data[0]), id: genId('ast') } as Asset,
+      { ...clone(data[1]), id: genId('ast') } as Asset,
+    ];
+
+    this.commit(
+      'connector',
+      label,
+      [firstId, secondId],
+      () => {
+        this.assets.set(derived[0].id, clone(derived[0]));
+        this.assets.set(derived[1].id, clone(derived[1]));
+        const liveFirst = this.instance(firstId);
+        const liveSecond = this.instance(secondId);
+        liveFirst.assetId = derived[0].id;
+        liveSecond.assetId = derived[1].id;
+        liveFirst.name = dedupeName(`${first.name} · 连接版`, this.takenNames());
+        liveSecond.name = dedupeName(`${second.name} · 连接版`, this.takenNames());
+        this.selection = new Set([firstId, secondId]);
+      },
+      { assetIds: [derived[0].id, derived[1].id] },
+    );
+    return derived;
+  }
+
   /**
    * 真实拆件落地:把一个实例原子替换为两个派生资产/实例。
    * 源资产永不改写；撤销恢复原实例、移除两个派生资产，重做再完整恢复。

@@ -2007,6 +2007,52 @@ select:focus-visible {
 .auto-split-primary { border: 1px solid #63d3ac; background: #63d3ac; color: #10201b; }
 .auto-split-footnote { color: var(--muted); font-size: 9px; line-height: 1.5; text-align: center; }
 
+/* M1.18 简单连接器：右栏只保留当前决策所需信息，画布承担定位与预览。 */
+.connector-panel { display: flex; min-height: 100%; flex-direction: column; gap: 11px; padding: 14px; color: var(--text); }
+.connector-panel__version { color: #63d3ac; font-size: 11px; font-weight: 780; letter-spacing: .02em; }
+.connector-panel h2 { margin: 0; font-size: 18px; line-height: 1.25; }
+.connector-panel__subtitle { margin: -7px 0 0; color: var(--muted); font-size: 10px; }
+.connector-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.connector-steps span { display: grid; grid-template-columns: 19px 1fr; align-items: center; gap: 5px; min-width: 0; padding: 7px 5px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 9px; }
+.connector-steps b { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; font-size: 9px; }
+.connector-steps .is-active { border-color: rgba(99,211,172,.55); background: rgba(51,132,105,.14); color: #d9fff2; }
+.connector-steps .is-active b, .connector-steps .is-done b { border-color: #63d3ac; background: #63d3ac; color: #10201b; }
+.connector-section { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+.connector-section h3 { margin: 0; font-size: 12px; }
+.connector-section p { margin: 0; color: var(--text-2); font-size: 10px; line-height: 1.55; }
+.connector-object-row { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: center; gap: 7px; }
+.connector-object-row > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 6px; background: #63d3ac; color: #10201b; font-size: 10px; font-weight: 800; }
+.connector-object-row b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.connector-object-row em { color: #63d3ac; font-size: 9px; font-style: normal; }
+.connector-candidate { display: grid; gap: 4px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); font-size: 10px; line-height: 1.45; }
+.connector-candidate span, .connector-candidate small { color: var(--text-2); }
+.connector-candidate.is-empty { min-height: 54px; place-items: center; border-style: dashed; color: var(--muted); text-align: center; }
+.connector-candidate.is-good { border-color: rgba(99,211,172,.5); background: rgba(51,132,105,.14); }
+.connector-candidate.is-warning { border-color: rgba(255,180,84,.5); background: rgba(105,73,31,.16); }
+.connector-candidate.is-invalid { border-color: rgba(240,103,112,.5); background: rgba(105,35,42,.18); }
+.connector-role { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.connector-role button { display: grid; gap: 4px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text-2); cursor: pointer; text-align: left; }
+.connector-role button.is-active { border-color: #63d3ac; background: rgba(51,132,105,.17); color: #d9fff2; box-shadow: inset 0 0 0 1px rgba(99,211,172,.12); }
+.connector-role b { font-size: 11px; }.connector-role span { color: var(--muted); font-size: 9px; line-height: 1.35; }
+.connector-pair-summary { display: grid; grid-template-columns: minmax(0,1fr) 18px minmax(0,1fr); align-items: center; gap: 5px; }
+.connector-pair-summary div { display: grid; min-width: 0; gap: 4px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.connector-pair-summary span { color: #63d3ac; font-size: 9px; }.connector-pair-summary b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.connector-pair-summary i { color: var(--muted); text-align: center; }
+.connector-section--parameters { gap: 13px; }
+.connector-parameter { display: grid; gap: 6px; }
+.connector-parameter > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10px; }
+.connector-parameter output { color: #ffcf82; font-variant-numeric: tabular-nums; font-weight: 700; }
+.connector-parameter input { width: 100%; accent-color: #63d3ac; }
+.connector-parameter small { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.connector-alert { display: grid; gap: 5px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); font-size: 10px; line-height: 1.45; }
+.connector-alert span { color: var(--text-2); }.connector-alert.is-success { border-color: rgba(99,211,172,.5); background: rgba(51,132,105,.15); color: #caffeb; }.connector-alert.is-error { border-color: rgba(240,103,112,.5); background: rgba(105,35,42,.19); color: #ffb8bd; }
+.connector-progress { display: grid; min-height: 180px; place-items: center; align-content: center; gap: 9px; color: var(--text-2); text-align: center; }.connector-progress small { color: var(--muted); }
+.connector-spinner { width: 25px; height: 25px; border: 3px solid rgba(99,211,172,.2); border-top-color: #63d3ac; border-radius: 50%; animation: connector-spin .8s linear infinite; }
+@keyframes connector-spin { to { transform: rotate(360deg); } }
+.connector-preview-facts { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }.connector-preview-facts span { display: grid; gap: 3px; padding: 9px 4px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 9px; text-align: center; }.connector-preview-facts b { color: var(--text); font-size: 11px; }
+.connector-actions { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); gap: 7px; margin-top: auto; }.connector-actions button { min-height: 39px; border-radius: 8px; cursor: pointer; font-size: 11px; font-weight: 760; }.connector-actions button:only-child { grid-column: 1 / -1; }.connector-actions button:disabled { cursor: not-allowed; opacity: .5; }
+.connector-secondary { border: 1px solid var(--line-strong); background: var(--surface-3); color: var(--text-2); }.connector-primary { border: 1px solid #63d3ac; background: #63d3ac; color: #10201b; }
+.connector-panel__footnote { color: var(--muted); font-size: 9px; line-height: 1.45; text-align: center; }
+
 /* M1.16a · 固定尺寸的全屏 Agent 工作台。阶段切换只替换中央内容，不再改变外层尺寸。 */
 .app-shell[data-creation-workspace="true"] .workspace-panel,
 .app-shell[data-creation-workspace="true"] .app-workspace-toggle { display: none; }

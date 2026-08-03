@@ -22,6 +22,7 @@ export type OpKind =
   | 'gizmo' // 视口拖拽通道(C6 相对增量语义;含直接拖动)
   | 'drop' // 沉底(VIEW-06;T14 悬空修复复用同语义)
   | 'split' // 真实拆件:一个实例原子替换为两个派生实例
+  | 'connector' // 两个零件生成配对连接结构:一次确认、一次撤销
   | 'fix'; // 打印检查确定性修复:移回床内(CHK-06)
 
 export const OP_TABLE: Record<OpKind, { icon: string; name: string }> = {
@@ -43,5 +44,6 @@ export const OP_TABLE: Record<OpKind, { icon: string; name: string }> = {
   gizmo: { icon: '✥', name: '拖拽变换' },
   drop: { icon: '⬇️', name: '沉底' },
   split: { icon: '✂️', name: '平面切割' },
+  connector: { icon: '🔗', name: '添加连接' },
   fix: { icon: '🩹', name: '修复' },
 };

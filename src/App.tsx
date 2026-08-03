@@ -20,6 +20,7 @@ import {
 } from './product/workspace-layout';
 import {
   bootstrapComponentPreviewQaScene,
+  bootstrapConnectorQaScene,
   bootstrapDemoScene,
   bootstrapHunyuanAutoSplitQaScene,
   bootstrapPlaneCutPreviewQaScene,
@@ -44,6 +45,15 @@ import { AutoSplitPanel } from './split/AutoSplitPanel';
 import { autoSplitIsActive, startAutoSplit, useAutoSplit } from './split/auto-split-state';
 import { ToastLayer, TreePanel } from './tree/TreePanel';
 import { Viewport } from './viewport/Viewport';
+import { ConnectorPanel } from './connector/ConnectorPanel';
+import {
+  applyConnector,
+  chooseConnectorCandidate,
+  connectorIsActive,
+  generateConnectorPreview,
+  startConnector,
+  useConnector,
+} from './connector/connector-state';
 
 function HeaderCheckButton({ onOpen }: { onOpen: () => void }) {
   const phase = useCheck((s) => s.phase);
@@ -108,6 +118,18 @@ function Inspector({ tab, onTab }: { tab: InspectorTab; onTab: (tab: InspectorTa
   const history = doc.history;
   const autoSplitPhase = useAutoSplit((state) => state.phase);
   const autoSplitProvider = useAutoSplit((state) => state.sourceProvider);
+  const connectorPhase = useConnector((state) => state.phase);
+  if (connectorPhase !== 'idle') {
+    return (
+      <div className="inspector-shell">
+        <div className="inspector-tabs" role="tablist" aria-label="连接工具">
+          <button className="inspector-tab is-active" role="tab" aria-selected="true">添加连接</button>
+          <span className="inspector-mode-note">圆柱插销</span>
+        </div>
+        <div className="inspector-content"><ConnectorPanel /></div>
+      </div>
+    );
+  }
   if (autoSplitPhase !== 'idle') {
     return (
       <div className="inspector-shell">
@@ -309,6 +331,7 @@ export function App() {
 
   useEffect(() => {
     const qa = new URLSearchParams(window.location.search).get('qa');
+    const connectorQa = qa === 'connector' || qa?.startsWith('connector-');
     const bootstrapped = qa === 'self-intersection'
       ? bootstrapSelfIntersectionQaScene()
       : qa === 'component-preview'
@@ -319,6 +342,8 @@ export function App() {
           ? bootstrapPlaneCutPreviewQaScene()
           : qa === 'surface-cut-preview' || qa === 'manual-split-entry' || qa === 'manual-surface-cut'
             ? bootstrapSurfaceCutPreviewQaScene()
+            : connectorQa
+              ? bootstrapConnectorQaScene()
             : false;
     if (!bootstrapped) return;
     setLayout((current) => ({
@@ -342,6 +367,51 @@ export function App() {
             inspectorTab: 'properties',
             creationOpen: false,
           }));
+        }
+        return;
+      }
+      if (connectorQa) {
+        const instance = doc.nodes.get('ins_qa_connector_a');
+        if (instance?.kind === 'instance') {
+          dispatch((scene) => scene.select([instance.id]));
+          setLayout((current) => ({
+            ...current,
+            inspectorOpen: true,
+            inspectorTab: 'properties',
+            creationOpen: false,
+          }));
+          sendCam({ kind: 'home' });
+          if (qa === 'connector-entry') return;
+          startConnector(instance.id);
+          if (qa === 'connector-configure' || qa === 'connector-preview' || qa === 'connector-result') {
+            chooseConnectorCandidate({
+              instanceId: 'ins_qa_connector_a',
+              point: [-4, 0, 22],
+              normal: [1, 0, 0],
+              faceIndex: 0,
+              faceAreaMm2: 1936,
+              estimatedDepthMm: 44,
+              recommendedMaxDiameterMm: 12.3,
+              rating: 'good',
+              message: '两侧接缝已对齐，可进入尺寸设置',
+            });
+            chooseConnectorCandidate({
+              instanceId: 'ins_qa_connector_b',
+              point: [4, 0, 22],
+              normal: [-1, 0, 0],
+              faceIndex: 0,
+              faceAreaMm2: 1936,
+              estimatedDepthMm: 44,
+              recommendedMaxDiameterMm: 12.3,
+              rating: 'good',
+              message: '两侧接缝相距 8.0 mm；预览时请确认插销与圆孔同轴',
+            });
+            if (qa === 'connector-preview' || qa === 'connector-result') {
+              void generateConnectorPreview().then((ready) => {
+                if (ready && qa === 'connector-result') applyConnector();
+              });
+            }
+          }
         }
         return;
       }
@@ -406,6 +476,10 @@ export function App() {
   const openCheck = () => patchLayout({ inspectorOpen: true, inspectorTab: 'check' });
   const openSplitWorkbench = () => {
     patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
+    if (connectorIsActive()) {
+      useUi.getState().setToast('请先退出当前连接工具，再启动手动拆件。');
+      return;
+    }
     if (manualPlaneSplitIsActive()) {
       const isSurface = useManualPlaneSplit.getState().cutKind === 'surface';
       useUi.getState().setToast(isSurface
@@ -430,6 +504,10 @@ export function App() {
   };
   const openAutoSplitWorkbench = () => {
     patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
+    if (connectorIsActive()) {
+      useUi.getState().setToast('请先退出当前连接工具，再启动自动拆件。');
+      return;
+    }
     if (autoSplitIsActive()) return;
     if (manualPlaneSplitIsActive()) {
       useUi.getState().setToast('请先退出当前手动拆件，再启动自动拆件');
@@ -446,6 +524,23 @@ export function App() {
       return;
     }
     useUi.getState().setToast('混元组件生成已准备：确认费用后开始自动拆件');
+  };
+  const openConnectorWorkbench = () => {
+    patchLayout({ inspectorOpen: true, inspectorTab: 'properties', creationOpen: false });
+    if (connectorIsActive()) return;
+    if (manualPlaneSplitIsActive() || autoSplitIsActive()) {
+      useUi.getState().setToast('请先退出当前拆件工具，再添加零件连接');
+      return;
+    }
+    const targets = expandToInstances(doc.selection);
+    if (targets.length !== 1) {
+      useUi.getState().setToast(targets.length === 0
+        ? '先选中第一个零件，“添加连接”按钮才会亮起'
+        : `连接定位从一个零件开始；当前选中 ${targets.length} 个对象`);
+      return;
+    }
+    if (!startConnector(targets[0].id)) return;
+    useUi.getState().setToast('连接工具已开启：先在所选零件表面点击第一个连接中心');
   };
   const toggleCreation = () => {
     if (!hasInstance) {
@@ -523,7 +618,11 @@ export function App() {
       </aside>
 
       <main className="viewport-frame" aria-label="3D 视口">
-        <Viewport onOpenSplit={openSplitWorkbench} onOpenAutoSplit={openAutoSplitWorkbench} />
+        <Viewport
+          onOpenSplit={openSplitWorkbench}
+          onOpenAutoSplit={openAutoSplitWorkbench}
+          onOpenConnector={openConnectorWorkbench}
+        />
         {creationVisible && (
           <CreationPanel
             dismissible={hasInstance}
